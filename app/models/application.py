@@ -10,10 +10,11 @@ from sqlmodel import Field, SQLModel
 class Application(SQLModel, table=True):
     __tablename__ = "applications"
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
-    job_id: uuid.UUID = Field(foreign_key="jobs.id", unique=True)
+    job_id: uuid.UUID = Field(foreign_key="jobs.id")
     profile_id: uuid.UUID = Field(foreign_key="user_profiles.id")
     status: str = "pending_review"  # pending_review, approved, applied, dismissed
     generation_status: str = "pending"  # pending, generating, ready, failed
+    generation_attempts: int = 0
     match_score: float | None = None
     match_rationale: str | None = None
     match_strengths: list[str] = Field(
@@ -24,6 +25,11 @@ class Application(SQLModel, table=True):
     )
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+    __table_args__ = (
+        sa.UniqueConstraint("job_id", "profile_id", name="uq_applications_job_profile"),
+        sa.Index("ix_applications_dashboard", "profile_id", "status", "match_score"),
+    )
 
 
 class GeneratedDocument(SQLModel, table=True):

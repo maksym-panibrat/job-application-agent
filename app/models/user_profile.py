@@ -1,14 +1,10 @@
 import uuid
 from datetime import datetime
-from typing import TYPE_CHECKING
 
 import sqlalchemy as sa
 from sqlalchemy import Column
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlmodel import Field, SQLModel
-
-if TYPE_CHECKING:
-    from app.models.application import Application
 
 
 class Skill(SQLModel, table=True):
@@ -58,7 +54,7 @@ class UserProfile(SQLModel, table=True):
     search_keywords: list[str] = Field(
         default_factory=list, sa_column=Column(ARRAY(sa.String))
     )
-    adzuna_page_cursor: dict = Field(default_factory=dict, sa_column=Column(JSONB))
+    source_cursors: dict = Field(default_factory=dict, sa_column=Column(JSONB))
     search_active: bool = True
     search_expires_at: datetime | None = None
     created_at: datetime = Field(default_factory=datetime.utcnow)

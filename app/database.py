@@ -16,6 +16,8 @@ def get_engine():
         engine = create_async_engine(
             str(settings.database_url),
             echo=settings.environment == "development",
+            pool_size=5,
+            max_overflow=2,
         )
     return engine
 

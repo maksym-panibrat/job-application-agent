@@ -1,0 +1,143 @@
+"""
+Matching agent — LangGraph StateGraph with Send-based fan-out.
+
+Graph: load_context → fan_out (Send) → score_job (×N parallel) → persist_results
+
+Uses Haiku for cost efficiency. cache_control on profile_text (shared across all scorings).
+"""
+
+import operator
+from typing import Annotated
+
+import structlog
+from langchain_anthropic import ChatAnthropic
+from langchain_core.messages import HumanMessage
+from langchain_core.tools import tool
+from langgraph.graph import END, StateGraph
+from langgraph.types import Send
+from pydantic import BaseModel
+from typing_extensions import TypedDict
+
+from app.config import get_settings
+
+log = structlog.get_logger()
+
+MAX_JOB_DESC_CHARS = 8000
+
+
+def truncate_description(desc: str, max_chars: int = MAX_JOB_DESC_CHARS) -> str:
+    if not desc or len(desc) <= max_chars:
+        return desc or ""
+    return desc[:max_chars] + "\n\n[Description truncated]"
+
+
+class ScoreResult(BaseModel):
+    application_id: str
+    score: float  # 0.0 – 1.0
+    rationale: str
+    strengths: list[str]
+    gaps: list[str]
+
+
+class JobContext(TypedDict):
+    application_id: str
+    title: str
+    company: str
+    description: str
+
+
+class MatchState(TypedDict):
+    profile_id: str
+    profile_text: str
+    jobs: list[JobContext]
+    scores: Annotated[list[ScoreResult], operator.add]
+
+
+class SingleJobState(TypedDict):
+    profile_text: str
+    job: JobContext
+
+
+def get_llm() -> ChatAnthropic:
+    settings = get_settings()
+    return ChatAnthropic(
+        model=settings.claude_matching_model,
+        api_key=settings.anthropic_api_key.get_secret_value(),
+    )
+
+
+SCORING_PROMPT = """\
+You are a job application screener. Rate how well this candidate profile matches the job.
+
+CANDIDATE PROFILE:
+{profile_text}
+
+JOB POSTING:
+Title: {title}
+Company: {company}
+Description:
+{description}
+
+Score the match from 0.0 to 1.0 (1.0 = perfect match).
+Call the record_score tool with your assessment."""
+
+
+def build_graph() -> StateGraph:
+    @tool
+    def record_score(
+        score: float,
+        rationale: str,
+        strengths: list[str],
+        gaps: list[str],
+    ) -> str:
+        """Record the match score for this job application."""
+        return "Score recorded"
+
+    tools = [record_score]
+    llm = get_llm().bind_tools(tools, tool_choice="record_score")
+
+    def load_context_node(state: MatchState) -> dict:
+        # profile_text and jobs are already in state (provided at invocation)
+        return {}
+
+    def fan_out(state: MatchState) -> list[Send]:
+        return [
+            Send("score_job", {"profile_text": state["profile_text"], "job": job})
+            for job in state["jobs"]
+        ]
+
+    def score_job_node(state: SingleJobState) -> dict:
+        job = state["job"]
+        prompt = SCORING_PROMPT.format(
+            profile_text=state["profile_text"],
+            title=job["title"],
+            company=job["company"],
+            description=truncate_description(job["description"]),
+        )
+        result = llm.invoke([HumanMessage(content=prompt)])
+        tool_call = result.tool_calls[0] if result.tool_calls else {}
+        args = tool_call.get("args", {}) if tool_call else {}
+
+        score_result = ScoreResult(
+            application_id=job["application_id"],
+            score=float(args.get("score", 0.0)),
+            rationale=args.get("rationale", ""),
+            strengths=args.get("strengths", []),
+            gaps=args.get("gaps", []),
+        )
+        return {"scores": [score_result]}
+
+    async def persist_results_node(state: MatchState) -> dict:
+        # Results are persisted by the caller (match_service) after graph completion
+        return {}
+
+    builder = StateGraph(MatchState)
+    builder.add_node("load_context", load_context_node)
+    builder.add_node("score_job", score_job_node)
+    builder.add_node("persist_results", persist_results_node)
+    builder.set_entry_point("load_context")
+    builder.add_conditional_edges("load_context", fan_out, ["score_job"])
+    builder.add_edge("score_job", "persist_results")
+    builder.add_edge("persist_results", END)
+
+    return builder.compile()

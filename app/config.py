@@ -1,4 +1,4 @@
-from pydantic import PostgresDsn, SecretStr
+from pydantic import PostgresDsn, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -32,6 +32,13 @@ class Settings(BaseSettings):
     adzuna_cache_ttl_hours: int = 24
     tavily_api_key: SecretStr | None = None
     log_level: str = "INFO"
+
+    @model_validator(mode="after")
+    def validate_production_secrets(self) -> "Settings":
+        if self.environment == "production":
+            if self.jwt_secret.get_secret_value() == "dev-secret":
+                raise ValueError("jwt_secret must be set in production")
+        return self
 
 
 _settings: Settings | None = None
