@@ -6,7 +6,9 @@
       "WebFetch(domain:developers.ashbyhq.com)",
       "WebFetch(domain:job-boards.lever.co)",
       "WebSearch",
-      "WebFetch(domain:github.com)"
+      "WebFetch(domain:github.com)",
+      "mcp__claude_ai_Context7__resolve-library-id",
+      "mcp__claude_ai_Context7__query-docs"
     ]
   }
 }
