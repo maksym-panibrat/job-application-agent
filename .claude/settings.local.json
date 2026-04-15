@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:developers.greenhouse.io)",
+      "WebFetch(domain:hire.lever.co)",
+      "WebFetch(domain:developers.ashbyhq.com)",
+      "WebFetch(domain:job-boards.lever.co)",
+      "WebSearch",
+      "WebFetch(domain:github.com)"
+    ]
+  }
+}
