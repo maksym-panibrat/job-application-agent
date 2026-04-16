@@ -1,11 +1,15 @@
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 
+import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
 from app.models.user_profile import Skill, UserProfile, WorkExperience
+from app.services.resume_extraction import extract_profile_from_resume
 from app.sources.resume_parser import parse_resume
+
+log = structlog.get_logger()
 
 
 async def get_profile_by_user(user_id: uuid.UUID, session: AsyncSession) -> UserProfile | None:
@@ -32,7 +36,7 @@ async def update_profile(
     for key, value in data.items():
         if hasattr(profile, key) and value is not None:
             setattr(profile, key, value)
-    profile.updated_at = datetime.utcnow()
+    profile.updated_at = datetime.now(UTC)
     session.add(profile)
     await session.commit()
     await session.refresh(profile)
@@ -46,11 +50,73 @@ async def save_resume(
     md = parse_resume(filename, raw_bytes)
     profile.base_resume_raw = raw_bytes
     profile.base_resume_md = md
-    profile.updated_at = datetime.utcnow()
+    profile.updated_at = datetime.now(UTC)
     session.add(profile)
     await session.commit()
     await session.refresh(profile)
+
+    # Extract structured profile data from resume using LLM (best-effort)
+    if md:
+        extracted = await extract_profile_from_resume(md)
+        if extracted:
+            await _apply_extracted_resume_data(profile_id, extracted, session)
+            await session.refresh(profile)
+
     return profile
+
+
+async def _apply_extracted_resume_data(
+    profile_id: uuid.UUID, data: dict, session: AsyncSession
+) -> None:
+    """Apply LLM-extracted resume data to the profile, skills, and work_experiences."""
+    SCALAR_FIELDS = {
+        "full_name", "email", "phone", "linkedin_url",
+        "github_url", "portfolio_url", "target_roles",
+    }
+    skills = list(data.pop("skills", None) or [])
+    experiences = list(data.pop("work_experiences", None) or [])
+    flat = {k: v for k, v in data.items() if k in SCALAR_FIELDS and v}
+
+    if flat:
+        try:
+            await update_profile(profile_id, flat, session)
+        except Exception as exc:
+            await log.awarning("resume_extraction.apply_flat_failed", error=str(exc))
+
+    for skill in skills:
+        if not isinstance(skill, dict) or not skill.get("name"):
+            continue
+        try:
+            await add_skill(profile_id, skill, session)
+        except Exception as exc:
+            await log.awarning(
+                "resume_extraction.apply_skill_failed",
+                name=skill.get("name"),
+                error=str(exc),
+            )
+
+    for exp in experiences:
+        if not isinstance(exp, dict) or not exp.get("company") or not exp.get("title"):
+            continue
+        exp_copy = dict(exp)
+        for date_field in ("start_date", "end_date"):
+            val = exp_copy.get(date_field)
+            if isinstance(val, str):
+                try:
+                    parsed = datetime.fromisoformat(val)
+                    exp_copy[date_field] = parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+                except ValueError:
+                    exp_copy[date_field] = None
+        if not exp_copy.get("start_date"):
+            continue
+        try:
+            await add_work_experience(profile_id, exp_copy, session)
+        except Exception as exc:
+            await log.awarning(
+                "resume_extraction.apply_exp_failed",
+                company=exp.get("company"),
+                error=str(exc),
+            )
 
 
 async def get_skills(profile_id: uuid.UUID, session: AsyncSession) -> list[Skill]:

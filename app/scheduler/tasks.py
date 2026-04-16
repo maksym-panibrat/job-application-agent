@@ -7,7 +7,7 @@ Three jobs:
   run_daily_maintenance — 03:00 cron: staleness cleanup + search auto-pause
 """
 
-from datetime import datetime
+from datetime import UTC, datetime
 
 import structlog
 from sqlmodel import select
@@ -91,13 +91,13 @@ async def run_daily_maintenance() -> None:
             select(UserProfile).where(
                 UserProfile.search_active.is_(True),
                 UserProfile.search_expires_at.is_not(None),
-                UserProfile.search_expires_at < datetime.utcnow(),
+                UserProfile.search_expires_at < datetime.now(UTC),
             )
         )
         expired_profiles = result.scalars().all()
         for profile in expired_profiles:
             profile.search_active = False
-            profile.updated_at = datetime.utcnow()
+            profile.updated_at = datetime.now(UTC)
             session.add(profile)
             await log.awarning("maintenance.search_paused", profile_id=str(profile.id))
         if expired_profiles:

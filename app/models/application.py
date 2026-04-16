@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 
 import sqlalchemy as sa
 from sqlalchemy import Column
@@ -23,8 +23,14 @@ class Application(SQLModel, table=True):
     match_gaps: list[str] = Field(
         default_factory=list, sa_column=Column(ARRAY(sa.String))
     )
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(
+        default_factory=lambda: datetime.now(UTC),
+        sa_column=Column(sa.DateTime(timezone=True), nullable=False),
+    )
+    updated_at: datetime = Field(
+        default_factory=lambda: datetime.now(UTC),
+        sa_column=Column(sa.DateTime(timezone=True), nullable=False),
+    )
 
     __table_args__ = (
         sa.UniqueConstraint("job_id", "profile_id", name="uq_applications_job_profile"),
@@ -40,4 +46,7 @@ class GeneratedDocument(SQLModel, table=True):
     content_md: str
     user_edited_md: str | None = None
     generation_model: str | None = None
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(
+        default_factory=lambda: datetime.now(UTC),
+        sa_column=Column(sa.DateTime(timezone=True), nullable=False),
+    )

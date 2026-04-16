@@ -1,5 +1,7 @@
 """Profile management endpoints."""
 
+from datetime import UTC
+
 import structlog
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -117,7 +119,7 @@ async def toggle_search(
     if search_active:
         from app.config import get_settings
         settings = get_settings()
-        updates["search_expires_at"] = datetime.utcnow() + timedelta(
+        updates["search_expires_at"] = datetime.now(UTC) + timedelta(
             days=settings.search_auto_pause_days
         )
     updated = await profile_service.update_profile(profile.id, updates, session)

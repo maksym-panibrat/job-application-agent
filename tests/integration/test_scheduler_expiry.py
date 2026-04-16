@@ -8,7 +8,7 @@ Verifies that run_daily_maintenance():
 """
 
 import uuid
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -28,7 +28,7 @@ async def _create_user_and_profile(
 
     expires_at = None
     if expires_delta is not None:
-        expires_at = datetime.utcnow() + expires_delta
+        expires_at = datetime.now(UTC) + expires_delta
 
     profile = UserProfile(
         user_id=user.id,

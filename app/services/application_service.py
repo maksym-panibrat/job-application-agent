@@ -6,7 +6,7 @@ Drives the generation agent and saves resulting documents to DB.
 """
 
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -77,7 +77,7 @@ async def generate_materials(
     # Mark as generating
     app.generation_status = "generating"
     app.generation_attempts += 1
-    app.updated_at = datetime.utcnow()
+    app.updated_at = datetime.now(UTC)
     session.add(app)
     await session.commit()
 
@@ -129,14 +129,14 @@ async def generate_materials(
             error=str(exc),
         )
         app.generation_status = "failed"
-        app.updated_at = datetime.utcnow()
+        app.updated_at = datetime.now(UTC)
         session.add(app)
         await session.commit()
         return
 
     # Mark ready (only if documents were saved by the graph or direct path)
     app.generation_status = "ready"
-    app.updated_at = datetime.utcnow()
+    app.updated_at = datetime.now(UTC)
     session.add(app)
     await session.commit()
     await log.ainfo("generate_materials.done", application_id=str(application_id))

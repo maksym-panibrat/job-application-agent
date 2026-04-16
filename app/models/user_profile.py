@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 
 import sqlalchemy as sa
 from sqlalchemy import Column
@@ -23,8 +23,10 @@ class WorkExperience(SQLModel, table=True):
     profile_id: uuid.UUID = Field(foreign_key="user_profiles.id")
     company: str
     title: str
-    start_date: datetime
-    end_date: datetime | None = None
+    start_date: datetime = Field(sa_column=Column(sa.DateTime(timezone=True), nullable=False))
+    end_date: datetime | None = Field(
+        default=None, sa_column=Column(sa.DateTime(timezone=True), nullable=True)
+    )
     description_md: str | None = None
     technologies: list[str] = Field(
         default_factory=list, sa_column=Column(ARRAY(sa.String))
@@ -56,6 +58,14 @@ class UserProfile(SQLModel, table=True):
     )
     source_cursors: dict = Field(default_factory=dict, sa_column=Column(JSONB))
     search_active: bool = True
-    search_expires_at: datetime | None = None
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    search_expires_at: datetime | None = Field(
+        default=None, sa_column=Column(sa.DateTime(timezone=True), nullable=True)
+    )
+    created_at: datetime = Field(
+        default_factory=lambda: datetime.now(UTC),
+        sa_column=Column(sa.DateTime(timezone=True), nullable=False),
+    )
+    updated_at: datetime = Field(
+        default_factory=lambda: datetime.now(UTC),
+        sa_column=Column(sa.DateTime(timezone=True), nullable=False),
+    )

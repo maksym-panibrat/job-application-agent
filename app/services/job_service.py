@@ -1,6 +1,6 @@
 """Job CRUD and staleness logic."""
 
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
@@ -26,13 +26,15 @@ async def upsert_job(job_data: JobData, source: str, session: AsyncSession) -> t
         existing.title = job_data.title
         existing.company_name = job_data.company_name
         existing.description_md = job_data.description_md
+        existing.salary = job_data.salary
+        existing.contract_type = job_data.contract_type
         existing.apply_url = job_data.apply_url
         existing.location = job_data.location
         existing.workplace_type = job_data.workplace_type
         existing.ats_type = job_data.ats_type
         existing.supports_api_apply = job_data.supports_api_apply
         existing.is_active = True
-        existing.fetched_at = datetime.utcnow()
+        existing.fetched_at = datetime.now(UTC)
         session.add(existing)
         await session.commit()
         await session.refresh(existing)
@@ -46,6 +48,8 @@ async def upsert_job(job_data: JobData, source: str, session: AsyncSession) -> t
         location=job_data.location,
         workplace_type=job_data.workplace_type,
         description_md=job_data.description_md,
+        salary=job_data.salary,
+        contract_type=job_data.contract_type,
         apply_url=job_data.apply_url,
         posted_at=job_data.posted_at,
         ats_type=job_data.ats_type,
@@ -76,7 +80,7 @@ async def get_active_jobs(
 
 async def mark_stale_jobs(stale_after_days: int, session: AsyncSession) -> int:
     """Mark jobs as inactive if not refreshed within stale_after_days. Returns count."""
-    cutoff = datetime.utcnow() - timedelta(days=stale_after_days)
+    cutoff = datetime.now(UTC) - timedelta(days=stale_after_days)
     result = await session.execute(
         select(Job).where(
             Job.is_active.is_(True),

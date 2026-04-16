@@ -4,7 +4,7 @@ Tests: Adzuna mock → upsert → DB assertions, staleness, cursor updates.
 """
 
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -39,7 +39,7 @@ def make_job_data(external_id: str = "job-001", title: str = "Python Engineer") 
         ats_type="greenhouse",
         supports_api_apply=True,
         description_md="We need a Python engineer.",
-        posted_at=datetime.utcnow(),
+        posted_at=datetime.now(UTC),
     )
 
 
@@ -87,7 +87,7 @@ async def test_mark_stale_jobs(db_session):
     job, _ = await upsert_job(job_data, "adzuna", db_session)
 
     # Manually backdate fetched_at to simulate staleness
-    job.fetched_at = datetime.utcnow() - timedelta(days=20)
+    job.fetched_at = datetime.now(UTC) - timedelta(days=20)
     db_session.add(job)
     await db_session.commit()
 

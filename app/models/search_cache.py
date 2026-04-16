@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 
 import sqlalchemy as sa
 from sqlalchemy import Column
@@ -15,8 +15,11 @@ class JobSearchCache(SQLModel, table=True):
     query: str
     location: str | None = None
     results: dict = Field(default_factory=dict, sa_column=Column(JSONB))
-    fetched_at: datetime = Field(default_factory=datetime.utcnow)
-    expires_at: datetime
+    fetched_at: datetime = Field(
+        default_factory=lambda: datetime.now(UTC),
+        sa_column=Column(sa.DateTime(timezone=True), nullable=False),
+    )
+    expires_at: datetime = Field(sa_column=Column(sa.DateTime(timezone=True), nullable=False))
 
     __table_args__ = (
         sa.Index("ix_search_cache_lookup", "source", "query_hash", "expires_at"),

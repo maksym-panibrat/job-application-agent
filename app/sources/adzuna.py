@@ -1,7 +1,7 @@
 """Adzuna job search source adapter."""
 
 import hashlib
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import httpx
@@ -30,7 +30,7 @@ class AdzunaSource(JobSource):
         result = await session.execute(
             select(JobSearchCache).where(
                 JobSearchCache.query_hash == cache_key,
-                JobSearchCache.expires_at > datetime.utcnow(),
+                JobSearchCache.expires_at > datetime.now(UTC),
             )
         )
         row = result.scalar_one_or_none()
@@ -45,7 +45,7 @@ class AdzunaSource(JobSource):
         ttl_hours: int,
         session: AsyncSession,
     ) -> None:
-        expires = datetime.utcnow() + timedelta(hours=ttl_hours)
+        expires = datetime.now(UTC) + timedelta(hours=ttl_hours)
         # Upsert: delete old entry if exists, then insert
         existing = await session.execute(
             select(JobSearchCache).where(JobSearchCache.query_hash == cache_key)
@@ -97,6 +97,7 @@ class AdzunaSource(JobSource):
         }
         if location:
             params["where"] = location
+            params["distance"] = settings.adzuna_search_distance_km
 
         async with httpx.AsyncClient(timeout=30) as client:
             response = await client.get(url, params=params)
@@ -118,7 +119,7 @@ class AdzunaSource(JobSource):
             posted_at = None
             if created := item.get("created"):
                 try:
-                    posted_at = datetime.fromisoformat(created.rstrip("Z"))
+                    posted_at = datetime.fromisoformat(created.rstrip("Z")).replace(tzinfo=UTC)
                 except ValueError:
                     pass
 

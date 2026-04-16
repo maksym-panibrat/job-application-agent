@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+from datetime import UTC
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException
@@ -52,6 +53,8 @@ async def list_applications(
                     "company_name": job.company_name,
                     "location": job.location,
                     "workplace_type": job.workplace_type,
+                    "salary": job.salary,
+                    "contract_type": job.contract_type,
                     "apply_url": job.apply_url,
                     "ats_type": job.ats_type,
                     "supports_api_apply": job.supports_api_apply,
@@ -97,10 +100,14 @@ async def get_application(
             "title": job.title,
             "company_name": job.company_name,
             "location": job.location,
+            "workplace_type": job.workplace_type,
+            "salary": job.salary,
+            "contract_type": job.contract_type,
             "description_md": job.description_md,
             "apply_url": job.apply_url,
             "ats_type": job.ats_type,
             "supports_api_apply": job.supports_api_apply,
+            "posted_at": job.posted_at,
         }
         if job
         else None,
@@ -140,7 +147,7 @@ async def review_application(
         )
 
     app.status = action
-    app.updated_at = datetime.utcnow()
+    app.updated_at = datetime.now(UTC)
     session.add(app)
     await session.commit()
     return {"id": str(app.id), "status": app.status}
@@ -221,7 +228,7 @@ async def regenerate_application(
         raise HTTPException(status_code=429, detail="Max generation attempts (3) reached")
 
     app.generation_status = "pending"
-    app.updated_at = datetime.utcnow()
+    app.updated_at = datetime.now(UTC)
     session.add(app)
     await session.commit()
     return {"id": str(app.id), "generation_status": "pending"}
@@ -287,7 +294,7 @@ async def submit_application(
 
     if result.get("success"):
         app.status = "applied"
-        app.updated_at = datetime.utcnow()
+        app.updated_at = datetime.now(UTC)
         session.add(app)
         await session.commit()
 
