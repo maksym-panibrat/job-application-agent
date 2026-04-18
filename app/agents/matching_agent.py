@@ -7,6 +7,7 @@ Uses Haiku for cost efficiency. cache_control on profile_text (shared across all
 """
 
 import operator
+import threading
 from typing import Annotated
 
 import structlog
@@ -15,7 +16,7 @@ from langchain_core.messages import HumanMessage
 from langchain_core.tools import tool
 from langgraph.graph import END, StateGraph
 from langgraph.types import Send
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from typing_extensions import TypedDict
 
 from app.config import get_settings
@@ -37,6 +38,17 @@ class ScoreResult(BaseModel):
     rationale: str
     strengths: list[str]
     gaps: list[str]
+
+    @field_validator("strengths", "gaps", mode="before")
+    @classmethod
+    def coerce_to_list(cls, v: object) -> list[str]:
+        """Haiku sometimes returns bullet-point strings instead of JSON arrays."""
+        if isinstance(v, list):
+            return v
+        if isinstance(v, str):
+            items = [line.lstrip("-•* \t").strip() for line in v.splitlines() if line.strip()]
+            return [item for item in items if item]
+        return []
 
 
 class JobContext(TypedDict):
@@ -60,10 +72,13 @@ class SingleJobState(TypedDict):
 
 def get_llm() -> ChatAnthropic:
     settings = get_settings()
-    return ChatAnthropic(
+    kwargs: dict = dict(
         model=settings.claude_matching_model,
         api_key=settings.anthropic_api_key.get_secret_value(),
     )
+    if settings.anthropic_base_url:
+        kwargs["anthropic_api_url"] = settings.anthropic_base_url
+    return ChatAnthropic(**kwargs)
 
 
 SCORING_PROMPT = """\
@@ -83,6 +98,9 @@ Call the record_score tool with your assessment."""
 
 
 def build_graph() -> StateGraph:
+    settings = get_settings()
+    semaphore = threading.Semaphore(settings.matching_max_concurrency)
+
     @tool
     def record_score(
         score: float,
@@ -107,6 +125,8 @@ def build_graph() -> StateGraph:
         ]
 
     def score_job_node(state: SingleJobState) -> dict:
+        import time
+
         job = state["job"]
         prompt = SCORING_PROMPT.format(
             profile_text=state["profile_text"],
@@ -114,7 +134,41 @@ def build_graph() -> StateGraph:
             company=job["company"],
             description=truncate_description(job["description"]),
         )
-        result = llm.invoke([HumanMessage(content=prompt)])
+        run_config = {
+            "run_name": f"score-{job['company'][:20]}-{job['title'][:30]}",
+            "metadata": {"application_id": job["application_id"]},
+        }
+        # Retry loop: handle API rate limit errors with backoff.
+        # Falls back to score=0.0 (auto_rejected) after exhausting retries so
+        # a single 429 doesn't crash the entire fan-out.
+        backoffs = [10, 30]
+        for attempt, backoff in enumerate([0] + backoffs):
+            if backoff:
+                time.sleep(backoff)
+            with semaphore:
+                time.sleep(1.5)  # throttle: ~2 req/s per slot → ~8k tokens/min
+                try:
+                    result = llm.invoke([HumanMessage(content=prompt)], config=run_config)
+                    break
+                except Exception as exc:
+                    is_rate_limit = "rate_limit" in str(exc).lower() or "429" in str(exc)
+                    if is_rate_limit and attempt < len(backoffs):
+                        continue
+                    if is_rate_limit:
+                        log.warning(
+                            "match.rate_limit_skip",
+                            title=job["title"],
+                            attempts=attempt + 1,
+                        )
+                        return {"scores": [ScoreResult(
+                            application_id=job["application_id"],
+                            score=0.0,
+                            rationale="Skipped: API rate limit exceeded after retries",
+                            strengths=[],
+                            gaps=[],
+                        )]}
+                    raise
+
         tool_call = result.tool_calls[0] if result.tool_calls else {}
         args = tool_call.get("args", {}) if tool_call else {}
 

@@ -172,7 +172,7 @@ def build_graph(checkpointer: AsyncPostgresSaver) -> StateGraph:
                     if not isinstance(skill, dict) or not skill.get("name"):
                         continue
                     try:
-                        await profile_service.add_skill(profile_uuid, skill, session)
+                        await profile_service.upsert_skill(profile_uuid, skill, session)
                     except Exception as exc:
                         await log.awarning(
                             "onboarding.process_tool_results.skill_failed",
@@ -198,7 +198,7 @@ def build_graph(checkpointer: AsyncPostgresSaver) -> StateGraph:
                     if not exp_copy.get("start_date"):
                         continue
                     try:
-                        await profile_service.add_work_experience(profile_uuid, exp_copy, session)
+                        await profile_service.upsert_work_experience(profile_uuid, exp_copy, session)
                     except Exception as exc:
                         await log.awarning(
                             "onboarding.process_tool_results.exp_failed",

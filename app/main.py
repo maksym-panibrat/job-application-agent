@@ -43,6 +43,13 @@ async def lifespan(app: FastAPI):
     configure_logging(settings)
     log = structlog.get_logger()
 
+    # Export LangSmith settings to os.environ for LangChain SDK (reads env vars directly)
+    if settings.langsmith_tracing and settings.langsmith_api_key:
+        os.environ["LANGSMITH_TRACING"] = "true"
+        os.environ["LANGSMITH_API_KEY"] = settings.langsmith_api_key.get_secret_value()
+        os.environ["LANGSMITH_PROJECT"] = settings.langsmith_project
+        await log.ainfo("langsmith.enabled", project=settings.langsmith_project)
+
     # Init Sentry
     if settings.sentry_dsn:
         sentry_sdk.init(
@@ -59,8 +66,11 @@ async def lifespan(app: FastAPI):
 
     # Init LangGraph checkpointer (psycopg v3, separate pool from SQLAlchemy asyncpg)
     psycopg_uri = str(settings.database_url).replace("+asyncpg", "")
+    # setup() runs CREATE INDEX CONCURRENTLY which cannot run inside a pipeline,
+    # so we run it once on a plain connection before opening the pipeline saver.
+    async with AsyncPostgresSaver.from_conn_string(psycopg_uri) as setup_checkpointer:
+        await setup_checkpointer.setup()
     async with AsyncPostgresSaver.from_conn_string(psycopg_uri, pipeline=True) as checkpointer:
-        await checkpointer.setup()
         app.state.checkpointer = checkpointer
         await log.ainfo("checkpointer.ready")
 
@@ -107,6 +117,12 @@ app.include_router(chat_router)
 app.include_router(jobs_router)
 app.include_router(applications_router)
 app.include_router(documents_router)
+
+# Dev-only endpoints for E2E testing
+settings = get_settings()
+if settings.environment == "development":
+    from app.api.test_helpers import router as test_helpers_router
+    app.include_router(test_helpers_router)
 
 # Serve React build if it exists
 static_dir = os.path.join(os.path.dirname(__file__), "static")

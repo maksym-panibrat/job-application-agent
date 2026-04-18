@@ -18,22 +18,27 @@ from app.sources.base import JobData
 def _make_job_data(idx: int = 0) -> JobData:
     return JobData(
         external_id=f"test-job-{idx:03d}",
-        title="Senior Python Engineer",
+        title=f"Senior Python Engineer #{idx}",
         company_name="Acme Corp",
         location="New York",
-        apply_url="https://jobs.lever.co/acme/abc-123",
+        apply_url=f"https://jobs.lever.co/acme/abc-{idx}",
         ats_type="lever",
         supports_api_apply=False,
         description_md="We need a Python expert for distributed systems work.",
     )
 
 
-def _mock_adzuna_source(jobs: list[JobData]):
+def _mock_source(name: str, jobs: list[JobData]) -> MagicMock:
     """Return a mock JobSource that returns `jobs` on search()."""
     source = MagicMock()
-    source.source_name = "adzuna"
-    source.search = AsyncMock(return_value=(jobs, 2))
+    source.source_name = name
+    source.needs_enrichment = False
+    source.search = AsyncMock(return_value=(jobs, len(jobs)))
     return source
+
+
+def _mock_adzuna_source(jobs: list[JobData]) -> MagicMock:
+    return _mock_source("adzuna", jobs)
 
 
 # ---------------------------------------------------------------------------
@@ -96,16 +101,11 @@ async def test_job_sync_with_mocked_source(test_app, monkeypatch):
     """
     jobs = [_make_job_data(i) for i in range(3)]
     mock_source = _mock_adzuna_source(jobs)
+    empty_jsearch = _mock_source("jsearch", [])
 
-    monkeypatch.setattr(
-        "app.services.job_sync_service.AdzunaSource",
-        lambda: mock_source,
-    )
-    # Patch _score_after_sync to skip LLM scoring in this test
-    monkeypatch.setattr(
-        "app.api.jobs._score_after_sync",
-        AsyncMock(),
-    )
+    monkeypatch.setattr("app.services.job_sync_service.AdzunaSource", lambda: mock_source)
+    monkeypatch.setattr("app.services.job_sync_service.JSearchSource", lambda: empty_jsearch)
+    monkeypatch.setattr("app.api.jobs._score_after_sync", AsyncMock())
 
     resp = await test_app.post("/api/jobs/sync")
     assert resp.status_code == 200

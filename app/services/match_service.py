@@ -96,14 +96,17 @@ async def score_and_match(
     profile_text = format_profile_text(profile, skills, experiences)
 
     if jobs is None:
-        # Fetch active jobs not already matched for this profile
+        # Fetch active jobs already scored for this profile (null score = incomplete, re-score)
         matched_result = await session.execute(
-            select(Application.job_id).where(Application.profile_id == profile.id)
+            select(Application.job_id).where(
+                Application.profile_id == profile.id,
+                Application.match_score.isnot(None),
+            )
         )
         matched_ids = {row[0] for row in matched_result.all()}
 
         all_jobs_result = await session.execute(
-            select(Job).where(Job.is_active.is_(True)).limit(100)
+            select(Job).where(Job.is_active.is_(True)).limit(settings.matching_jobs_per_batch)
         )
         jobs = [j for j in all_jobs_result.scalars().all() if j.id not in matched_ids]
 
@@ -147,28 +150,44 @@ async def score_and_match(
             "profile_text": profile_text,
             "jobs": job_contexts,
             "scores": [],
-        }
+        },
+        config={
+            "run_name": "match-scoring",
+            "metadata": {"profile_id": str(profile.id), "job_count": len(job_contexts)},
+        },
     )
 
     scored_apps = []
     for score_result in result.get("scores", []):
-        if score_result.score < settings.match_score_threshold:
-            continue
-
-        # Update application with score
         app_result = await session.execute(
             select(Application).where(
                 Application.id == uuid.UUID(score_result.application_id)
             )
         )
         app = app_result.scalar_one_or_none()
-        if app:
-            app.match_score = score_result.score
-            app.match_rationale = score_result.rationale
-            app.match_strengths = score_result.strengths
-            app.match_gaps = score_result.gaps
-            session.add(app)
+        if not app:
+            continue
+
+        # Always persist scores for auditability
+        app.match_score = score_result.score
+        app.match_rationale = score_result.rationale
+        app.match_strengths = score_result.strengths
+        app.match_gaps = score_result.gaps
+
+        passed = score_result.score >= settings.match_score_threshold
+        if not passed:
+            app.status = "auto_rejected"
+        else:
             scored_apps.append(app)
+
+        session.add(app)
+        await log.ainfo(
+            "match.scored",
+            application_id=score_result.application_id,
+            score=round(score_result.score, 3),
+            passed=passed,
+            rationale=score_result.rationale[:200],
+        )
 
     await session.commit()
     await log.ainfo(
@@ -187,13 +206,24 @@ async def list_applications(
     min_score: float | None = None,
     limit: int = 20,
     offset: int = 0,
-) -> list[Application]:
-    q = select(Application).where(Application.profile_id == profile_id)
+) -> list[tuple[Application, Job]]:
+    q = (
+        select(Application, Job)
+        .join(Job, Application.job_id == Job.id)
+        .where(Application.profile_id == profile_id)
+    )
     if status:
         q = q.where(Application.status == status)
+        if status == "pending_review":
+            q = q.where(Application.match_score.isnot(None))
     if min_score is not None:
         q = q.where(Application.match_score >= min_score)
-    q = q.order_by(Application.match_score.desc().nullslast(), Application.created_at.desc())
+    q = q.order_by(
+        Application.match_score.desc().nullslast(),
+        Job.salary.isnot(None).desc(),
+        Job.posted_at.desc().nullslast(),
+        Application.created_at.desc(),
+    )
     q = q.limit(limit).offset(offset)
     result = await session.execute(q)
-    return list(result.scalars().all())
+    return list(result.tuples().all())

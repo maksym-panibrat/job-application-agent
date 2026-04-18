@@ -20,8 +20,8 @@ class AdzunaSource(JobSource):
     def source_name(self) -> str:
         return "adzuna"
 
-    def _make_cache_key(self, query: str, location: str | None, page: int) -> str:
-        raw = f"adzuna|{query}|{location or ''}|{page}"
+    def _make_cache_key(self, query: str, location: str | None, page: int, category: str) -> str:
+        raw = f"adzuna|title_only|{category}|{query}|{location or ''}|{page}"
         return hashlib.sha256(raw.encode()).hexdigest()
 
     async def _get_cached(
@@ -81,7 +81,7 @@ class AdzunaSource(JobSource):
         if not settings.adzuna_app_id or not settings.adzuna_api_key.get_secret_value():
             return [], page
 
-        cache_key = self._make_cache_key(query, location, page)
+        cache_key = self._make_cache_key(query, location, page, settings.adzuna_category)
         cached = await self._get_cached(cache_key, session)
         if cached:
             return self._parse_results(cached), page + 1
@@ -91,7 +91,12 @@ class AdzunaSource(JobSource):
         params: dict[str, Any] = {
             "app_id": settings.adzuna_app_id,
             "app_key": settings.adzuna_api_key.get_secret_value(),
-            "what": query,
+            # title_only: all keywords must appear in the job title (not just description).
+            # This prevents role searches like "Backend Engineer" from matching attorneys,
+            # materials engineers, or any other domain where the word "engineer" appears.
+            "title_only": query,
+            "category": settings.adzuna_category,
+            "sort_by": "relevance",
             "results_per_page": 20,
             "content-type": "application/json",
         }

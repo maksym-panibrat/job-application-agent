@@ -27,7 +27,7 @@ async def trigger_sync(
     result = await job_sync_service.sync_profile(profile, session)
 
     # After sync, score new jobs
-    background_tasks.add_task(_score_after_sync, profile.id)
+    background_tasks.add_task(_score_after_sync, profile.user_id)
 
     return {"status": "synced", **result}
 

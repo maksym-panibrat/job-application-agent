@@ -2,10 +2,11 @@
 
 import asyncio
 import json
+import uuid
 from datetime import UTC
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
@@ -21,6 +22,16 @@ log = structlog.get_logger()
 router = APIRouter(prefix="/api/applications", tags=["applications"])
 
 
+async def _generate_in_background(app_id: uuid.UUID, checkpointer) -> None:
+    """Background task: generate materials with its own DB session."""
+    from app.database import get_session_factory
+    from app.services.application_service import generate_materials
+
+    factory = get_session_factory()
+    async with factory() as session:
+        await generate_materials(app_id, session, checkpointer=checkpointer)
+
+
 @router.get("")
 async def list_applications(
     status: str | None = None,
@@ -30,13 +41,12 @@ async def list_applications(
     profile: UserProfile = Depends(get_current_profile),
     session: AsyncSession = Depends(get_db),
 ):
-    apps = await match_service.list_applications(
+    rows = await match_service.list_applications(
         profile.id, session, status=status, min_score=min_score, limit=limit, offset=offset
     )
 
     result = []
-    for app in apps:
-        job = await session.get(Job, app.job_id)
+    for app, job in rows:
         result.append(
             {
                 "id": str(app.id),
@@ -59,9 +69,7 @@ async def list_applications(
                     "ats_type": job.ats_type,
                     "supports_api_apply": job.supports_api_apply,
                     "posted_at": job.posted_at,
-                }
-                if job
-                else None,
+                },
             }
         )
     return result
@@ -129,11 +137,13 @@ async def get_application(
 async def review_application(
     app_id: str,
     data: dict,
+    request: Request,
+    background_tasks: BackgroundTasks,
     profile: UserProfile = Depends(get_current_profile),
     session: AsyncSession = Depends(get_db),
 ):
-    """Action: approved, dismissed, applied."""
-    import uuid
+    """Action: approved, dismissed, applied.
+    Approving also triggers immediate document generation."""
     from datetime import datetime
 
     app = await session.get(Application, uuid.UUID(app_id))
@@ -147,10 +157,17 @@ async def review_application(
         )
 
     app.status = action
+    if action == "approved" and app.generation_status in ("none", "failed"):
+        app.generation_status = "pending"
     app.updated_at = datetime.now(UTC)
     session.add(app)
     await session.commit()
-    return {"id": str(app.id), "status": app.status}
+
+    if action == "approved" and app.generation_status == "pending":
+        checkpointer = getattr(request.app.state, "checkpointer", None)
+        background_tasks.add_task(_generate_in_background, uuid.UUID(app_id), checkpointer)
+
+    return {"id": str(app.id), "status": app.status, "generation_status": app.generation_status}
 
 
 @router.patch("/{app_id}/documents/{doc_id}")
@@ -213,11 +230,12 @@ async def stream_generation_status(
 @router.post("/{app_id}/regenerate")
 async def regenerate_application(
     app_id: str,
+    request: Request,
+    background_tasks: BackgroundTasks,
     profile: UserProfile = Depends(get_current_profile),
     session: AsyncSession = Depends(get_db),
 ):
-    """Reset generation_status to pending so the scheduler will retry (F9)."""
-    import uuid
+    """Reset generation_status to pending and trigger generation immediately."""
     from datetime import datetime
 
     app = await session.get(Application, uuid.UUID(app_id))
@@ -231,6 +249,10 @@ async def regenerate_application(
     app.updated_at = datetime.now(UTC)
     session.add(app)
     await session.commit()
+
+    checkpointer = getattr(request.app.state, "checkpointer", None)
+    background_tasks.add_task(_generate_in_background, uuid.UUID(app_id), checkpointer)
+
     return {"id": str(app.id), "generation_status": "pending"}
 
 

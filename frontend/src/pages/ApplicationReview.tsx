@@ -1,7 +1,85 @@
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { api, Document } from '../api/client'
+import { api, ApplicationDetail, Document } from '../api/client'
+
+function JobDetails({ app }: { app: ApplicationDetail }) {
+  const [open, setOpen] = useState(true)
+  const job = app.job
+  if (!job) return null
+
+  const hasDetails = job.description_md || job.salary || job.contract_type || job.posted_at || app.match_strengths?.length || app.match_gaps?.length
+
+  if (!hasDetails) return null
+
+  return (
+    <div className="mb-6 border border-gray-200 rounded-md text-sm">
+      <button
+        onClick={() => setOpen((o) => !o)}
+        className="w-full flex items-center justify-between px-3 py-2 text-left font-medium text-gray-700 hover:bg-gray-50 rounded-md"
+      >
+        <span>Job Details</span>
+        <span className="text-gray-400 text-xs">{open ? '▲' : '▼'}</span>
+      </button>
+
+      {open && (
+        <div className="px-3 pb-3 border-t border-gray-100 pt-2 space-y-3">
+
+          {/* Meta row */}
+          {(job.salary || job.contract_type || job.posted_at) && (
+            <div className="flex flex-wrap gap-x-4 gap-y-1 text-gray-500">
+              {job.salary && <span>{job.salary}</span>}
+              {job.contract_type && <span>{job.contract_type}</span>}
+              {job.posted_at && (
+                <span>Posted {new Date(job.posted_at).toLocaleDateString()}</span>
+              )}
+              <a
+                href={job.apply_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-blue-600 hover:underline"
+              >
+                Original posting ↗
+              </a>
+            </div>
+          )}
+
+          {/* Strengths / Gaps */}
+          {(app.match_strengths?.length > 0 || app.match_gaps?.length > 0) && (
+            <div className="flex gap-6">
+              {app.match_strengths?.length > 0 && (
+                <div>
+                  <p className="text-xs font-semibold text-green-700 mb-1">Strengths</p>
+                  <ul className="space-y-0.5 text-gray-600">
+                    {app.match_strengths.map((s, i) => <li key={i}>· {s}</li>)}
+                  </ul>
+                </div>
+              )}
+              {app.match_gaps?.length > 0 && (
+                <div>
+                  <p className="text-xs font-semibold text-amber-700 mb-1">Gaps</p>
+                  <ul className="space-y-0.5 text-gray-600">
+                    {app.match_gaps.map((g, i) => <li key={i}>· {g}</li>)}
+                  </ul>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Full description */}
+          {job.description_md && (
+            <div>
+              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Description</p>
+              <pre className="whitespace-pre-wrap font-sans text-gray-700 text-sm leading-relaxed max-h-96 overflow-y-auto">
+                {job.description_md}
+              </pre>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
 
 function DocTab({
   label,
@@ -44,6 +122,18 @@ function DocumentEditor({
   const [content, setContent] = useState(doc.content_md)
   const [saved, setSaved] = useState(false)
   const qc = useQueryClient()
+  // Track the last AI-generated content so we can reset when the doc is replaced
+  // (e.g. after regeneration) without clobbering unsaved user edits.
+  const baseContentRef = useRef(doc.content_md)
+  useEffect(() => {
+    if (doc.content_md !== baseContentRef.current) {
+      // New AI content arrived — only reset if the user hasn't made edits
+      if (content === baseContentRef.current) {
+        setContent(doc.content_md)
+      }
+      baseContentRef.current = doc.content_md
+    }
+  }, [doc.content_md])
 
   const save = useMutation({
     mutationFn: () => api.updateDocument(appId, doc.id, content),
@@ -98,15 +188,17 @@ export default function ApplicationReview() {
   const { data: app, isLoading } = useQuery({
     queryKey: ['application', id],
     queryFn: () => api.getApplication(id!),
-    refetchInterval: (data) =>
-      data?.state?.data?.generation_status === 'generating' ? 3000 : false,
+    refetchInterval: (query) => {
+      const status = query?.state?.data?.generation_status
+      return (status === 'generating' || status === 'pending') ? 3000 : false
+    },
   })
 
   const approve = useMutation({
     mutationFn: () => api.reviewApplication(id!, 'approved'),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['applications'] })
-      navigate('/applied')
+      qc.invalidateQueries({ queryKey: ['application', id] })
     },
   })
 
@@ -140,7 +232,7 @@ export default function ApplicationReview() {
 
   const job = app.job
   const docs = app.documents ?? []
-  const isGenerating = app.generation_status === 'generating'
+  const isGenerating = app.generation_status === 'generating' || app.generation_status === 'pending'
   const isFailed = app.generation_status === 'failed'
 
   return (
@@ -166,13 +258,15 @@ export default function ApplicationReview() {
             >
               Dismiss
             </button>
-            <button
-              onClick={() => approve.mutate()}
-              disabled={approve.isPending || isGenerating}
-              className="px-3 py-1.5 text-sm font-medium bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50"
-            >
-              Approve
-            </button>
+            {app.status === 'pending_review' && (
+              <button
+                onClick={() => approve.mutate()}
+                disabled={approve.isPending}
+                className="px-3 py-1.5 text-sm font-medium bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50"
+              >
+                {approve.isPending ? 'Approving...' : 'Approve'}
+              </button>
+            )}
             <button
               onClick={() => submit.mutate()}
               disabled={submit.isPending || isGenerating || !docs.length}
@@ -191,10 +285,24 @@ export default function ApplicationReview() {
         )}
       </div>
 
+      <JobDetails app={app} />
+
+      {/* Approve prompt for pending_review with no docs */}
+      {app.status === 'pending_review' && app.generation_status === 'none' && (
+        <div className="mb-4 p-4 bg-gray-50 border border-gray-200 rounded-md text-sm text-gray-600">
+          Click <strong>Approve</strong> to generate a tailored resume and cover letter for this job.
+        </div>
+      )}
+
       {/* Generation status */}
-      {isGenerating && (
+      {(isGenerating || app.generation_status === 'pending') && (
         <div className="mb-4 p-3 bg-blue-50 text-blue-700 text-sm rounded-md animate-pulse">
           Generating tailored documents...
+        </div>
+      )}
+      {approve.isSuccess && app.generation_status === 'none' && (
+        <div className="mb-4 p-3 bg-green-50 text-green-700 text-sm rounded-md">
+          Approved. Generating documents now...
         </div>
       )}
       {isFailed && (
@@ -226,18 +334,6 @@ export default function ApplicationReview() {
           {docs[activeTab] && (
             <DocumentEditor doc={docs[activeTab]} appId={id!} />
           )}
-        </div>
-      )}
-
-      {!isGenerating && !docs.length && (
-        <div className="text-center py-12 text-gray-400">
-          <p>No documents generated yet</p>
-          <button
-            onClick={() => regen.mutate()}
-            className="mt-2 text-sm text-blue-600 hover:underline"
-          >
-            Generate now
-          </button>
         </div>
       )}
 

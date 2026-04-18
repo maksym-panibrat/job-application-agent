@@ -44,6 +44,8 @@ export interface Job {
   company_name: string
   location: string | null
   workplace_type: string | null
+  salary: string | null
+  contract_type: string | null
   description_md: string | null
   apply_url: string
   ats_type: string | null

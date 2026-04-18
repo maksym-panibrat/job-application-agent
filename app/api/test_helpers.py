@@ -8,8 +8,9 @@ to pre-populate the database with known test data.
 import uuid
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, BackgroundTasks, Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlmodel import select
 
 from app.api.deps import get_current_profile
 from app.database import get_db
@@ -33,7 +34,6 @@ async def seed_test_data(
     Idempotent — safe to call multiple times.
     Returns the IDs of seeded objects.
     """
-    from sqlmodel import select
 
     # --- Jobs ---
     async def upsert_job(external_id: str, title: str, company: str) -> Job:
@@ -128,13 +128,81 @@ async def seed_test_data(
     }
 
 
+@router.delete("/applications")
+async def clear_all_applications(
+    profile: UserProfile = Depends(get_current_profile),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    """
+    Delete all applications (and their documents) for the current profile.
+    Used by smoke tests to reset scoring state between runs.
+    """
+
+    apps_result = await session.execute(
+        select(Application).where(Application.profile_id == profile.id)
+    )
+    apps = list(apps_result.scalars().all())
+    app_ids = [a.id for a in apps]
+
+    if app_ids:
+        docs_result = await session.execute(
+            select(GeneratedDocument).where(GeneratedDocument.application_id.in_(app_ids))
+        )
+        for doc in docs_result.scalars().all():
+            await session.delete(doc)
+        await session.flush()
+
+    for app in apps:
+        await session.delete(app)
+
+    await session.commit()
+    return {"cleared": len(apps)}
+
+
+@router.post("/generate")
+async def run_generation(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    profile: UserProfile = Depends(get_current_profile),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    """
+    Enqueue document generation for all pending_review applications of the current
+    profile that haven't been generated yet.  Returns immediately; generation runs
+    in the background so smoke tests can poll GET /api/applications/{id} for
+    generation_status=ready.
+    """
+    from app.services.application_service import generate_materials
+
+    result = await session.execute(
+        select(Application).where(
+            Application.profile_id == profile.id,
+            Application.status == "pending_review",
+            Application.generation_status == "pending",
+        )
+    )
+    apps = result.scalars().all()
+    app_ids = [a.id for a in apps]
+
+    checkpointer = getattr(request.app.state, "checkpointer", None)
+
+    async def _generate_all():
+        from app.database import get_session_factory
+        factory = get_session_factory()
+        for app_id in app_ids:
+            async with factory() as gen_session:
+                await generate_materials(app_id, gen_session, checkpointer=checkpointer)
+
+    background_tasks.add_task(_generate_all)
+    return {"triggered": len(app_ids)}
+
+
 @router.delete("/seed")
 async def clear_seed_data(
     profile: UserProfile = Depends(get_current_profile),
     session: AsyncSession = Depends(get_db),
 ) -> dict:
     """Remove all E2E seed data for the current profile."""
-    from sqlmodel import select
 
     # Find seeded jobs
     jobs_result = await session.execute(select(Job).where(Job.source == "e2e"))

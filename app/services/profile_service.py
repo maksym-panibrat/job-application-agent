@@ -2,6 +2,7 @@ import uuid
 from datetime import UTC, datetime
 
 import structlog
+from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
@@ -83,18 +84,14 @@ async def _apply_extracted_resume_data(
         except Exception as exc:
             await log.awarning("resume_extraction.apply_flat_failed", error=str(exc))
 
-    for skill in skills:
-        if not isinstance(skill, dict) or not skill.get("name"):
-            continue
+    valid_skills = [s for s in skills if isinstance(s, dict) and s.get("name")]
+    if valid_skills:
         try:
-            await add_skill(profile_id, skill, session)
+            await replace_all_skills(profile_id, valid_skills, session)
         except Exception as exc:
-            await log.awarning(
-                "resume_extraction.apply_skill_failed",
-                name=skill.get("name"),
-                error=str(exc),
-            )
+            await log.awarning("resume_extraction.apply_skills_failed", error=str(exc))
 
+    valid_experiences = []
     for exp in experiences:
         if not isinstance(exp, dict) or not exp.get("company") or not exp.get("title"):
             continue
@@ -109,14 +106,12 @@ async def _apply_extracted_resume_data(
                     exp_copy[date_field] = None
         if not exp_copy.get("start_date"):
             continue
+        valid_experiences.append(exp_copy)
+    if valid_experiences:
         try:
-            await add_work_experience(profile_id, exp_copy, session)
+            await replace_all_work_experiences(profile_id, valid_experiences, session)
         except Exception as exc:
-            await log.awarning(
-                "resume_extraction.apply_exp_failed",
-                company=exp.get("company"),
-                error=str(exc),
-            )
+            await log.awarning("resume_extraction.apply_experiences_failed", error=str(exc))
 
 
 async def get_skills(profile_id: uuid.UUID, session: AsyncSession) -> list[Skill]:
@@ -165,3 +160,76 @@ async def remove_work_experience(exp_id: uuid.UUID, session: AsyncSession) -> No
     if exp:
         await session.delete(exp)
         await session.commit()
+
+
+async def replace_all_skills(
+    profile_id: uuid.UUID, skills: list[dict], session: AsyncSession
+) -> list[Skill]:
+    """Delete all existing skills for the profile and insert the new set."""
+    await session.execute(delete(Skill).where(Skill.profile_id == profile_id))
+    result = []
+    for skill_data in skills:
+        skill = Skill(profile_id=profile_id, **skill_data)
+        session.add(skill)
+        result.append(skill)
+    await session.commit()
+    return result
+
+
+async def replace_all_work_experiences(
+    profile_id: uuid.UUID, experiences: list[dict], session: AsyncSession
+) -> list[WorkExperience]:
+    """Delete all existing work experiences for the profile and insert the new set."""
+    await session.execute(delete(WorkExperience).where(WorkExperience.profile_id == profile_id))
+    result = []
+    for exp_data in experiences:
+        exp = WorkExperience(profile_id=profile_id, **exp_data)
+        session.add(exp)
+        result.append(exp)
+    await session.commit()
+    return result
+
+
+async def upsert_skill(
+    profile_id: uuid.UUID, skill_data: dict, session: AsyncSession
+) -> Skill:
+    """Insert or update a skill matched by (profile_id, name)."""
+    result = await session.execute(
+        select(Skill).where(
+            Skill.profile_id == profile_id,
+            Skill.name == skill_data["name"],
+        )
+    )
+    existing = result.scalar_one_or_none()
+    if existing:
+        for key, value in skill_data.items():
+            if hasattr(existing, key) and value is not None:
+                setattr(existing, key, value)
+        session.add(existing)
+        await session.commit()
+        await session.refresh(existing)
+        return existing
+    return await add_skill(profile_id, skill_data, session)
+
+
+async def upsert_work_experience(
+    profile_id: uuid.UUID, exp_data: dict, session: AsyncSession
+) -> WorkExperience:
+    """Insert or update a work experience matched by (profile_id, company, title)."""
+    result = await session.execute(
+        select(WorkExperience).where(
+            WorkExperience.profile_id == profile_id,
+            WorkExperience.company == exp_data["company"],
+            WorkExperience.title == exp_data["title"],
+        )
+    )
+    existing = result.scalar_one_or_none()
+    if existing:
+        for key, value in exp_data.items():
+            if hasattr(existing, key) and value is not None:
+                setattr(existing, key, value)
+        session.add(existing)
+        await session.commit()
+        await session.refresh(existing)
+        return existing
+    return await add_work_experience(profile_id, exp_data, session)

@@ -20,13 +20,13 @@ function GenerationBadge({ status }: { status: string }) {
   if (status === 'ready') return (
     <span className="text-xs text-green-600 font-medium">Documents ready</span>
   )
-  if (status === 'generating') return (
+  if (status === 'generating' || status === 'pending') return (
     <span className="text-xs text-blue-500 animate-pulse">Preparing...</span>
   )
   if (status === 'failed') return (
     <span className="text-xs text-red-500">Generation failed</span>
   )
-  return <span className="text-xs text-gray-400">Pending</span>
+  return null
 }
 
 function MatchCard({ app }: { app: Application }) {
@@ -53,6 +53,11 @@ function MatchCard({ app }: { app: Application }) {
             <p className="text-xs text-gray-400 mt-0.5">
               {job.location}
               {job.workplace_type && ` · ${job.workplace_type}`}
+            </p>
+          )}
+          {(job.salary || job.contract_type) && (
+            <p className="text-xs text-gray-400 mt-0.5">
+              {[job.salary, job.contract_type].filter(Boolean).join(' · ')}
             </p>
           )}
         </div>

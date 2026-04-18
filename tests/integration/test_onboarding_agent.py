@@ -19,20 +19,25 @@ from app.agents.onboarding import build_graph
 
 def _make_fake_llm(responses: list):
     """
-    Returns a simple callable mock that behaves like a bound ChatAnthropic
-    and cycles through `responses` (list of AIMessage objects).
+    Returns a mock that behaves like a bound ChatAnthropic and cycles through
+    `responses` (list of AIMessage objects). Supports both sync invoke() and
+    async ainvoke() since the onboarding agent uses ainvoke().
     """
-    from unittest.mock import MagicMock
+    from unittest.mock import AsyncMock, MagicMock
 
     call_count = {"n": 0}
 
-    def invoke(messages, **kwargs):
+    def _next_response(messages, **kwargs):
         idx = call_count["n"] % len(responses)
         call_count["n"] += 1
         return responses[idx]
 
+    async def ainvoke(messages, **kwargs):
+        return _next_response(messages, **kwargs)
+
     llm = MagicMock()
-    llm.invoke.side_effect = invoke
+    llm.invoke.side_effect = _next_response
+    llm.ainvoke = AsyncMock(side_effect=ainvoke)
     llm.bind_tools.return_value = llm
     return llm
 

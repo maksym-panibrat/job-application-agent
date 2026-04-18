@@ -1,0 +1,251 @@
+"""
+Unit tests for match_service score_and_match() threshold logic and logging.
+
+These tests pass jobs explicitly to skip the DB auto-fetch path, and mock
+the session and build_graph so no real DB or LLM is needed.
+"""
+
+import os
+import uuid
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+import structlog.testing
+
+_P = "app.services.match_service"
+_GET_SKILLS = f"{_P}.profile_service.get_skills"
+_GET_EXPS = f"{_P}.profile_service.get_work_experiences"
+_GET_OR_CREATE = f"{_P}.get_or_create_application"
+_BUILD_GRAPH = "app.agents.matching_agent.build_graph"
+_GET_SETTINGS = f"{_P}.get_settings"
+
+
+def setup_env():
+    os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/test")
+    os.environ.setdefault("ANTHROPIC_API_KEY", "test-key")
+
+
+def _make_profile() -> MagicMock:
+    p = MagicMock()
+    p.id = uuid.uuid4()
+    p.full_name = "Test User"
+    p.seniority = "senior"
+    p.target_roles = ["Software Engineer"]
+    p.remote_ok = True
+    p.base_resume_md = "Resume content"
+    return p
+
+
+def _make_job(job_id: uuid.UUID | None = None) -> MagicMock:
+    j = MagicMock()
+    j.id = job_id or uuid.uuid4()
+    j.title = "Software Engineer"
+    j.company_name = "Acme Corp"
+    j.description_md = "A great job."
+    return j
+
+
+def _make_application(
+    app_id: uuid.UUID | None = None, job_id: uuid.UUID | None = None
+) -> MagicMock:
+    a = MagicMock()
+    a.id = app_id or uuid.uuid4()
+    a.job_id = job_id or uuid.uuid4()
+    a.status = "pending_review"
+    a.match_score = None
+    a.match_rationale = None
+    a.match_strengths = []
+    a.match_gaps = []
+    return a
+
+
+def _make_score_result(application_id: str, score: float):
+    from app.agents.matching_agent import ScoreResult
+    return ScoreResult(
+        application_id=application_id,
+        score=score,
+        rationale=f"Score is {score}",
+        strengths=["relevant experience"],
+        gaps=["missing skill X"],
+    )
+
+
+def _make_mock_session(app: MagicMock):
+    """Build an AsyncMock session that returns the given app from execute()."""
+    session = AsyncMock()
+    execute_result = MagicMock()
+    execute_result.scalar_one_or_none.return_value = app
+    session.execute.return_value = execute_result
+    session.commit = AsyncMock()
+    session.refresh = AsyncMock()
+    session.add = MagicMock()
+    return session
+
+
+@pytest.mark.asyncio
+async def test_below_threshold_sets_auto_rejected():
+    setup_env()
+    from app.services.match_service import score_and_match
+
+    app_id = uuid.uuid4()
+    job_id = uuid.uuid4()
+    app = _make_application(app_id=app_id, job_id=job_id)
+    job = _make_job(job_id=job_id)
+    session = _make_mock_session(app)
+
+    score_result = _make_score_result(str(app_id), score=0.4)
+    mock_graph = AsyncMock()
+    mock_graph.ainvoke.return_value = {"scores": [score_result]}
+
+    profile = _make_profile()
+
+    with (
+        patch(_GET_SKILLS, new=AsyncMock(return_value=[])),
+        patch(_GET_EXPS, new=AsyncMock(return_value=[])),
+        patch(_GET_OR_CREATE, new=AsyncMock(return_value=app)),
+        patch(_BUILD_GRAPH, return_value=mock_graph),
+        patch(_GET_SETTINGS) as mock_get_settings,
+    ):
+        settings = MagicMock()
+        settings.match_score_threshold = 0.65
+        mock_get_settings.return_value = settings
+
+        scored = await score_and_match(profile, session, jobs=[job])
+
+    assert scored == []
+    assert app.status == "auto_rejected"
+    assert app.match_score == 0.4
+    assert app.match_rationale == "Score is 0.4"
+    assert app.match_strengths == ["relevant experience"]
+    assert app.match_gaps == ["missing skill X"]
+
+
+@pytest.mark.asyncio
+async def test_above_threshold_stays_pending_review():
+    setup_env()
+    from app.services.match_service import score_and_match
+
+    app_id = uuid.uuid4()
+    job_id = uuid.uuid4()
+    app = _make_application(app_id=app_id, job_id=job_id)
+    job = _make_job(job_id=job_id)
+    session = _make_mock_session(app)
+
+    score_result = _make_score_result(str(app_id), score=0.85)
+    mock_graph = AsyncMock()
+    mock_graph.ainvoke.return_value = {"scores": [score_result]}
+
+    profile = _make_profile()
+
+    with (
+        patch(_GET_SKILLS, new=AsyncMock(return_value=[])),
+        patch(_GET_EXPS, new=AsyncMock(return_value=[])),
+        patch(_GET_OR_CREATE, new=AsyncMock(return_value=app)),
+        patch(_BUILD_GRAPH, return_value=mock_graph),
+        patch(_GET_SETTINGS) as mock_get_settings,
+    ):
+        settings = MagicMock()
+        settings.match_score_threshold = 0.65
+        mock_get_settings.return_value = settings
+
+        scored = await score_and_match(profile, session, jobs=[job])
+
+    assert len(scored) == 1
+    assert scored[0] is app
+    assert app.status == "pending_review"  # unchanged
+    assert app.match_score == 0.85
+
+
+@pytest.mark.asyncio
+async def test_mixed_threshold_scores():
+    """One above, one at threshold (passes), one below — all get scores persisted."""
+    setup_env()
+    from app.services.match_service import score_and_match
+
+    ids = [(uuid.uuid4(), uuid.uuid4()) for _ in range(3)]
+    apps = [_make_application(app_id=aid, job_id=jid) for aid, jid in ids]
+    jobs = [_make_job(job_id=jid) for _, jid in ids]
+    scores = [0.9, 0.65, 0.4]
+
+    score_results = [_make_score_result(str(ids[i][0]), scores[i]) for i in range(3)]
+
+    # Session returns a different app for each execute() call
+    session = AsyncMock()
+    call_count = [0]
+
+    async def execute_side_effect(*args, **kwargs):
+        result = MagicMock()
+        result.scalar_one_or_none.return_value = apps[call_count[0]]
+        call_count[0] += 1
+        return result
+
+    session.execute.side_effect = execute_side_effect
+    session.commit = AsyncMock()
+    session.add = MagicMock()
+
+    mock_graph = AsyncMock()
+    mock_graph.ainvoke.return_value = {"scores": score_results}
+
+    profile = _make_profile()
+
+    with (
+        patch(_GET_SKILLS, new=AsyncMock(return_value=[])),
+        patch(_GET_EXPS, new=AsyncMock(return_value=[])),
+        patch(_GET_OR_CREATE, new=AsyncMock(side_effect=apps)),
+        patch(_BUILD_GRAPH, return_value=mock_graph),
+        patch(_GET_SETTINGS) as mock_get_settings,
+    ):
+        settings = MagicMock()
+        settings.match_score_threshold = 0.65
+        mock_get_settings.return_value = settings
+
+        scored = await score_and_match(profile, session, jobs=jobs)
+
+    assert len(scored) == 2  # 0.9 and 0.65 pass
+    assert apps[0].match_score == 0.9
+    assert apps[0].status == "pending_review"
+    assert apps[1].match_score == 0.65
+    assert apps[1].status == "pending_review"
+    assert apps[2].match_score == 0.4
+    assert apps[2].status == "auto_rejected"
+
+
+@pytest.mark.asyncio
+async def test_per_job_logging_emitted():
+    """match.scored is logged once per job with score, passed, and rationale."""
+    setup_env()
+    from app.services.match_service import score_and_match
+
+    app_id = uuid.uuid4()
+    job_id = uuid.uuid4()
+    app = _make_application(app_id=app_id, job_id=job_id)
+    job = _make_job(job_id=job_id)
+    session = _make_mock_session(app)
+
+    score_result = _make_score_result(str(app_id), score=0.75)
+    mock_graph = AsyncMock()
+    mock_graph.ainvoke.return_value = {"scores": [score_result]}
+
+    profile = _make_profile()
+
+    with (
+        patch(_GET_SKILLS, new=AsyncMock(return_value=[])),
+        patch(_GET_EXPS, new=AsyncMock(return_value=[])),
+        patch(_GET_OR_CREATE, new=AsyncMock(return_value=app)),
+        patch(_BUILD_GRAPH, return_value=mock_graph),
+        patch(_GET_SETTINGS) as mock_get_settings,
+    ):
+        settings = MagicMock()
+        settings.match_score_threshold = 0.65
+        mock_get_settings.return_value = settings
+
+        with structlog.testing.capture_logs() as captured:
+            await score_and_match(profile, session, jobs=[job])
+
+    scored_events = [e for e in captured if e.get("event") == "match.scored"]
+    assert len(scored_events) == 1
+    ev = scored_events[0]
+    assert ev["application_id"] == str(app_id)
+    assert ev["score"] == 0.75
+    assert ev["passed"] is True
+    assert "rationale" in ev

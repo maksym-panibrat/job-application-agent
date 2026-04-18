@@ -8,17 +8,11 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_profile
-from app.database import get_db
+from app.database import get_db, get_session_factory
 from app.models.user_profile import UserProfile
 
 log = structlog.get_logger()
 router = APIRouter(prefix="/api/chat", tags=["chat"])
-
-
-class ChatMessage:
-    def __init__(self, role: str, content: str):
-        self.role = role
-        self.content = content
 
 
 @router.post("/messages")
@@ -42,7 +36,6 @@ async def send_message(
     checkpointer = getattr(app_state, "checkpointer", None)
 
     if checkpointer is None:
-        # Fallback: no-op response if checkpointer not initialized
         async def no_op():
             msg = json.dumps({"content": "Agent not available — checkpointer not initialized."})
             yield f"data: {msg}\n\n"
@@ -54,20 +47,47 @@ async def send_message(
 
     graph = build_graph(checkpointer)
     thread_id = str(profile.id)
-    config = {"configurable": {"thread_id": thread_id}}
+    config = {
+        "configurable": {
+            "thread_id": thread_id,
+            "db_factory": get_session_factory(),
+            "profile_id": str(profile.id),
+        }
+    }
+
+    # Build graph input — always pass profile_id and current resume_md
+    graph_input: dict = {
+        "messages": [{"role": "user", "content": user_message}],
+        "profile_id": str(profile.id),
+        "resume_md": profile.base_resume_md,
+        "profile_updates": {},
+    }
 
     async def stream_response():
         try:
+            from langchain_core.messages import AIMessageChunk
+
             async for chunk in graph.astream(
-                {"messages": [{"role": "user", "content": user_message}]},
+                graph_input,
                 config,
                 stream_mode="messages",
             ):
-                if isinstance(chunk, tuple) and len(chunk) == 2:
-                    msg, metadata = chunk
-                    content = getattr(msg, "content", "")
-                    if content and isinstance(content, str):
-                        yield f"data: {json.dumps({'content': content})}\n\n"
+                if not (isinstance(chunk, tuple) and len(chunk) == 2):
+                    continue
+                msg, metadata = chunk
+                # Only forward AI response text; skip ToolMessages and non-agent nodes
+                if not isinstance(msg, AIMessageChunk):
+                    continue
+                content = msg.content
+                text = ""
+                if isinstance(content, str):
+                    text = content
+                elif isinstance(content, list):
+                    for block in content:
+                        if isinstance(block, dict) and block.get("type") == "text":
+                            text += block.get("text", "")
+                if text:
+                    yield f"data: {json.dumps({'content': text})}\n\n"
         except Exception as e:
             await log.aexception("chat.stream_error", error=str(e))
             yield f"data: {json.dumps({'error': 'Stream error'})}\n\n"

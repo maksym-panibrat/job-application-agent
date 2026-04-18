@@ -153,5 +153,5 @@ async def test_generate_materials_max_attempts_guard(db_session):
     await generate_materials(application.id, db_session, checkpointer=None)
 
     await db_session.refresh(application)
-    # Status unchanged (still "pending")
-    assert application.generation_status == "pending"
+    # Status unchanged (still "none" — model default since generation never started)
+    assert application.generation_status == "none"

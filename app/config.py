@@ -23,15 +23,22 @@ class Settings(BaseSettings):
     jwt_secret: SecretStr = SecretStr("dev-secret")
     search_auto_pause_days: int = 7
     sentry_dsn: SecretStr | None = None
-    langchain_tracing_v2: bool = False
-    langchain_api_key: SecretStr | None = None
-    langchain_project: str = "job-application-agent"
+    langsmith_tracing: bool = False
+    langsmith_api_key: SecretStr | None = None
+    langsmith_project: str = "job-application-agent"
     job_stale_after_days: int = 14
     adzuna_max_queries_per_sync: int = 3
     adzuna_max_pages_per_sync: int = 1
     adzuna_cache_ttl_hours: int = 24
+    adzuna_search_distance_km: int = 50
+    adzuna_category: str = "it-jobs"
     tavily_api_key: SecretStr | None = None
     log_level: str = "INFO"
+    jsearch_api_key: SecretStr = SecretStr("")
+    jsearch_max_results_per_query: int = 10
+    anthropic_base_url: str | None = None
+    matching_max_concurrency: int = 2
+    matching_jobs_per_batch: int = 20
 
     @model_validator(mode="after")
     def validate_production_secrets(self) -> "Settings":

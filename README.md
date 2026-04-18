@@ -48,6 +48,8 @@ uv run ruff check app/ tests/           # lint
 uv run pytest tests/unit/ -v            # fast, no DB
 uv run pytest tests/integration/ -v    # real Postgres (testcontainers)
 uv run pytest tests/e2e/ -v             # full stack
+uv run pytest tests/smoke/ -v          # against live server (localhost:8000)
+uv run pytest tests/smoke/ -v --has-seed-api  # smoke with pre-seeded data
 cd frontend && npm test                 # component tests
 cd frontend && npm run build            # build to app/static/
 ```
@@ -68,6 +70,7 @@ tests/
   unit/        Pure Python, no I/O
   integration/ Real Postgres via testcontainers
   e2e/         Full FastAPI stack via httpx
+  smoke/       Live HTTP smoke tests (requires running server)
 ```
 
 See `.env.example` for all configuration options and `CLAUDE.md` for architecture notes.

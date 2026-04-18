@@ -12,6 +12,8 @@ class JobData(BaseModel):
     location: str | None = None
     workplace_type: str | None = None  # remote, hybrid, onsite
     description_md: str | None = None
+    salary: str | None = None
+    contract_type: str | None = None
     apply_url: str
     posted_at: datetime | None = None
     ats_type: str | None = None  # greenhouse, lever, ashby
@@ -23,6 +25,11 @@ class JobSource(ABC):
     @abstractmethod
     def source_name(self) -> str:
         """Unique key used in jobs.source and source_cursors JSONB."""
+
+    @property
+    def needs_enrichment(self) -> bool:
+        """Whether jobs from this source need a separate enrichment fetch for full descriptions."""
+        return True
 
     @abstractmethod
     async def search(

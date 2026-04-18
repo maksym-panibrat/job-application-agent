@@ -190,19 +190,21 @@ async def test_stale_job_marking(test_app, monkeypatch):
     """
     Jobs not refreshed within stale_after_days are marked is_active=False on next sync.
     """
-    jobs = [_make_job_data(0), _make_job_data(1)]
-    mock_source = _mock_source("adzuna", jobs)
+    all_jobs = [_make_job_data(0), _make_job_data(1)]
     empty_jsearch = _mock_source("jsearch", [])
 
-    monkeypatch.setattr("app.services.job_sync_service.AdzunaSource", lambda: mock_source)
+    # First sync: both jobs appear
+    monkeypatch.setattr(
+        "app.services.job_sync_service.AdzunaSource",
+        lambda: _mock_source("adzuna", all_jobs),
+    )
     monkeypatch.setattr("app.services.job_sync_service.JSearchSource", lambda: empty_jsearch)
     monkeypatch.setattr("app.api.jobs._score_after_sync", AsyncMock())
 
-    # Initial sync
     resp = await test_app.post("/api/jobs/sync")
     assert resp.json()["new_jobs"] == 2
 
-    # Backdate one job's fetched_at to 20 days ago (beyond default 14-day stale threshold)
+    # Backdate job #0's fetched_at so it looks stale
     from app.database import get_session_factory
     from app.models.job import Job
 
@@ -218,7 +220,12 @@ async def test_stale_job_marking(test_app, monkeypatch):
         await session.commit()
         stale_job_id = stale_job.id
 
-    # Second sync: marks the backdated job stale
+    # Second sync: only job #1 returned — job #0 is NOT refreshed, so mark_stale picks it up
+    monkeypatch.setattr(
+        "app.services.job_sync_service.AdzunaSource",
+        lambda: _mock_source("adzuna", [all_jobs[1]]),
+    )
+
     resp2 = await test_app.post("/api/jobs/sync")
     assert resp2.status_code == 200
     assert resp2.json()["stale_jobs"] >= 1

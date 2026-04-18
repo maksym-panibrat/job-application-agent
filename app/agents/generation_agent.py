@@ -44,12 +44,34 @@ class GenerationState(TypedDict):
     user_decision: dict  # set on resume after interrupt
 
 
+def _extract_text(content) -> str:
+    """Normalize LangChain message content to a plain string.
+
+    ChatAnthropic may return a list of content blocks (e.g. text + tool_use) for
+    newer models. Extract and join the text blocks so we always store a clean string.
+    """
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for block in content:
+            if isinstance(block, str):
+                parts.append(block)
+            elif isinstance(block, dict) and block.get("type") == "text":
+                parts.append(block.get("text", ""))
+        return "\n".join(parts).strip()
+    return str(content)
+
+
 def get_llm() -> ChatAnthropic:
     settings = get_settings()
-    return ChatAnthropic(
+    kwargs: dict = dict(
         model=settings.claude_model,
         api_key=settings.anthropic_api_key.get_secret_value(),
     )
+    if settings.anthropic_base_url:
+        kwargs["anthropic_api_url"] = settings.anthropic_base_url
+    return ChatAnthropic(**kwargs)
 
 
 RESUME_PROMPT = """\
@@ -134,7 +156,7 @@ def build_graph(checkpointer: AsyncPostgresSaver) -> StateGraph:
             "documents": [
                 {
                     "doc_type": "tailored_resume",
-                    "content_md": result.content,
+                    "content_md": _extract_text(result.content),
                     "generation_model": model_name,
                 }
             ]
@@ -152,7 +174,7 @@ def build_graph(checkpointer: AsyncPostgresSaver) -> StateGraph:
             "documents": [
                 {
                     "doc_type": "cover_letter",
-                    "content_md": result.content,
+                    "content_md": _extract_text(result.content),
                     "generation_model": model_name,
                 }
             ]
@@ -174,7 +196,7 @@ def build_graph(checkpointer: AsyncPostgresSaver) -> StateGraph:
             "documents": [
                 {
                     "doc_type": "custom_answers",
-                    "content_md": result.content,
+                    "content_md": _extract_text(result.content),
                     "generation_model": model_name,
                 }
             ]

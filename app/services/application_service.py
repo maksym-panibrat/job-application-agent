@@ -159,6 +159,7 @@ async def _generate_direct(
     from app.agents.generation_agent import (
         COVER_LETTER_PROMPT,
         RESUME_PROMPT,
+        _extract_text,
         truncate_description,
     )
     from app.config import get_settings
@@ -182,7 +183,7 @@ async def _generate_direct(
     documents.append(
         {
             "doc_type": "tailored_resume",
-            "content_md": resume_result.content,
+            "content_md": _extract_text(resume_result.content),
             "generation_model": settings.claude_model,
         }
     )
@@ -198,7 +199,7 @@ async def _generate_direct(
     documents.append(
         {
             "doc_type": "cover_letter",
-            "content_md": cl_result.content,
+            "content_md": _extract_text(cl_result.content),
             "generation_model": settings.claude_model,
         }
     )
