@@ -1,5 +1,5 @@
-import pytest
 from unittest.mock import AsyncMock, patch
+
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -7,7 +7,7 @@ from app.config import Settings
 
 
 def make_app(secret: str = "test-secret"):
-    from app.api.internal_cron import router, get_cron_settings
+    from app.api.internal_cron import get_cron_settings, router
 
     test_app = FastAPI()
     test_app.include_router(router)
@@ -44,7 +44,10 @@ def test_sync_correct_secret_calls_task():
 def test_generation_queue_correct_secret_calls_task():
     client = make_app(secret="real-secret")
     with patch("app.api.internal_cron.run_generation_queue", new=AsyncMock()) as mock:
-        resp = client.post("/internal/cron/generation-queue", headers={"X-Cron-Secret": "real-secret"})
+        resp = client.post(
+            "/internal/cron/generation-queue",
+            headers={"X-Cron-Secret": "real-secret"},
+        )
     assert resp.status_code == 200
     mock.assert_called_once()
 

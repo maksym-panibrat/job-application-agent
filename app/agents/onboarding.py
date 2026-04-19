@@ -12,10 +12,10 @@ from datetime import UTC, datetime
 from typing import Annotated
 
 import structlog
-from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import AIMessage, AnyMessage, SystemMessage
 from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import tool
+from langchain_google_genai import ChatGoogleGenerativeAI
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from langgraph.graph import END, StateGraph
 from langgraph.graph.message import add_messages

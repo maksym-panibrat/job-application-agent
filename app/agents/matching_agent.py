@@ -11,9 +11,9 @@ import threading
 from typing import Annotated
 
 import structlog
-from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import HumanMessage
 from langchain_core.tools import tool
+from langchain_google_genai import ChatGoogleGenerativeAI
 from langgraph.graph import END, StateGraph
 from langgraph.types import Send
 from pydantic import BaseModel, field_validator
