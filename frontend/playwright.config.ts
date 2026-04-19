@@ -16,13 +16,6 @@ export default defineConfig({
   },
   webServer: [
     {
-      // Mock Anthropic LLM server
-      command: 'cd .. && uv run python tests/e2e_helpers/mock_llm_server.py',
-      port: 9000,
-      timeout: 15_000,
-      reuseExistingServer: !process.env.CI,
-    },
-    {
       // FastAPI backend
       command: 'cd .. && uv run uvicorn app.main:app --port 8000',
       port: 8000,
@@ -31,9 +24,9 @@ export default defineConfig({
       env: {
         DATABASE_URL: databaseUrl,
         ANTHROPIC_API_KEY: 'test-key',
-        ANTHROPIC_BASE_URL: 'http://localhost:9000',
         AUTH_ENABLED: 'false',
-        ENVIRONMENT: 'development',
+        ENVIRONMENT: 'test',
+        GOOGLE_API_KEY: 'fake-test-key',
       },
     },
     {
