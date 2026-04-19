@@ -11,7 +11,7 @@ import threading
 from typing import Annotated
 
 import structlog
-from langchain_anthropic import ChatAnthropic
+from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import HumanMessage
 from langchain_core.tools import tool
 from langgraph.graph import END, StateGraph
@@ -70,15 +70,15 @@ class SingleJobState(TypedDict):
     job: JobContext
 
 
-def get_llm() -> ChatAnthropic:
+def get_llm():
     settings = get_settings()
-    kwargs: dict = dict(
-        model=settings.claude_matching_model,
-        api_key=settings.anthropic_api_key.get_secret_value(),
+    if settings.environment == "test":
+        from app.agents.test_llm import get_fake_llm
+        return get_fake_llm("matching")
+    return ChatGoogleGenerativeAI(
+        model=settings.llm_matching_model,
+        google_api_key=settings.google_api_key.get_secret_value(),
     )
-    if settings.anthropic_base_url:
-        kwargs["anthropic_api_url"] = settings.anthropic_base_url
-    return ChatAnthropic(**kwargs)
 
 
 SCORING_PROMPT = """\
