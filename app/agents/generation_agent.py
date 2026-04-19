@@ -12,7 +12,7 @@ import operator
 from typing import Annotated
 
 import structlog
-from langchain_anthropic import ChatAnthropic
+from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import HumanMessage
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from langgraph.graph import END, StateGraph
@@ -47,8 +47,8 @@ class GenerationState(TypedDict):
 def _extract_text(content) -> str:
     """Normalize LangChain message content to a plain string.
 
-    ChatAnthropic may return a list of content blocks (e.g. text + tool_use) for
-    newer models. Extract and join the text blocks so we always store a clean string.
+    The LLM may return a list of content blocks (e.g. text + tool_use) for
+    some models. Extract and join the text blocks so we always store a clean string.
     """
     if isinstance(content, str):
         return content
@@ -63,15 +63,15 @@ def _extract_text(content) -> str:
     return str(content)
 
 
-def get_llm() -> ChatAnthropic:
+def get_llm():
     settings = get_settings()
-    kwargs: dict = dict(
-        model=settings.claude_model,
-        api_key=settings.anthropic_api_key.get_secret_value(),
+    if settings.environment == "test":
+        from app.agents.test_llm import get_fake_llm
+        return get_fake_llm("generation")
+    return ChatGoogleGenerativeAI(
+        model=settings.llm_generation_model,
+        google_api_key=settings.google_api_key.get_secret_value(),
     )
-    if settings.anthropic_base_url:
-        kwargs["anthropic_api_url"] = settings.anthropic_base_url
-    return ChatAnthropic(**kwargs)
 
 
 RESUME_PROMPT = """\
@@ -133,7 +133,7 @@ A: [answer]
 
 def build_graph(checkpointer: AsyncPostgresSaver) -> StateGraph:
     llm = get_llm()
-    model_name = get_settings().claude_model
+    model_name = get_settings().llm_generation_model
 
     def load_context_node(state: GenerationState) -> dict:
         return {"generation_status": "generating"}
