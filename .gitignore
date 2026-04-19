@@ -52,6 +52,9 @@ Thumbs.db
 # Alembic
 # (keep versions/ tracked, but not __pycache__ inside)
 
+# Git worktrees
+.worktrees/
+
 # Misc
 *.log
 *.sqlite
