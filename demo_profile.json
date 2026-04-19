@@ -1,0 +1,27 @@
+{
+  "full_name": "Alex Demo",
+  "email": "alex@example.com",
+  "target_roles": ["Senior Software Engineer"],
+  "target_locations": ["Remote"],
+  "remote_ok": true,
+  "seniority": "senior",
+  "search_keywords": ["backend", "API", "Python", "FastAPI"],
+  "skills": [
+    {"name": "Python", "category": "language", "proficiency": "expert"},
+    {"name": "TypeScript", "category": "language", "proficiency": "proficient"},
+    {"name": "FastAPI", "category": "framework", "proficiency": "expert"},
+    {"name": "PostgreSQL", "category": "domain", "proficiency": "proficient"},
+    {"name": "Docker", "category": "domain", "proficiency": "proficient"},
+    {"name": "AWS", "category": "cloud", "proficiency": "proficient"}
+  ],
+  "work_experiences": [
+    {
+      "company": "Tech Startup",
+      "title": "Software Engineer",
+      "start_date": "2021-01-01T00:00:00+00:00",
+      "end_date": "2024-01-01T00:00:00+00:00",
+      "description_md": "- Built REST APIs serving 50k daily active users\n- Led migration from monolith to microservices\n- Reduced p99 latency by 40% via query optimization",
+      "technologies": ["Python", "FastAPI", "PostgreSQL", "Docker"]
+    }
+  ]
+}

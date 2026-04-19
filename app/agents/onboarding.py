@@ -12,10 +12,10 @@ from datetime import UTC, datetime
 from typing import Annotated
 
 import structlog
-from langchain_anthropic import ChatAnthropic
 from langchain_core.messages import AIMessage, AnyMessage, SystemMessage
 from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import tool
+from langchain_google_genai import ChatGoogleGenerativeAI
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from langgraph.graph import END, StateGraph
 from langgraph.graph.message import add_messages
@@ -62,15 +62,15 @@ class OnboardingState(TypedDict):
     resume_md: str | None
 
 
-def get_llm() -> ChatAnthropic:
+def get_llm():
     settings = get_settings()
-    kwargs: dict = dict(
-        model=settings.claude_model,
-        api_key=settings.anthropic_api_key.get_secret_value(),
+    if settings.environment == "test":
+        from app.agents.test_llm import get_fake_llm
+        return get_fake_llm("onboarding")
+    return ChatGoogleGenerativeAI(
+        model=settings.llm_generation_model,
+        google_api_key=settings.google_api_key.get_secret_value(),
     )
-    if settings.anthropic_base_url:
-        kwargs["anthropic_api_url"] = settings.anthropic_base_url
-    return ChatAnthropic(**kwargs)
 
 
 def build_graph(checkpointer: AsyncPostgresSaver) -> StateGraph:
@@ -198,7 +198,9 @@ def build_graph(checkpointer: AsyncPostgresSaver) -> StateGraph:
                     if not exp_copy.get("start_date"):
                         continue
                     try:
-                        await profile_service.upsert_work_experience(profile_uuid, exp_copy, session)
+                        await profile_service.upsert_work_experience(
+                            profile_uuid, exp_copy, session
+                        )
                     except Exception as exc:
                         await log.awarning(
                             "onboarding.process_tool_results.exp_failed",

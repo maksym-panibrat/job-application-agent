@@ -12,6 +12,7 @@ from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from app.api.applications import router as applications_router
 from app.api.chat import router as chat_router
 from app.api.documents import router as documents_router
+from app.api.internal_cron import router as cron_router
 from app.api.jobs import router as jobs_router
 from app.api.profile import router as profile_router
 from app.config import get_settings
@@ -69,23 +70,16 @@ async def lifespan(app: FastAPI):
     # setup() runs CREATE INDEX CONCURRENTLY which cannot run inside a pipeline,
     # so we run it once on a plain connection before opening the pipeline saver.
     async with AsyncPostgresSaver.from_conn_string(psycopg_uri) as setup_checkpointer:
-        await setup_checkpointer.setup()
+        try:
+            await setup_checkpointer.setup()
+        except Exception as exc:
+            if "already exists" not in str(exc).lower():
+                raise
     async with AsyncPostgresSaver.from_conn_string(psycopg_uri, pipeline=True) as checkpointer:
         app.state.checkpointer = checkpointer
         await log.ainfo("checkpointer.ready")
 
-        # Start scheduler (production only — scheduler runs 24h sync + generation queue)
-        scheduler = None
-        if settings.environment == "production":
-            from app.scheduler.tasks import setup_scheduler
-
-            scheduler = setup_scheduler(app)
-            await log.ainfo("scheduler.started")
-
         yield
-
-        if scheduler is not None:
-            scheduler.shutdown(wait=False)
 
     await log.ainfo("app.shutdown")
 
@@ -117,6 +111,7 @@ app.include_router(chat_router)
 app.include_router(jobs_router)
 app.include_router(applications_router)
 app.include_router(documents_router)
+app.include_router(cron_router)
 
 # Dev-only endpoints for E2E testing
 settings = get_settings()

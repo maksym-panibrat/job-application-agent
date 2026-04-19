@@ -6,11 +6,12 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     database_url: PostgresDsn
-    anthropic_api_key: SecretStr
+    google_api_key: SecretStr = SecretStr("")
+    llm_generation_model: str = "gemini-2.5-pro"
+    llm_matching_model: str = "gemini-2.5-flash"
+    llm_resume_extraction_model: str = "gemini-2.5-flash"
     adzuna_app_id: str = ""
     adzuna_api_key: SecretStr = SecretStr("")
-    claude_model: str = "claude-sonnet-4-6"
-    claude_matching_model: str = "claude-haiku-4-5-20251001"
     match_score_threshold: float = 0.65
     max_matches_displayed: int = 20
     job_sync_interval_hours: int = 24
@@ -21,6 +22,7 @@ class Settings(BaseSettings):
     github_oauth_client_id: SecretStr | None = None
     github_oauth_client_secret: SecretStr | None = None
     jwt_secret: SecretStr = SecretStr("dev-secret")
+    cron_shared_secret: SecretStr = SecretStr("dev-cron-secret")
     search_auto_pause_days: int = 7
     sentry_dsn: SecretStr | None = None
     langsmith_tracing: bool = False
@@ -36,7 +38,6 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     jsearch_api_key: SecretStr = SecretStr("")
     jsearch_max_results_per_query: int = 10
-    anthropic_base_url: str | None = None
     matching_max_concurrency: int = 2
     matching_jobs_per_batch: int = 20
 

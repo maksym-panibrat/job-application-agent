@@ -1,0 +1,39 @@
+name: Cron
+
+on:
+  schedule:
+    - cron: '0 */4 * * *'
+    - cron: '*/10 * * * *'
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+
+jobs:
+  sync:
+    if: github.event.schedule == '0 */4 * * *' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger job sync
+        run: |
+          curl -sf -X POST \
+            -H "X-Cron-Secret: ${{ secrets.CRON_SHARED_SECRET }}" \
+            https://${{ secrets.CLOUD_RUN_URL }}/internal/cron/sync
+
+  generation-queue:
+    if: github.event.schedule == '*/10 * * * *' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger generation queue
+        run: |
+          curl -sf -X POST \
+            -H "X-Cron-Secret: ${{ secrets.CRON_SHARED_SECRET }}" \
+            https://${{ secrets.CLOUD_RUN_URL }}/internal/cron/generation-queue
+
+  maintenance:
+    if: github.event.schedule == '0 3 * * *' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger daily maintenance
+        run: |
+          curl -sf -X POST \
+            -H "X-Cron-Secret: ${{ secrets.CRON_SHARED_SECRET }}" \
+            https://${{ secrets.CLOUD_RUN_URL }}/internal/cron/maintenance
