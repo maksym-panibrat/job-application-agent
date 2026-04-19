@@ -70,7 +70,11 @@ async def lifespan(app: FastAPI):
     # setup() runs CREATE INDEX CONCURRENTLY which cannot run inside a pipeline,
     # so we run it once on a plain connection before opening the pipeline saver.
     async with AsyncPostgresSaver.from_conn_string(psycopg_uri) as setup_checkpointer:
-        await setup_checkpointer.setup()
+        try:
+            await setup_checkpointer.setup()
+        except Exception as exc:
+            if "already exists" not in str(exc).lower():
+                raise
     async with AsyncPostgresSaver.from_conn_string(psycopg_uri, pipeline=True) as checkpointer:
         app.state.checkpointer = checkpointer
         await log.ainfo("checkpointer.ready")
