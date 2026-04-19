@@ -9,7 +9,7 @@ import json
 import re
 
 import structlog
-from langchain_anthropic import ChatAnthropic
+from langchain_google_genai import ChatGoogleGenerativeAI
 
 from app.config import get_settings
 
@@ -50,16 +50,15 @@ async def extract_profile_from_resume(resume_md: str) -> dict:
     """
     settings = get_settings()
 
-    kwargs: dict = dict(
-        model=settings.claude_matching_model,
-        api_key=settings.anthropic_api_key.get_secret_value(),
-        max_tokens=2048,
-    )
-    if settings.anthropic_base_url:
-        kwargs["anthropic_api_url"] = settings.anthropic_base_url
-
     try:
-        llm = ChatAnthropic(**kwargs)
+        if settings.environment == "test":
+            from app.agents.test_llm import get_fake_llm
+            llm = get_fake_llm("resume_extraction")
+        else:
+            llm = ChatGoogleGenerativeAI(
+                model=settings.llm_resume_extraction_model,
+                google_api_key=settings.google_api_key.get_secret_value(),
+            )
         prompt = EXTRACTION_PROMPT.format(resume_md=resume_md[:8000])
         response = await llm.ainvoke(prompt)
         raw = response.content if isinstance(response.content, str) else str(response.content)

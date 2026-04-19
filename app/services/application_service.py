@@ -153,8 +153,8 @@ async def _generate_direct(
     Direct generation path (no LangGraph checkpointer).
     Used when checkpointer is not available (e.g. unit tests).
     """
-    from langchain_anthropic import ChatAnthropic
     from langchain_core.messages import HumanMessage
+    from langchain_google_genai import ChatGoogleGenerativeAI
 
     from app.agents.generation_agent import (
         COVER_LETTER_PROMPT,
@@ -165,10 +165,15 @@ async def _generate_direct(
     from app.config import get_settings
 
     settings = get_settings()
-    llm = ChatAnthropic(
-        model=settings.claude_model,
-        api_key=settings.anthropic_api_key.get_secret_value(),
-    )
+    if settings.environment == "test":
+        from app.agents.test_llm import get_fake_llm
+        llm = get_fake_llm("generation")
+    else:
+        llm = ChatGoogleGenerativeAI(
+            model=settings.llm_generation_model,
+            google_api_key=settings.google_api_key.get_secret_value(),
+        )
+    model_name = settings.llm_generation_model
 
     documents = []
 
@@ -184,7 +189,7 @@ async def _generate_direct(
         {
             "doc_type": "tailored_resume",
             "content_md": _extract_text(resume_result.content),
-            "generation_model": settings.claude_model,
+            "generation_model": model_name,
         }
     )
 
@@ -200,7 +205,7 @@ async def _generate_direct(
         {
             "doc_type": "cover_letter",
             "content_md": _extract_text(cl_result.content),
-            "generation_model": settings.claude_model,
+            "generation_model": model_name,
         }
     )
 
