@@ -198,7 +198,9 @@ def build_graph(checkpointer: AsyncPostgresSaver) -> StateGraph:
                     if not exp_copy.get("start_date"):
                         continue
                     try:
-                        await profile_service.upsert_work_experience(profile_uuid, exp_copy, session)
+                        await profile_service.upsert_work_experience(
+                            profile_uuid, exp_copy, session
+                        )
                     except Exception as exc:
                         await log.awarning(
                             "onboarding.process_tool_results.exp_failed",
