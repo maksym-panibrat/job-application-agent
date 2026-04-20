@@ -1,17 +1,19 @@
 """
 LLM-based resume extraction.
 
-Extracts structured profile data from resume markdown text using Claude Haiku.
+Extracts structured profile data from resume markdown text using Gemini Flash.
 Called by profile_service.save_resume() after storing raw text.
 """
 
 import json
 import re
+import time
 
 import structlog
+from google.api_core.exceptions import ResourceExhausted
 from langchain_google_genai import ChatGoogleGenerativeAI
 
-from app.agents.llm_safe import safe_ainvoke
+from app.agents.llm_safe import BudgetExhausted, safe_ainvoke
 from app.config import get_settings
 
 log = structlog.get_logger()
@@ -41,15 +43,32 @@ Resume:
 {resume_md}"""
 
 
+class ResumeExtractionError(Exception):
+    pass
+
+
+class LLMUnavailableError(ResumeExtractionError):
+    pass
+
+
+class InvalidResumeError(ResumeExtractionError):
+    pass
+
+
 async def extract_profile_from_resume(resume_md: str) -> dict:
     """
-    Use Claude Haiku to extract structured profile data from resume text.
+    Use Gemini Flash to extract structured profile data from resume text.
 
     Returns a dict with keys: full_name, email, phone, linkedin_url, github_url,
     portfolio_url, target_roles, skills (list), work_experiences (list).
-    Returns empty dict on failure.
+
+    Raises:
+        LLMUnavailableError: quota exhausted or budget exceeded
+        InvalidResumeError: LLM response was not parseable JSON
+        ResumeExtractionError: any other extraction failure
     """
     settings = get_settings()
+    t0 = time.perf_counter()
 
     try:
         if settings.environment == "test":
@@ -64,14 +83,29 @@ async def extract_profile_from_resume(resume_md: str) -> dict:
         response = await safe_ainvoke(llm, prompt)
         raw = response.content if isinstance(response.content, str) else str(response.content)
 
-        # Strip markdown code fences if present
         raw = re.sub(r"^```(?:json)?\s*", "", raw.strip())
         raw = re.sub(r"\s*```$", "", raw.strip())
 
         data = json.loads(raw)
         if not isinstance(data, dict):
-            return {}
+            raise InvalidResumeError("LLM returned non-dict JSON")
+
+        await log.ainfo(
+            "resume_extraction.completed",
+            fields=len(data),
+            resume_length=len(resume_md),
+            duration_ms=int((time.perf_counter() - t0) * 1000),
+        )
         return data
+
+    except (ResourceExhausted, BudgetExhausted) as exc:
+        await log.awarning("resume_extraction.llm_unavailable", error=str(exc))
+        raise LLMUnavailableError(str(exc)) from exc
+    except json.JSONDecodeError as exc:
+        await log.awarning("resume_extraction.parse_failed", error=str(exc))
+        raise InvalidResumeError(str(exc)) from exc
+    except ResumeExtractionError:
+        raise
     except Exception as exc:
         await log.awarning("resume_extraction.failed", error=str(exc))
-        return {}
+        raise ResumeExtractionError(str(exc)) from exc
