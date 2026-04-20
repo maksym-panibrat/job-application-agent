@@ -19,6 +19,7 @@ from langgraph.graph import END, StateGraph
 from langgraph.types import interrupt
 from typing_extensions import TypedDict
 
+from app.agents.llm_safe import safe_ainvoke
 from app.agents.matching_agent import truncate_description
 from app.config import get_settings
 
@@ -144,14 +145,14 @@ def build_graph(checkpointer: AsyncPostgresSaver) -> StateGraph:
             routes.append("answer_custom_questions")
         return routes
 
-    def generate_resume_node(state: GenerationState) -> dict:
+    async def generate_resume_node(state: GenerationState) -> dict:
         prompt = RESUME_PROMPT.format(
             base_resume_md=state["base_resume_md"][:6000],
             title=state["job_title"],
             company=state["job_company"],
             description=truncate_description(state["job_description"]),
         )
-        result = llm.invoke([HumanMessage(content=prompt)])
+        result = await safe_ainvoke(llm, [HumanMessage(content=prompt)])
         return {
             "documents": [
                 {
@@ -162,14 +163,14 @@ def build_graph(checkpointer: AsyncPostgresSaver) -> StateGraph:
             ]
         }
 
-    def generate_cover_letter_node(state: GenerationState) -> dict:
+    async def generate_cover_letter_node(state: GenerationState) -> dict:
         prompt = COVER_LETTER_PROMPT.format(
             profile_text=state["profile_text"][:3000],
             title=state["job_title"],
             company=state["job_company"],
             description=truncate_description(state["job_description"]),
         )
-        result = llm.invoke([HumanMessage(content=prompt)])
+        result = await safe_ainvoke(llm, [HumanMessage(content=prompt)])
         return {
             "documents": [
                 {
@@ -180,7 +181,7 @@ def build_graph(checkpointer: AsyncPostgresSaver) -> StateGraph:
             ]
         }
 
-    def answer_custom_questions_node(state: GenerationState) -> dict:
+    async def answer_custom_questions_node(state: GenerationState) -> dict:
         questions = state.get("custom_questions", [])
         if not questions:
             return {}
@@ -191,7 +192,7 @@ def build_graph(checkpointer: AsyncPostgresSaver) -> StateGraph:
             company=state["job_company"],
             questions=formatted,
         )
-        result = llm.invoke([HumanMessage(content=prompt)])
+        result = await safe_ainvoke(llm, [HumanMessage(content=prompt)])
         return {
             "documents": [
                 {
