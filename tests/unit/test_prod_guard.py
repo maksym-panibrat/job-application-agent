@@ -27,7 +27,9 @@ def test_test_helpers_not_mounted_in_production(monkeypatch):
     )
     # POST should not succeed regardless of static file handling
     resp = client.post("/api/test/seed")
-    assert resp.status_code not in (200, 201, 422), f"test endpoint active in production: {resp.status_code}"
+    assert resp.status_code not in (200, 201, 422), (
+        f"test endpoint active in production: {resp.status_code}"
+    )
 
     cfg_module._settings = None
     # Re-remove app.main so subsequent tests get a clean import
