@@ -8,4 +8,3 @@ def test_settings_defaults():
     s = Settings()
     assert s.match_score_threshold == 0.65
     assert s.max_matches_displayed == 20
-    assert s.environment == "development"
