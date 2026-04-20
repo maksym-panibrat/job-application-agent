@@ -8,6 +8,7 @@ from app.api.deps import get_current_profile
 from app.database import get_db
 from app.models.user_profile import UserProfile
 from app.services import job_sync_service
+from app.services.rate_limit_service import check_daily_quota
 
 log = structlog.get_logger()
 router = APIRouter(prefix="/api/jobs", tags=["jobs"])
@@ -24,6 +25,7 @@ async def trigger_sync(
     In dev mode: runs inline and returns results.
     In prod: would run via scheduler.
     """
+    await check_daily_quota(profile.user_id, "manual_sync", 1, session)
     result = await job_sync_service.sync_profile(profile, session)
 
     # After sync, score new jobs

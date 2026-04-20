@@ -180,6 +180,9 @@ async def replace_all_work_experiences(
     profile_id: uuid.UUID, experiences: list[dict], session: AsyncSession
 ) -> list[WorkExperience]:
     """Delete all existing work experiences for the profile and insert the new set."""
+    if len(experiences) > 50:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=422, detail="Maximum 50 work experiences allowed")
     await session.execute(delete(WorkExperience).where(WorkExperience.profile_id == profile_id))
     result = []
     for exp_data in experiences:

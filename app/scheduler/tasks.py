@@ -73,7 +73,9 @@ async def run_generation_queue() -> None:
 
 
 async def run_daily_maintenance() -> None:
-    """Mark stale jobs + auto-pause expired searches."""
+    """Mark stale jobs + auto-pause expired searches + trim excess matched applications."""
+    from sqlalchemy import text
+
     from app.config import get_settings
     from app.database import get_session_factory
     from app.models.user_profile import UserProfile
@@ -103,5 +105,24 @@ async def run_daily_maintenance() -> None:
         if expired_profiles:
             await session.commit()
             await log.ainfo("maintenance.searches_paused", count=len(expired_profiles))
+
+        # Trim matched applications to 500 most recent per user
+        trim_result = await session.execute(
+            text("""
+                DELETE FROM applications
+                WHERE status = 'matched'
+                  AND id NOT IN (
+                    SELECT id FROM applications a2
+                    WHERE a2.profile_id = applications.profile_id
+                      AND a2.status = 'matched'
+                    ORDER BY a2.created_at DESC
+                    LIMIT 500
+                  )
+            """)
+        )
+        await session.commit()
+        trimmed = trim_result.rowcount
+        if trimmed:
+            await log.ainfo("maintenance.applications_trimmed", count=trimmed)
 
 
