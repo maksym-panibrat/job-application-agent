@@ -16,6 +16,7 @@ from app.api.internal_cron import router as cron_router
 from app.api.jobs import router as jobs_router
 from app.api.profile import router as profile_router
 from app.api.status import router as status_router
+from app.api.users import router as users_router
 from app.config import get_settings
 from app.database import init_db
 
@@ -114,9 +115,27 @@ app.include_router(applications_router)
 app.include_router(documents_router)
 app.include_router(cron_router)
 app.include_router(status_router)
+app.include_router(users_router)
+
+# OAuth routes — only mount if credentials are configured
+settings = get_settings()
+if settings.google_oauth_client_id and settings.google_oauth_client_secret:
+    from app.api.auth import auth_backend, fastapi_users, get_google_oauth_client
+
+    google_oauth_client = get_google_oauth_client()
+    app.include_router(
+        fastapi_users.get_oauth_router(
+            google_oauth_client,
+            auth_backend,
+            settings.jwt_secret.get_secret_value(),
+            redirect_url="/auth/callback",
+            is_verified_by_default=True,
+        ),
+        prefix="/auth/google",
+        tags=["auth"],
+    )
 
 # Dev-only endpoints for E2E testing
-settings = get_settings()
 if settings.environment in ("development", "test"):
     from app.api.test_helpers import router as test_helpers_router
     app.include_router(test_helpers_router)
