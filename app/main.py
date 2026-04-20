@@ -15,6 +15,7 @@ from app.api.documents import router as documents_router
 from app.api.internal_cron import router as cron_router
 from app.api.jobs import router as jobs_router
 from app.api.profile import router as profile_router
+from app.api.status import router as status_router
 from app.config import get_settings
 from app.database import init_db
 
@@ -112,6 +113,7 @@ app.include_router(jobs_router)
 app.include_router(applications_router)
 app.include_router(documents_router)
 app.include_router(cron_router)
+app.include_router(status_router)
 
 # Dev-only endpoints for E2E testing
 settings = get_settings()
