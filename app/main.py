@@ -115,7 +115,7 @@ app.include_router(cron_router)
 
 # Dev-only endpoints for E2E testing
 settings = get_settings()
-if settings.environment == "development":
+if settings.environment in ("development", "test"):
     from app.api.test_helpers import router as test_helpers_router
     app.include_router(test_helpers_router)
 
