@@ -1,3 +1,5 @@
+from typing import Any
+
 from langchain_core.language_models.fake_chat_models import FakeListChatModel
 
 _DEFAULT_RESPONSES: dict[str, list[str]] = {
@@ -18,6 +20,13 @@ _DEFAULT_RESPONSES: dict[str, list[str]] = {
 }
 
 
-def get_fake_llm(purpose: str = "matching") -> FakeListChatModel:
+class ToolCapableFakeLLM(FakeListChatModel):
+    """FakeListChatModel that accepts bind_tools() without raising NotImplementedError."""
+
+    def bind_tools(self, tools: Any, **kwargs: Any) -> "ToolCapableFakeLLM":
+        return self
+
+
+def get_fake_llm(purpose: str = "matching") -> ToolCapableFakeLLM:
     responses = _DEFAULT_RESPONSES.get(purpose, ["fake response"])
-    return FakeListChatModel(responses=responses)
+    return ToolCapableFakeLLM(responses=responses)
