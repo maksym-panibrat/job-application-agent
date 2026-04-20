@@ -3,7 +3,7 @@ import os
 
 def setup_env():
     os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/test")
-    os.environ.setdefault("ANTHROPIC_API_KEY", "test-key")
+    os.environ.setdefault("GOOGLE_API_KEY", "fake-test-key")
 
 
 def test_detect_format_pdf():

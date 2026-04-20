@@ -57,7 +57,7 @@ async def db_session(asyncpg_url):
 def patch_settings(asyncpg_url, monkeypatch):
     """Point get_settings() at the test database for all integration tests."""
     monkeypatch.setenv("DATABASE_URL", asyncpg_url)
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    monkeypatch.setenv("GOOGLE_API_KEY", "fake-test-key")
     # Reset the cached settings singleton between tests
     import app.config as cfg
     monkeypatch.setattr(cfg, "_settings", None)

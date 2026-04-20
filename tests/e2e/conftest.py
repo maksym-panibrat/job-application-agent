@@ -52,7 +52,7 @@ async def test_app(asyncpg_url, psycopg_url, monkeypatch):
     LLM calls are mocked. Yields an httpx.AsyncClient.
     """
     monkeypatch.setenv("DATABASE_URL", asyncpg_url)
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    monkeypatch.setenv("GOOGLE_API_KEY", "fake-test-key")
     monkeypatch.setenv("ENVIRONMENT", "development")
 
     # Reset settings singleton so the env vars above take effect

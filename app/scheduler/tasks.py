@@ -1,10 +1,10 @@
 """
-APScheduler tasks — only run in production (ENVIRONMENT=production).
+Async task functions called by /internal/cron/* HTTP endpoints (GitHub Actions cron).
 
-Three jobs:
-  run_job_sync      — every 24h: sync + match for all active profiles
-  run_generation_queue — every 5min: generate materials for pending applications
-  run_daily_maintenance — 03:00 cron: staleness cleanup + search auto-pause
+Three tasks:
+  run_job_sync      — sync + match for all active profiles
+  run_generation_queue — generate materials for pending applications
+  run_daily_maintenance — staleness cleanup + search auto-pause
 """
 
 from datetime import UTC, datetime
