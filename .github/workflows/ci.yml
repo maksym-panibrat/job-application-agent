@@ -129,12 +129,17 @@ jobs:
       - name: Set up gcloud
         uses: google-github-actions/setup-gcloud@v2
 
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker us-central1-docker.pkg.dev
+
       - name: Build and push image
         run: |
-          gcloud builds submit \
-            --tag us-central1-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/app/api:${{ github.sha }} \
-            --tag us-central1-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/app/api:latest \
+          docker build \
+            -t us-central1-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/app/api:${{ github.sha }} \
+            -t us-central1-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/app/api:latest \
             .
+          docker push us-central1-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/app/api:${{ github.sha }}
+          docker push us-central1-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/app/api:latest
 
       - name: Run migrations
         run: |
