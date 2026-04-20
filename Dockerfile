@@ -14,7 +14,7 @@ FROM python:3.12-slim-bookworm AS runtime
 WORKDIR /app
 COPY --from=builder /app/.venv /app/.venv
 COPY app/ ./app/
-COPY --from=frontend-builder /frontend/dist ./app/static/
+COPY --from=frontend-builder /app/static/ ./app/static/
 ENV PATH="/app/.venv/bin:$PATH"
 EXPOSE 8000
 CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
