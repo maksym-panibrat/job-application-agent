@@ -2,6 +2,8 @@
 
 AI-powered job search automation: monitors job boards, scores matches against your profile, and pre-generates tailored resume and cover letter before you even open the listing.
 
+**Live demo:** https://api-2twfzafrta-uc.a.run.app
+
 ## How it works
 
 ```
@@ -9,9 +11,9 @@ Resume upload + onboarding chat
         ↓
   Adzuna job sync  ──→  ATS detection (Greenhouse / Lever / Ashby)
         ↓
-  Matching agent scores each job against your profile
+  Matching agent scores each job against your profile  (Gemini Flash)
         ↓
-  Generation agent produces tailored resume + cover letter
+  Generation agent produces tailored resume + cover letter  (Gemini Pro)
   (runs in background — documents ready when you open the match card)
         ↓
   Review + edit inline → Approve → Submit
@@ -20,16 +22,30 @@ Resume upload + onboarding chat
 
 ## Key features
 
-- **Conversational onboarding**: chat agent asks about target roles, location, preferences; updates your profile via tool calls; persists conversation state across sessions (LangGraph + PostgresSaver)
-- **Parallel job scoring**: LangGraph `Send` fan-out scores multiple jobs concurrently; results collected via state reducer
-- **Human-in-the-loop generation**: generation graph pauses after producing documents; resumes when you approve or edit in the UI
-- **Search auto-pause**: job search pauses after 7 days to cap API costs; one-click resume
+- **Conversational onboarding** — chat agent asks about target roles, location, preferences; updates your profile via tool calls; persists conversation state across browser sessions (LangGraph + AsyncPostgresSaver)
+- **Parallel job scoring** — LangGraph `Send` fan-out scores multiple jobs concurrently; results collected via state reducer
+- **Human-in-the-loop generation** — generation graph pauses after producing documents; resumes when you approve or edit in the UI
+- **Externalised scheduler** — no in-process scheduler; GitHub Actions cron hits `/internal/cron/*` endpoints (compatible with Cloud Run scale-to-zero)
+- **Budget safety** — Gemini `ResourceExhausted` errors are caught, stored in `llm_status`, surfaced as an amber banner; job collection keeps running
+- **Rate limiting** — Postgres-backed sliding window limits on profile edits, resume uploads, and manual syncs; per-user daily quotas
+
+## Tech stack
+
+| Layer | Choice |
+|---|---|
+| Backend | FastAPI 0.115, SQLModel, asyncpg |
+| LLM | Google Gemini 2.5 Flash / Pro via `langchain-google-genai` |
+| Agent framework | LangGraph 0.2 |
+| Database | Neon Postgres (free tier) |
+| Hosting | Google Cloud Run (free tier, scale-to-zero) |
+| Frontend | React 18 + TypeScript + Vite + Tailwind v3 |
+| CI/CD | GitHub Actions — test → build → deploy pipeline |
 
 ## Quickstart
 
 ```bash
 docker compose up -d db
-cp .env.example .env        # set ANTHROPIC_API_KEY at minimum
+cp .env.example .env        # set GOOGLE_API_KEY at minimum
 uv sync --dev
 uv run alembic upgrade head
 uv run uvicorn app.main:app --reload --port 8000
@@ -49,7 +65,6 @@ uv run pytest tests/unit/ -v            # fast, no DB
 uv run pytest tests/integration/ -v    # real Postgres (testcontainers)
 uv run pytest tests/e2e/ -v             # full stack
 uv run pytest tests/smoke/ -v          # against live server (localhost:8000)
-uv run pytest tests/smoke/ -v --has-seed-api  # smoke with pre-seeded data
 cd frontend && npm test                 # component tests
 cd frontend && npm run build            # build to app/static/
 ```
@@ -58,22 +73,31 @@ cd frontend && npm run build            # build to app/static/
 
 ```
 app/
-  agents/      LangGraph graphs — onboarding, matching, generation
-  api/         FastAPI routers
+  agents/      LangGraph graphs (onboarding, matching, generation) + test shim
+  api/         FastAPI routers — profile, jobs, applications, chat, cron, auth, status
   models/      SQLModel table definitions
-  services/    Business logic
-  sources/     Job source adapters + ATS detection + resume parser
-  scheduler/   APScheduler tasks (24h sync, 5m gen queue, daily maintenance)
+  services/    Business logic (job sync, matching, generation, rate limiting)
+  sources/     Job source adapters (Adzuna, JSearch) + ATS detection + resume parser
+  scheduler/   Async task functions (called by cron endpoints)
 frontend/
-  src/pages/   Matches, ApplicationReview, Onboarding (chat), Applied
+  src/
+    pages/     Matches, ApplicationReview, Onboarding (chat), Applied, Landing
+    context/   AuthProvider (Google OAuth token management)
+    components/ BudgetBanner, RequireAuth
 tests/
   unit/        Pure Python, no I/O
-  integration/ Real Postgres via testcontainers
+  integration/ Real Postgres via testcontainers (includes data isolation tests)
   e2e/         Full FastAPI stack via httpx
   smoke/       Live HTTP smoke tests (requires running server)
+.github/
+  workflows/
+    ci.yml     test → frontend → e2e-browser → deploy (main only)
+    cron.yml   GitHub Actions cron hitting /internal/cron/* endpoints
 ```
 
-See `.env.example` for all configuration options and `CLAUDE.md` for architecture notes.
+## Deployment
+
+See [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) for the full GCP + Neon provisioning guide.
 
 ## License
 
