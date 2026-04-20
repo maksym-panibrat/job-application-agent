@@ -3,6 +3,7 @@
 Free public API, no auth required. Paginated by integer page cursor.
 """
 
+import hashlib
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -35,7 +36,8 @@ class ArbeitnowSource(JobSource):
         return True
 
     def _make_cache_key(self, query: str, location: str | None, page: int) -> str:
-        return f"arbeitnow|{query}|{location or ''}|{page}"
+        raw = f"arbeitnow|{query}|{location or ''}|{page}"
+        return hashlib.sha256(raw.encode()).hexdigest()
 
     async def _get_cached(self, cache_key: str, session: AsyncSession) -> dict | None:
         result = await session.execute(
