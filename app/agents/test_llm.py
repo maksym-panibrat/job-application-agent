@@ -4,7 +4,7 @@ from langchain_core.language_models.fake_chat_models import FakeListChatModel
 
 _DEFAULT_RESPONSES: dict[str, list[str]] = {
     "onboarding": [
-        "Hi! Tell me about the role you're looking for.",
+        "I've saved your profile! Is there anything else you'd like to update?",
         '{"target_title": "Software Engineer", "location": "Remote"}',
     ],
     "matching": [

@@ -16,8 +16,8 @@ test.describe('Job matching flow', () => {
     await page.waitForLoadState('networkidle')
 
     // Should see at least one job card from seeded data
-    await expect(page.getByText('Senior Software Engineer')).toBeVisible({ timeout: 10_000 })
-    await expect(page.getByText('Acme Corp')).toBeVisible()
+    await expect(page.getByText('Senior Software Engineer').first()).toBeVisible({ timeout: 10_000 })
+    await expect(page.getByText('Acme Corp').first()).toBeVisible()
   })
 
   test('dismissing a job removes it from the list', async ({ page }) => {
@@ -29,7 +29,7 @@ test.describe('Job matching flow', () => {
 
     if (initialCount === 0) {
       // Fallback: look for the job title directly
-      await expect(page.getByText('Senior Software Engineer')).toBeVisible({ timeout: 10_000 })
+      await expect(page.getByText('Senior Software Engineer').first()).toBeVisible({ timeout: 10_000 })
     }
 
     // Click dismiss on the first job card

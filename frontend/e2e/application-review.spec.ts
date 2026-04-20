@@ -19,7 +19,7 @@ test.describe('Application review flow', () => {
     await page.waitForLoadState('networkidle')
 
     // Should show job title and company
-    await expect(page.getByText('Senior Software Engineer')).toBeVisible({ timeout: 10_000 })
+    await expect(page.getByText('Senior Software Engineer').first()).toBeVisible({ timeout: 10_000 })
     await expect(page.getByText('Acme Corp').first()).toBeVisible()
   })
 
