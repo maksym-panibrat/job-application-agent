@@ -20,6 +20,7 @@ dependencies = [
     "httpx-oauth>=0.13",
     "langchain>=0.3",
     "langchain-google-genai>=2.0",
+    "google-api-core>=2.0",
     "langgraph>=0.2",
     "langgraph-checkpoint-postgres>=2.0",
     "psycopg[binary]>=3.1",
