@@ -54,6 +54,9 @@ async def test_app(asyncpg_url, psycopg_url, monkeypatch):
     monkeypatch.setenv("DATABASE_URL", asyncpg_url)
     monkeypatch.setenv("GOOGLE_API_KEY", "fake-test-key")
     monkeypatch.setenv("ENVIRONMENT", "development")
+    monkeypatch.setenv("ADZUNA_APP_ID", "fake-app-id")
+    monkeypatch.setenv("ADZUNA_API_KEY", "fake-api-key")
+    monkeypatch.setenv("JSEARCH_API_KEY", "fake-jsearch-key")
 
     # Reset settings singleton so the env vars above take effect
     import app.config as cfg

@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { api } from './client'
 
 function mockFetch(status: number, body: unknown, headers?: Record<string, string>) {
-  return vi.spyOn(global, 'fetch').mockResolvedValueOnce(
+  return vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
     new Response(JSON.stringify(body), {
       status,
       headers: { 'Content-Type': 'application/json', ...headers },
@@ -70,7 +70,7 @@ describe('api client', () => {
         },
       })
 
-      vi.spyOn(global, 'fetch').mockResolvedValueOnce(
+      vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
         new Response(stream, { status: 200 })
       )
 
@@ -90,7 +90,7 @@ describe('api client', () => {
         },
       })
 
-      vi.spyOn(global, 'fetch').mockResolvedValueOnce(
+      vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
         new Response(stream, { status: 200 })
       )
 

@@ -57,6 +57,7 @@ def _make_matching_llm(score: float) -> MagicMock:
     llm.invoke = fake_invoke
     bound = MagicMock()
     bound.invoke = fake_invoke
+    bound.ainvoke = AsyncMock(side_effect=fake_invoke)
     llm.bind_tools.return_value = bound
     return llm
 
@@ -164,6 +165,7 @@ async def test_matches_ordered_by_score_desc(test_app, monkeypatch):
         llm.invoke = fake_invoke
         bound = MagicMock()
         bound.invoke = fake_invoke
+        bound.ainvoke = AsyncMock(side_effect=fake_invoke)
         llm.bind_tools.return_value = bound
         return llm
 
