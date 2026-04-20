@@ -1,5 +1,6 @@
 import asyncio
 from logging.config import fileConfig
+from urllib.parse import parse_qs, urlparse, urlunparse
 
 from sqlalchemy import pool
 from sqlalchemy.ext.asyncio import create_async_engine
@@ -23,13 +24,17 @@ def get_url() -> str:
 
 
 def _make_engine():
-    """Create async engine, converting sslmode=require to asyncpg ssl=True."""
-    url = get_url()
-    connect_args = {}
-    if "sslmode=require" in url:
-        url = url.replace("?sslmode=require", "").replace("&sslmode=require", "")
-        connect_args["ssl"] = True
-    return create_async_engine(url, poolclass=pool.NullPool, connect_args=connect_args)
+    """Strip asyncpg-incompatible query params (sslmode, channel_binding) and pass ssl=True."""
+    raw = get_url()
+    parsed = urlparse(raw)
+    params = parse_qs(parsed.query, keep_blank_values=True)
+    needs_ssl = params.pop("sslmode", [""])[0] == "require"
+    params.pop("channel_binding", None)
+    # Rebuild query string without stripped params
+    new_query = "&".join(f"{k}={v[0]}" for k, v in params.items())
+    clean_url = urlunparse(parsed._replace(query=new_query))
+    connect_args = {"ssl": True} if needs_ssl else {}
+    return create_async_engine(clean_url, poolclass=pool.NullPool, connect_args=connect_args)
 
 
 def run_migrations_offline() -> None:
