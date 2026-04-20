@@ -5,6 +5,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_profile
+from app.config import Settings, get_settings
 from app.database import get_db
 from app.models.user_profile import UserProfile
 from app.services import job_sync_service
@@ -19,13 +20,15 @@ async def trigger_sync(
     background_tasks: BackgroundTasks,
     profile: UserProfile = Depends(get_current_profile),
     session: AsyncSession = Depends(get_db),
+    settings: Settings = Depends(get_settings),
 ):
     """
     Manually trigger a job sync for the current user.
     In dev mode: runs inline and returns results.
     In prod: would run via scheduler.
     """
-    await check_daily_quota(profile.user_id, "manual_sync", 1, session)
+    if settings.environment == "production":
+        await check_daily_quota(profile.user_id, "manual_sync", 1, session)
     result = await job_sync_service.sync_profile(profile, session)
 
     # After sync, score new jobs

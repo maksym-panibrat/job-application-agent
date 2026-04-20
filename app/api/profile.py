@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_profile
+from app.config import Settings, get_settings
 from app.database import get_db
 from app.models.user_profile import UserProfile
 from app.services import profile_service
@@ -70,13 +71,15 @@ async def update_profile(
     data: dict,
     profile: UserProfile = Depends(get_current_profile),
     session: AsyncSession = Depends(get_db),
+    settings: Settings = Depends(get_settings),
 ):
-    await check_rate_limit(
-        key=f"profile_edit:{profile.user_id}",
-        limit=5,
-        window_seconds=3600,
-        session=session,
-    )
+    if settings.environment == "production":
+        await check_rate_limit(
+            key=f"profile_edit:{profile.user_id}",
+            limit=5,
+            window_seconds=3600,
+            session=session,
+        )
     allowed = {
         "full_name", "email", "phone", "linkedin_url", "github_url", "portfolio_url",
         "target_roles", "target_locations", "remote_ok", "seniority", "search_keywords",
@@ -91,6 +94,7 @@ async def upload_resume(
     file: UploadFile = File(...),
     profile: UserProfile = Depends(get_current_profile),
     session: AsyncSession = Depends(get_db),
+    settings: Settings = Depends(get_settings),
 ):
     allowed_types = {
         "application/pdf",
@@ -108,7 +112,8 @@ async def upload_resume(
     if len(raw) > 5 * 1024 * 1024:
         raise HTTPException(status_code=413, detail="File too large (max 5 MB)")
 
-    await check_daily_quota(profile.user_id, "resume_upload", 3, session)
+    if settings.environment == "production":
+        await check_daily_quota(profile.user_id, "resume_upload", 3, session)
 
     # Deduplicate by SHA256 against stored raw bytes to skip re-extraction of identical files
     file_sha256 = hashlib.sha256(raw).hexdigest()
