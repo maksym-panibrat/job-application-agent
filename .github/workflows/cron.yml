@@ -13,27 +13,36 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Trigger job sync
+        env:
+          CLOUD_RUN_URL: ${{ secrets.CLOUD_RUN_URL }}
+          CRON_SHARED_SECRET: ${{ secrets.CRON_SHARED_SECRET }}
         run: |
           curl -sf -X POST \
-            -H "X-Cron-Secret: ${{ secrets.CRON_SHARED_SECRET }}" \
-            https://${{ secrets.CLOUD_RUN_URL }}/internal/cron/sync
+            -H "X-Cron-Secret: $CRON_SHARED_SECRET" \
+            "$CLOUD_RUN_URL/internal/cron/sync"
 
   generation-queue:
     if: github.event.schedule == '*/10 * * * *' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - name: Trigger generation queue
+        env:
+          CLOUD_RUN_URL: ${{ secrets.CLOUD_RUN_URL }}
+          CRON_SHARED_SECRET: ${{ secrets.CRON_SHARED_SECRET }}
         run: |
           curl -sf -X POST \
-            -H "X-Cron-Secret: ${{ secrets.CRON_SHARED_SECRET }}" \
-            https://${{ secrets.CLOUD_RUN_URL }}/internal/cron/generation-queue
+            -H "X-Cron-Secret: $CRON_SHARED_SECRET" \
+            "$CLOUD_RUN_URL/internal/cron/generation-queue"
 
   maintenance:
     if: github.event.schedule == '0 3 * * *' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - name: Trigger daily maintenance
+        env:
+          CLOUD_RUN_URL: ${{ secrets.CLOUD_RUN_URL }}
+          CRON_SHARED_SECRET: ${{ secrets.CRON_SHARED_SECRET }}
         run: |
           curl -sf -X POST \
-            -H "X-Cron-Secret: ${{ secrets.CRON_SHARED_SECRET }}" \
-            https://${{ secrets.CLOUD_RUN_URL }}/internal/cron/maintenance
+            -H "X-Cron-Secret: $CRON_SHARED_SECRET" \
+            "$CLOUD_RUN_URL/internal/cron/maintenance"
