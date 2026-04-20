@@ -47,6 +47,9 @@ async def isolation_app(isolation_asyncpg_url, monkeypatch):
     monkeypatch.setenv("ENVIRONMENT", "production")
     monkeypatch.setenv("AUTH_ENABLED", "true")
     monkeypatch.setenv("JWT_SECRET", TEST_JWT_SECRET)
+    monkeypatch.setenv("CRON_SHARED_SECRET", "real-cron-secret-for-tests")
+    monkeypatch.setenv("GOOGLE_OAUTH_CLIENT_ID", "test-client-id")
+    monkeypatch.setenv("GOOGLE_OAUTH_CLIENT_SECRET", "test-client-secret")
 
     import app.config as cfg
     monkeypatch.setattr(cfg, "_settings", None)
