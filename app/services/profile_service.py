@@ -7,7 +7,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
 from app.models.user_profile import Skill, UserProfile, WorkExperience
-from app.services.resume_extraction import extract_profile_from_resume
+from app.services.resume_extraction import (
+    InvalidResumeError,
+    LLMUnavailableError,
+    ResumeExtractionError,
+    extract_profile_from_resume,
+)
 from app.sources.resume_parser import parse_resume
 
 log = structlog.get_logger()
@@ -46,7 +51,16 @@ async def update_profile(
 
 async def save_resume(
     profile_id: uuid.UUID, filename: str, raw_bytes: bytes, session: AsyncSession
-) -> UserProfile:
+) -> tuple[UserProfile, str]:
+    """
+    Parse and store a resume file, then run LLM extraction.
+
+    Returns (profile, extraction_status) where extraction_status is one of:
+      "ok"         — extraction succeeded and was applied
+      "llm_error"  — LLM quota exhausted or temporarily unavailable
+      "parse_error" — LLM response was not parseable or resume was unstructured
+      "skipped"    — no markdown text could be extracted from the file
+    """
     profile = await session.get(UserProfile, profile_id)
     md = parse_resume(filename, raw_bytes)
     profile.base_resume_raw = raw_bytes
@@ -56,14 +70,20 @@ async def save_resume(
     await session.commit()
     await session.refresh(profile)
 
-    # Extract structured profile data from resume using LLM (best-effort)
+    extraction_status = "skipped"
     if md:
-        extracted = await extract_profile_from_resume(md)
-        if extracted:
-            await _apply_extracted_resume_data(profile_id, extracted, session)
-            await session.refresh(profile)
+        try:
+            extracted = await extract_profile_from_resume(md)
+            if extracted:
+                await _apply_extracted_resume_data(profile_id, extracted, session)
+                await session.refresh(profile)
+            extraction_status = "ok"
+        except LLMUnavailableError:
+            extraction_status = "llm_error"
+        except (InvalidResumeError, ResumeExtractionError):
+            extraction_status = "parse_error"
 
-    return profile
+    return profile, extraction_status
 
 
 async def _apply_extracted_resume_data(

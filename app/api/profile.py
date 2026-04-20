@@ -126,14 +126,18 @@ async def upload_resume(
         return {
             "id": str(profile.id),
             "base_resume_md": profile.base_resume_md,
+            "extraction_status": "skipped",
             "message": "Resume unchanged (same file). Skipped re-extraction.",
         }
 
-    updated = await profile_service.save_resume(profile.id, file.filename or "resume", raw, session)
+    updated, extraction_status = await profile_service.save_resume(
+        profile.id, file.filename or "resume", raw, session
+    )
     return {
         "id": str(updated.id),
         "base_resume_md": updated.base_resume_md,
-        "message": "Resume uploaded and parsed successfully.",
+        "extraction_status": extraction_status,
+        "message": "Resume uploaded successfully.",
     }
 
 
