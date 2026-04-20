@@ -3,6 +3,7 @@
 import asyncio
 import json
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 
 from app.config import get_settings
@@ -49,7 +50,16 @@ async def main() -> None:
             await replace_all_skills(profile.id, skills, session)
 
         if work_experiences:
-            await replace_all_work_experiences(profile.id, work_experiences, session)
+            parsed_exps = []
+            for exp in work_experiences:
+                exp = dict(exp)
+                for field in ("start_date", "end_date"):
+                    val = exp.get(field)
+                    if isinstance(val, str):
+                        dt = datetime.fromisoformat(val)
+                        exp[field] = dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+                parsed_exps.append(exp)
+            await replace_all_work_experiences(profile.id, parsed_exps, session)
 
     print(f"Demo profile seeded for user {SINGLE_USER_ID}")
 
