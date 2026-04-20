@@ -59,7 +59,7 @@ SA="github-deployer@job-application-agent-493810.iam.gserviceaccount.com"
 PROJECT="job-application-agent-493810"
 REPO="maksym-panibrat/job-application-agent"
 
-for role in roles/run.admin roles/artifactregistry.writer roles/secretmanager.secretAccessor roles/iam.serviceAccountUser roles/cloudbuild.builds.editor roles/storage.admin; do
+for role in roles/run.admin roles/artifactregistry.writer roles/secretmanager.secretAccessor roles/iam.serviceAccountUser roles/cloudbuild.builds.editor roles/storage.admin roles/logging.viewer; do
   gcloud projects add-iam-policy-binding $PROJECT --member="serviceAccount:$SA" --role="$role"
 done
 
@@ -114,7 +114,17 @@ gcloud projects add-iam-policy-binding job-application-agent-493810 \
   --role="roles/storage.admin"
 ```
 
-Then re-run the failed GitHub Actions deploy job:
+### `This tool can only stream logs if you are Viewer/Owner` during deploy
+
+`gcloud builds submit` needs `roles/logging.viewer` to stream build logs. If you provisioned before this was documented, add it manually:
+
+```bash
+gcloud projects add-iam-policy-binding job-application-agent-493810 \
+  --member="serviceAccount:github-deployer@job-application-agent-493810.iam.gserviceaccount.com" \
+  --role="roles/logging.viewer"
+```
+
+After granting any missing role, re-run the failed GitHub Actions deploy job:
 
 ```bash
 gh run rerun <run-id> --failed --repo maksym-panibrat/job-application-agent
