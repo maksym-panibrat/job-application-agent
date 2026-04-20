@@ -1,4 +1,5 @@
 from collections.abc import AsyncGenerator
+from urllib.parse import parse_qs, urlparse, urlunparse
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlmodel import SQLModel
@@ -9,15 +10,28 @@ engine = None
 async_session_factory = None
 
 
+def _build_engine_url(raw_url: str) -> tuple[str, dict]:
+    parsed = urlparse(raw_url)
+    params = parse_qs(parsed.query, keep_blank_values=True)
+    needs_ssl = params.pop("sslmode", [""])[0] == "require"
+    params.pop("channel_binding", None)
+    new_query = "&".join(f"{k}={v[0]}" for k, v in params.items())
+    clean_url = urlunparse(parsed._replace(query=new_query))
+    connect_args = {"ssl": True} if needs_ssl else {}
+    return clean_url, connect_args
+
+
 def get_engine():
     global engine
     if engine is None:
         settings = get_settings()
+        clean_url, connect_args = _build_engine_url(str(settings.database_url))
         engine = create_async_engine(
-            str(settings.database_url),
+            clean_url,
             echo=settings.environment == "development",
             pool_size=5,
             max_overflow=2,
+            connect_args=connect_args,
         )
     return engine
 

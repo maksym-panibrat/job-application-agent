@@ -96,11 +96,24 @@ Get the Cloud Run service URL and add it to GitHub secrets as `CLOUD_RUN_URL`:
 gcloud run services describe api --region us-central1 --format="value(status.url)"
 ```
 
-Run the demo seed job:
+Create and run the demo seed job (only needed once):
 
 ```bash
+IMAGE="us-central1-docker.pkg.dev/job-application-agent-493810/app/api:latest"
+SA="github-deployer@job-application-agent-493810.iam.gserviceaccount.com"
+
+gcloud run jobs create seed-demo \
+  --image "$IMAGE" \
+  --region us-central1 \
+  --command="/app/.venv/bin/python,scripts/seed_demo_profile.py" \
+  --set-secrets="DATABASE_URL=database-url:latest" \
+  --set-env-vars="PYTHONPATH=/app" \
+  --service-account="$SA"
+
 gcloud run jobs execute seed-demo --region us-central1 --wait
 ```
+
+**Note:** `PYTHONPATH=/app` makes the `app` package importable. The full path to the venv Python is required because Cloud Run's default `PATH` doesn't include the venv.
 
 ## Troubleshooting
 

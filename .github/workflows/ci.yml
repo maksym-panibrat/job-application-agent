@@ -147,11 +147,12 @@ jobs:
           SA="${{ secrets.GCP_SERVICE_ACCOUNT }}"
           if gcloud run jobs describe alembic-migrate --region us-central1 &>/dev/null; then
             gcloud run jobs update alembic-migrate --image "$IMAGE" --region us-central1 \
+              --command="/app/.venv/bin/alembic,upgrade,head" \
               --service-account="$SA"
           else
             gcloud run jobs create alembic-migrate \
               --image "$IMAGE" --region us-central1 \
-              --command="alembic,upgrade,head" \
+              --command="/app/.venv/bin/alembic,upgrade,head" \
               --set-secrets="DATABASE_URL=database-url:latest" \
               --service-account="$SA"
           fi
