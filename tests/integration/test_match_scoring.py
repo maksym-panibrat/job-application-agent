@@ -61,7 +61,6 @@ async def _seed_job(
 
 def _make_llm_mock(scores: list[float]):
     """Return a mock LLM whose ainvoke() cycles through the given scores."""
-    from unittest.mock import AsyncMock
     call_index = [0]
 
     async def fake_ainvoke(messages, **kwargs):

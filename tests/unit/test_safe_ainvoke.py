@@ -1,8 +1,8 @@
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
-from datetime import datetime, timezone
 
-from app.agents.llm_safe import safe_ainvoke, BudgetExhausted
+import pytest
+
+from app.agents.llm_safe import BudgetExhausted, safe_ainvoke
 
 
 @pytest.mark.asyncio
