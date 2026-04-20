@@ -2,7 +2,7 @@ def test_settings_defaults():
     import os
 
     os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/test")
-    os.environ.setdefault("ANTHROPIC_API_KEY", "test-key")
+    os.environ.setdefault("GOOGLE_API_KEY", "fake-test-key")
     from app.config import Settings
 
     s = Settings()
