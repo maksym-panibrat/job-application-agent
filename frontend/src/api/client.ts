@@ -61,6 +61,7 @@ export interface Application {
   match_rationale: string | null
   match_strengths: string[]
   match_gaps: string[]
+  user_interest: 'interested' | 'not_interested' | null
   created_at: string
   job: Job | null
 }
@@ -144,6 +145,11 @@ export const api = {
       `/api/applications/${appId}/documents/${docId}`,
       { method: 'PATCH', body: JSON.stringify({ user_edited_md: content }) }
     ),
+  setInterest: (appId: string, interest: 'interested' | 'not_interested' | null) =>
+    apiFetch<void>(`/api/applications/${appId}/interest`, {
+      method: 'PATCH',
+      body: JSON.stringify({ interest }),
+    }),
   regenerate: (id: string) =>
     apiFetch<{ id: string; generation_status: string }>(`/api/applications/${id}/regenerate`, {
       method: 'POST',
