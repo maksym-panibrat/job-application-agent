@@ -79,9 +79,17 @@ export interface Document {
   created_at: string
 }
 
+export interface AppStatus {
+  budget_exhausted: boolean
+  resumes_at: string | null
+}
+
 async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
+  const token = sessionStorage.getItem('access_token')
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+  if (token) headers['Authorization'] = `Bearer ${token}`
   const res = await fetch(path, {
-    headers: { 'Content-Type': 'application/json', ...init?.headers },
+    headers: { ...headers, ...init?.headers },
     ...init,
   })
   if (!res.ok) {
@@ -146,6 +154,10 @@ export const api = {
       { method: 'POST' }
     ),
   downloadPdf: (docId: string) => `/api/documents/${docId}/pdf`,
+
+  // Status & auth
+  getStatus: () => apiFetch<AppStatus>('/api/status'),
+  getMe: () => apiFetch<{ id: string; email: string }>('/api/users/me'),
 
   // Chat
   sendMessage: (message: string, onChunk: (text: string) => void): Promise<void> => {
