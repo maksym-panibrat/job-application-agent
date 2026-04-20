@@ -30,6 +30,7 @@ async def fetch_full_description(
         - resolved_url: the final URL after following redirects, or None on failure
     Returns (None, None, None) on any fetch failure.
     """
+    await log.ainfo("adzuna.enrichment.attempt", url=redirect_url)
     try:
         async with httpx.AsyncClient(
             timeout=20,
@@ -41,13 +42,14 @@ async def fetch_full_description(
             html = response.text
             resolved_url = str(response.url)
     except Exception as exc:
-        await log.awarning("adzuna_enrichment.fetch_failed", url=redirect_url, error=str(exc))
+        await log.awarning("adzuna.enrichment.failed", url=redirect_url, error=str(exc))
         return None, None, None
 
     is_adzuna_page = "adzuna.com" in resolved_url.lower()
-
     description = _extract_body(html, use_adzuna_selector=is_adzuna_page)
     card_info = _extract_card_info(html) if is_adzuna_page else None
+    salary_found = bool(card_info and card_info.get("salary"))
+    await log.ainfo("adzuna.enrichment.success", url=redirect_url, salary=salary_found)
     return description, card_info, resolved_url
 
 

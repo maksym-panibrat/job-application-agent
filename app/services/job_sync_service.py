@@ -123,24 +123,36 @@ async def _enrich_jobs(
     Caps concurrency at 5. Individual failures keep the truncated API description.
     """
     sem = asyncio.Semaphore(5)
+    enriched_count = 0
+    salary_count = 0
+    failed_count = 0
+    skipped_count = 0
+    no_description_count = 0
 
     async def enrich_one(j: JobData) -> JobData:
+        nonlocal enriched_count, salary_count, failed_count, skipped_count, no_description_count
         if j.external_id in existing_full:
+            skipped_count += 1
             return j
         async with sem:
             try:
                 desc, meta, resolved_url = await fetch_full_description(j.apply_url)
                 if desc:
                     j.description_md = desc
+                    enriched_count += 1
+                else:
+                    no_description_count += 1
                 if meta:
                     j.salary = meta.get("salary")
                     j.contract_type = meta.get("contract_type")
-                # Update apply_url to the resolved destination and re-detect ATS
+                    if j.salary:
+                        salary_count += 1
                 if resolved_url and resolved_url != j.apply_url:
                     j.apply_url = resolved_url
                     j.ats_type = detect_ats_type(resolved_url)
                     j.supports_api_apply = supports_api_apply(resolved_url)
             except Exception as exc:
+                failed_count += 1
                 await log.awarning(
                     "job_sync.enrich_failed",
                     external_id=j.external_id,
@@ -148,7 +160,17 @@ async def _enrich_jobs(
                 )
         return j
 
-    return list(await asyncio.gather(*[enrich_one(j) for j in jobs]))
+    result = list(await asyncio.gather(*[enrich_one(j) for j in jobs]))
+    await log.ainfo(
+        "adzuna.sync.summary",
+        total=len(jobs),
+        skipped=skipped_count,
+        enriched=enriched_count,
+        no_description=no_description_count,
+        salary_parsed=salary_count,
+        failed=failed_count,
+    )
+    return result
 
 
 async def _get_already_enriched(
