@@ -54,13 +54,20 @@ async def lifespan(app: FastAPI):
         os.environ["LANGSMITH_PROJECT"] = settings.langsmith_project
         await log.ainfo("langsmith.enabled", project=settings.langsmith_project)
 
-    # Init Sentry
+    # Init Sentry — log confirmation so operators can verify it's active in production
     if settings.sentry_dsn:
-        sentry_sdk.init(
-            dsn=settings.sentry_dsn.get_secret_value(),
-            traces_sample_rate=0.1,
-            environment=settings.environment,
-        )
+        try:
+            dsn_val = settings.sentry_dsn.get_secret_value()
+            sentry_sdk.init(
+                dsn=dsn_val,
+                traces_sample_rate=0.1,
+                environment=settings.environment,
+            )
+            await log.ainfo("sentry.enabled", dsn_suffix=dsn_val[-4:])
+        except Exception as exc:
+            await log.awarning("sentry.init_failed", error=str(exc))
+    else:
+        await log.ainfo("sentry.disabled", reason="no_dsn_configured")
 
     await log.ainfo("app.startup", environment=settings.environment)
 
