@@ -45,7 +45,8 @@ def generate_queries(profile: UserProfile) -> list[tuple[str, str | None]]:
     max_q = settings.adzuna_max_queries_per_sync
 
     keywords = profile.search_keywords or profile.target_roles or []
-    locations = profile.target_locations or []
+    # Strip "remote" — it's not a geographic place and confuses Adzuna's where= param
+    locations = [l for l in (profile.target_locations or []) if l.lower() != "remote"]
 
     if not keywords:
         keywords = ["software engineer"]
