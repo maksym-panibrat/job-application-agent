@@ -177,6 +177,10 @@ jobs:
             --format="value(status.url)")
           echo "url=$URL" >> $GITHUB_OUTPUT
 
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: "latest"
+
       - name: Smoke test
         run: |
           sleep 10
