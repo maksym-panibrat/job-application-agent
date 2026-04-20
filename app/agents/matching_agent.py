@@ -161,7 +161,7 @@ def build_graph() -> StateGraph:
                         gaps=[],
                     )]}
                 except Exception as exc:
-                    is_rate_limit = "429" in str(exc)
+                    is_rate_limit = "429" in str(exc) or "rate_limit" in str(exc).lower()
                     if is_rate_limit and attempt < len(backoffs):
                         continue
                     if is_rate_limit:
