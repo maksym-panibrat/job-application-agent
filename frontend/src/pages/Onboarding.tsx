@@ -5,6 +5,7 @@ import { api, Profile } from '../api/client'
 interface Message {
   role: 'user' | 'assistant'
   content: string
+  error?: boolean
 }
 
 function ProfileCard({ profile }: { profile: Profile }) {
@@ -141,6 +142,7 @@ export default function Onboarding() {
   const [input, setInput] = useState('')
   const [sending, setSending] = useState(false)
   const [uploading, setUploading] = useState(false)
+  const [uploadError, setUploadError] = useState<string | null>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
   const fileRef = useRef<HTMLInputElement>(null)
 
@@ -162,27 +164,62 @@ export default function Onboarding() {
     setMessages((prev) => [...prev, { role: 'user', content: userMsg }])
     setMessages((prev) => [...prev, { role: 'assistant', content: '' }])
 
-    await api.sendMessage(userMsg, (chunk) => {
+    try {
+      await api.sendMessage(
+        userMsg,
+        (chunk) => {
+          setMessages((prev) => {
+            const updated = [...prev]
+            updated[updated.length - 1] = {
+              ...updated[updated.length - 1],
+              content: updated[updated.length - 1].content + chunk,
+            }
+            return updated
+          })
+        },
+        (_err) => {
+          setMessages((prev) => {
+            const updated = [...prev]
+            updated[updated.length - 1] = {
+              role: 'assistant',
+              content: 'Something went wrong — please try again.',
+              error: true,
+            }
+            return updated
+          })
+          setSending(false)
+        }
+      )
+    } catch {
       setMessages((prev) => {
         const updated = [...prev]
         updated[updated.length - 1] = {
-          ...updated[updated.length - 1],
-          content: updated[updated.length - 1].content + chunk,
+          role: 'assistant',
+          content: 'Something went wrong — please try again.',
+          error: true,
         }
         return updated
       })
-    })
-
+    }
     setSending(false)
     refetchProfile()
   }
 
   const handleUpload = async (file: File) => {
     setUploading(true)
+    setUploadError(null)
     try {
-      await api.uploadResume(file)
+      const result = await api.uploadResume(file)
+      if (result.extraction_status === 'llm_error') {
+        setUploadError(
+          "Resume uploaded, but we couldn't extract your profile right now — the AI is temporarily unavailable. Try editing your profile manually."
+        )
+      } else if (result.extraction_status === 'parse_error') {
+        setUploadError(
+          "Resume uploaded, but we couldn't read the structure — try a plain-text or clearly formatted PDF."
+        )
+      }
       refetchProfile()
-      // Send resume upload notification to the agent so it can read and reference the resume
       const userMsg = "I've uploaded my resume. Please review it and help me complete my profile."
       setInput('')
       setSending(true)
@@ -191,18 +228,35 @@ export default function Onboarding() {
         { role: 'user', content: userMsg },
         { role: 'assistant', content: '' },
       ])
-      await api.sendMessage(userMsg, (chunk) => {
-        setMessages((prev) => {
-          const updated = [...prev]
-          updated[updated.length - 1] = {
-            ...updated[updated.length - 1],
-            content: updated[updated.length - 1].content + chunk,
-          }
-          return updated
-        })
-      })
+      await api.sendMessage(
+        userMsg,
+        (chunk) => {
+          setMessages((prev) => {
+            const updated = [...prev]
+            updated[updated.length - 1] = {
+              ...updated[updated.length - 1],
+              content: updated[updated.length - 1].content + chunk,
+            }
+            return updated
+          })
+        },
+        (_err) => {
+          setMessages((prev) => {
+            const updated = [...prev]
+            updated[updated.length - 1] = {
+              role: 'assistant',
+              content: 'Something went wrong — please try again.',
+              error: true,
+            }
+            return updated
+          })
+          setSending(false)
+        }
+      )
       setSending(false)
       refetchProfile()
+    } catch (err) {
+      setUploadError(err instanceof Error ? err.message : 'Upload failed — please try again.')
     } finally {
       setUploading(false)
     }
@@ -235,6 +289,8 @@ export default function Onboarding() {
               className={`max-w-[85%] px-4 py-2.5 rounded-2xl text-sm whitespace-pre-wrap ${
                 msg.role === 'user'
                   ? 'bg-blue-600 text-white rounded-br-sm'
+                  : msg.error
+                  ? 'bg-red-50 text-red-700 rounded-bl-sm'
                   : 'bg-gray-100 text-gray-800 rounded-bl-sm'
               }`}
             >
@@ -247,6 +303,9 @@ export default function Onboarding() {
 
       {/* Input area */}
       <div className="border-t pt-3">
+        {uploadError && (
+          <p className="mb-2 text-xs text-red-600">{uploadError}</p>
+        )}
         <div className="flex gap-2">
           <input
             ref={fileRef}

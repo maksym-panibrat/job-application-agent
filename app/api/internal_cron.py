@@ -1,9 +1,13 @@
+import time
+
+import structlog
 from fastapi import APIRouter, Depends, Header, HTTPException
 
 from app.agents.llm_safe import BudgetExhausted
 from app.config import Settings, get_settings
 from app.scheduler.tasks import run_daily_maintenance, run_generation_queue, run_job_sync
 
+log = structlog.get_logger()
 router = APIRouter(prefix="/internal/cron", tags=["cron"])
 
 
@@ -22,26 +26,41 @@ async def verify_secret(
 
 @router.post("/sync", dependencies=[Depends(verify_secret)])
 async def cron_sync():
+    t0 = time.perf_counter()
+    await log.ainfo("cron.sync.started")
+    result: dict = {}
     try:
-        await run_job_sync()
+        result = await run_job_sync()
     except BudgetExhausted:
-        pass  # non-LLM work (job collection) keeps running
-    return {"status": "ok"}
+        pass
+    duration_ms = int((time.perf_counter() - t0) * 1000)
+    await log.ainfo("cron.sync.completed", duration_ms=duration_ms, **result)
+    return {"status": "ok", "duration_ms": duration_ms, **result}
 
 
 @router.post("/generation-queue", dependencies=[Depends(verify_secret)])
 async def cron_generation_queue():
+    t0 = time.perf_counter()
+    await log.ainfo("cron.generation_queue.started")
+    result: dict = {}
     try:
-        await run_generation_queue()
+        result = await run_generation_queue()
     except BudgetExhausted:
         pass
-    return {"status": "ok"}
+    duration_ms = int((time.perf_counter() - t0) * 1000)
+    await log.ainfo("cron.generation_queue.completed", duration_ms=duration_ms, **result)
+    return {"status": "ok", "duration_ms": duration_ms, **result}
 
 
 @router.post("/maintenance", dependencies=[Depends(verify_secret)])
 async def cron_maintenance():
+    t0 = time.perf_counter()
+    await log.ainfo("cron.maintenance.started")
+    result: dict = {}
     try:
-        await run_daily_maintenance()
+        result = await run_daily_maintenance()
     except BudgetExhausted:
         pass
-    return {"status": "ok"}
+    duration_ms = int((time.perf_counter() - t0) * 1000)
+    await log.ainfo("cron.maintenance.completed", duration_ms=duration_ms, **result)
+    return {"status": "ok", "duration_ms": duration_ms, **result}

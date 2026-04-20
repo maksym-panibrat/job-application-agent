@@ -17,9 +17,14 @@ jobs:
           CLOUD_RUN_URL: ${{ secrets.CLOUD_RUN_URL }}
           CRON_SHARED_SECRET: ${{ secrets.CRON_SHARED_SECRET }}
         run: |
-          curl -sf -X POST \
+          response=$(curl -s -w "\n%{http_code}" -X POST \
             -H "X-Cron-Secret: $CRON_SHARED_SECRET" \
-            "$CLOUD_RUN_URL/internal/cron/sync"
+            "$CLOUD_RUN_URL/internal/cron/sync")
+          body=$(echo "$response" | head -n -1)
+          code=$(echo "$response" | tail -n 1)
+          echo "HTTP $code"
+          echo "$body"
+          [ "$code" -lt 400 ] || exit 1
 
   generation-queue:
     if: github.event.schedule == '*/10 * * * *' || github.event_name == 'workflow_dispatch'
@@ -30,9 +35,14 @@ jobs:
           CLOUD_RUN_URL: ${{ secrets.CLOUD_RUN_URL }}
           CRON_SHARED_SECRET: ${{ secrets.CRON_SHARED_SECRET }}
         run: |
-          curl -sf -X POST \
+          response=$(curl -s -w "\n%{http_code}" -X POST \
             -H "X-Cron-Secret: $CRON_SHARED_SECRET" \
-            "$CLOUD_RUN_URL/internal/cron/generation-queue"
+            "$CLOUD_RUN_URL/internal/cron/generation-queue")
+          body=$(echo "$response" | head -n -1)
+          code=$(echo "$response" | tail -n 1)
+          echo "HTTP $code"
+          echo "$body"
+          [ "$code" -lt 400 ] || exit 1
 
   maintenance:
     if: github.event.schedule == '0 3 * * *' || github.event_name == 'workflow_dispatch'
@@ -43,6 +53,11 @@ jobs:
           CLOUD_RUN_URL: ${{ secrets.CLOUD_RUN_URL }}
           CRON_SHARED_SECRET: ${{ secrets.CRON_SHARED_SECRET }}
         run: |
-          curl -sf -X POST \
+          response=$(curl -s -w "\n%{http_code}" -X POST \
             -H "X-Cron-Secret: $CRON_SHARED_SECRET" \
-            "$CLOUD_RUN_URL/internal/cron/maintenance"
+            "$CLOUD_RUN_URL/internal/cron/maintenance")
+          body=$(echo "$response" | head -n -1)
+          code=$(echo "$response" | tail -n 1)
+          echo "HTTP $code"
+          echo "$body"
+          [ "$code" -lt 400 ] || exit 1

@@ -108,10 +108,18 @@ export const api = {
       method: 'PATCH',
       body: JSON.stringify(data),
     }),
-  uploadResume: (file: File) => {
+  uploadResume: async (file: File): Promise<{ id: string; base_resume_md: string | null; extraction_status: string; message: string }> => {
+    const token = sessionStorage.getItem('access_token')
+    const headers: Record<string, string> = {}
+    if (token) headers['Authorization'] = `Bearer ${token}`
     const form = new FormData()
     form.append('file', file)
-    return fetch('/api/profile/upload', { method: 'POST', body: form }).then((r) => r.json())
+    const r = await fetch('/api/profile/upload', { method: 'POST', body: form, headers })
+    if (!r.ok) {
+      const text = await r.text()
+      throw new Error(`${r.status}: ${text}`)
+    }
+    return r.json()
   },
   toggleSearch: (active: boolean) =>
     apiFetch<{ search_active: boolean; search_expires_at: string | null }>(
@@ -166,12 +174,21 @@ export const api = {
   getMe: () => apiFetch<{ id: string; email: string }>('/api/users/me'),
 
   // Chat
-  sendMessage: (message: string, onChunk: (text: string) => void): Promise<void> => {
+  sendMessage: (message: string, onChunk: (text: string) => void, onError?: (err: Error) => void): Promise<void> => {
+    const token = sessionStorage.getItem('access_token')
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+    if (token) headers['Authorization'] = `Bearer ${token}`
     return fetch('/api/chat/messages', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify({ message }),
     }).then(async (res) => {
+      if (!res.ok) {
+        const text = await res.text()
+        const err = new Error(`${res.status}: ${text}`)
+        if (onError) { onError(err); return }
+        throw err
+      }
       if (!res.body) return
       const reader = res.body.getReader()
       const decoder = new TextDecoder()
@@ -187,7 +204,8 @@ export const api = {
               const parsed = JSON.parse(data)
               if (parsed.content) onChunk(parsed.content)
             } catch {
-              // ignore parse errors
+              const err = new Error(`stream parse error: ${data}`)
+              if (onError) { onError(err); return }
             }
           }
         }

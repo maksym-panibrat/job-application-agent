@@ -2,6 +2,7 @@
 Match service — scores jobs against a profile and creates Application rows.
 """
 
+import time
 import uuid
 
 import structlog
@@ -89,6 +90,8 @@ async def score_and_match(
     Score all unmatched jobs for a profile and create Application rows above threshold.
     Uses the LangGraph matching agent with Send-based fan-out for parallelism.
     """
+    t0 = time.perf_counter()
+    await log.ainfo("match.score_and_match.started", profile_id=str(profile.id))
     settings = get_settings()
 
     skills = await profile_service.get_skills(profile.id, session)
@@ -195,6 +198,7 @@ async def score_and_match(
         profile_id=str(profile.id),
         scored=len(scored_apps),
         total_jobs=len(job_contexts),
+        duration_ms=int((time.perf_counter() - t0) * 1000),
     )
     return scored_apps
 

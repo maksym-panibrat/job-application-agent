@@ -46,7 +46,7 @@ async def test_check_rate_limit_different_keys_are_independent(db_session):
 
 @pytest.mark.asyncio
 async def test_sliding_window_resets_counter(db_session):
-    """A new window start means a fresh counter — previous window's exhausted limit doesn't carry over."""
+    """A new window start means a fresh counter — previous window's exhausted limit doesn't carry over."""  # noqa: E501
     key = f"rl-window-{uuid.uuid4()}"
     limit = 1
     window_seconds = 3600
