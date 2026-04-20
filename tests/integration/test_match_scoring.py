@@ -60,10 +60,11 @@ async def _seed_job(
 
 
 def _make_llm_mock(scores: list[float]):
-    """Return a mock LLM whose invoke() cycles through the given scores."""
+    """Return a mock LLM whose ainvoke() cycles through the given scores."""
+    from unittest.mock import AsyncMock
     call_index = [0]
 
-    def fake_invoke(messages, **kwargs):
+    async def fake_ainvoke(messages, **kwargs):
         i = call_index[0] % len(scores)
         call_index[0] += 1
         score = scores[i]
@@ -82,9 +83,8 @@ def _make_llm_mock(scores: list[float]):
         return resp
 
     mock_llm = MagicMock()
-    mock_llm.invoke = fake_invoke
     mock_bound = MagicMock()
-    mock_bound.invoke = fake_invoke
+    mock_bound.ainvoke = fake_ainvoke
     mock_llm.bind_tools.return_value = mock_bound
     return mock_llm
 

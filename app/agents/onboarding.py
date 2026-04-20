@@ -22,6 +22,7 @@ from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode
 from typing_extensions import TypedDict
 
+from app.agents.llm_safe import safe_ainvoke
 from app.config import get_settings
 from app.services import profile_service
 
@@ -104,7 +105,7 @@ def build_graph(checkpointer: AsyncPostgresSaver) -> StateGraph:
         messages = [m for m in messages if not isinstance(m, SystemMessage)]
         messages = [SystemMessage(content=system_content)] + messages
 
-        result = await llm.ainvoke(messages)
+        result = await safe_ainvoke(llm, messages)
         return {"messages": [result]}
 
     async def process_tool_results(state: OnboardingState, config: RunnableConfig) -> dict:
