@@ -6,10 +6,8 @@ the full DB read/write path through the generation pipeline.
 """
 
 import uuid
-from unittest.mock import AsyncMock, patch
 
 import pytest
-from langchain_core.messages import AIMessage
 from sqlmodel import select
 
 from app.models.application import Application, GeneratedDocument
@@ -117,14 +115,8 @@ async def test_generate_materials_direct_path_with_fake_llm(db_session):
     """
     _, profile, _, application = await _seed_db(db_session)
 
-    fake_llm = AsyncMock()
-    fake_llm.ainvoke.side_effect = [
-        AIMessage(content="# Tailored Resume\n\nThis is the tailored resume content."),
-        AIMessage(content="Dear Hiring Manager,\n\nThis is a cover letter."),
-    ]
-
-    with patch("langchain_anthropic.ChatAnthropic", return_value=fake_llm):
-        await generate_materials(application.id, db_session, checkpointer=None)
+    # ENVIRONMENT=test activates the FakeListChatModel shim in get_llm()
+    await generate_materials(application.id, db_session, checkpointer=None)
 
     await db_session.refresh(application)
     assert application.generation_status == "ready"

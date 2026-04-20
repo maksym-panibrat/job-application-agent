@@ -28,6 +28,8 @@ jobs:
         env:
           GOOGLE_API_KEY: fake-test-key
           ENVIRONMENT: test
+          ADZUNA_APP_ID: fake-app-id
+          ADZUNA_API_KEY: fake-api-key
 
   frontend:
     runs-on: ubuntu-latest
