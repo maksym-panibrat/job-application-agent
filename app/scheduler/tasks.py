@@ -15,8 +15,8 @@ from sqlmodel import select
 log = structlog.get_logger()
 
 
-async def run_job_sync() -> None:
-    """Sync jobs for all users with active search."""
+async def run_job_sync() -> dict:
+    """Sync jobs for all users with active search. Returns a summary dict."""
     from app.database import get_session_factory
     from app.models.user_profile import UserProfile
     from app.services import job_sync_service, match_service
@@ -28,10 +28,19 @@ async def run_job_sync() -> None:
         )
         profiles = result.scalars().all()
 
+    profiles_synced = 0
+    total_new = 0
+    total_updated = 0
+    total_stale = 0
+
     for profile in profiles:
         try:
             async with factory() as session:
-                await job_sync_service.sync_profile(profile, session)
+                sync_result = await job_sync_service.sync_profile(profile, session)
+                profiles_synced += 1
+                total_new += sync_result.get("new_jobs", 0)
+                total_updated += sync_result.get("updated_jobs", 0)
+                total_stale += sync_result.get("stale_jobs", 0)
                 await match_service.score_and_match(profile, session)
         except Exception as exc:
             await log.aexception("scheduler.sync_error", profile_id=str(profile.id), error=str(exc))
@@ -42,9 +51,16 @@ async def run_job_sync() -> None:
             except Exception:
                 pass
 
+    return {
+        "profiles_synced": profiles_synced,
+        "total_new_jobs": total_new,
+        "total_updated_jobs": total_updated,
+        "total_stale_jobs": total_stale,
+    }
 
-async def run_generation_queue() -> None:
-    """Generate materials for applications stuck in pending/generating status."""
+
+async def run_generation_queue() -> dict:
+    """Generate materials for applications stuck in pending status. Returns a summary dict."""
     from app.database import get_session_factory
     from app.models.application import Application
     from app.services.application_service import generate_materials
@@ -62,17 +78,25 @@ async def run_generation_queue() -> None:
         apps = result.scalars().all()
         app_ids = [a.id for a in apps]
 
+    attempted = len(app_ids)
+    succeeded = 0
+    failed = 0
+
     for app_id in app_ids:
         try:
             async with factory() as session:
                 await generate_materials(app_id, session)
+                succeeded += 1
         except Exception as exc:
+            failed += 1
             await log.aexception(
                 "scheduler.generation_error", app_id=str(app_id), error=str(exc)
             )
 
+    return {"attempted": attempted, "succeeded": succeeded, "failed": failed}
 
-async def run_daily_maintenance() -> None:
+
+async def run_daily_maintenance() -> dict:
     """Mark stale jobs + auto-pause expired searches + trim excess matched applications."""
     from sqlalchemy import text
 
@@ -125,4 +149,9 @@ async def run_daily_maintenance() -> None:
         if trimmed:
             await log.ainfo("maintenance.applications_trimmed", count=trimmed)
 
+    return {
+        "stale_jobs": stale,
+        "searches_paused": len(expired_profiles),
+        "applications_trimmed": trimmed,
+    }
 
