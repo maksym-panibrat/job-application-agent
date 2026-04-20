@@ -67,4 +67,6 @@ async def test_safe_ainvoke_writes_db_marker_when_session_provided():
         with pytest.raises(BudgetExhausted):
             await safe_ainvoke(model, ["msg"], session=session)
 
-        mock_write.assert_called_once()
+        call_args = mock_write.call_args
+        assert call_args is not None
+        assert call_args.args[0] is session
