@@ -2,21 +2,21 @@
 
 ## 1. Neon Postgres
 
-1. Sign up at https://neon.tech and create a project named `job-application-agent` in region `us-east-1`.
+1. Sign up at <https://neon.tech> and create a project named `job-application-agent` in region `us-east-1`.
 2. Copy the **pooled** connection string from the dashboard.
 3. Replace the scheme: `postgresql://` → `postgresql+asyncpg://`
 4. Save as `DATABASE_URL`.
 
 ## 2. Google Cloud setup
 
-Install the gcloud CLI: https://cloud.google.com/sdk/docs/install
+Install the gcloud CLI: <https://cloud.google.com/sdk/docs/install>
 
 ```bash
 gcloud auth login
-gcloud projects create job-application-agent-portfolio
-gcloud config set project job-application-agent-portfolio
+gcloud projects create job-application-agent-493810
+gcloud config set project job-application-agent-493810
 gcloud billing accounts list
-gcloud billing projects link job-application-agent-portfolio --billing-account=BILLING_ACCOUNT_ID
+gcloud billing projects link job-application-agent-493810 --billing-account=BILLING_ACCOUNT_ID
 gcloud services enable run.googleapis.com artifactregistry.googleapis.com secretmanager.googleapis.com iamcredentials.googleapis.com cloudbuild.googleapis.com
 gcloud artifacts repositories create app --repository-format=docker --location=us-central1
 ```
@@ -44,9 +44,9 @@ Add these in **Settings → Secrets and variables → Actions**:
 
 | Secret | Value |
 |---|---|
-| `GCP_PROJECT_ID` | `job-application-agent-portfolio` |
+| `GCP_PROJECT_ID` | `job-application-agent-493810` |
 | `GCP_WORKLOAD_IDENTITY_PROVIDER` | Output from step 5 below |
-| `GCP_SERVICE_ACCOUNT` | `github-deployer@job-application-agent-portfolio.iam.gserviceaccount.com` |
+| `GCP_SERVICE_ACCOUNT` | `github-deployer@job-application-agent-493810.iam.gserviceaccount.com` |
 | `CRON_SHARED_SECRET` | Output of `gcloud secrets versions access latest --secret=cron-shared-secret` |
 | `CLOUD_RUN_URL` | Add after first deploy (step 7) |
 
@@ -55,11 +55,11 @@ Add these in **Settings → Secrets and variables → Actions**:
 ```bash
 gcloud iam service-accounts create github-deployer --display-name="GitHub Actions deployer"
 
-SA="github-deployer@job-application-agent-portfolio.iam.gserviceaccount.com"
-PROJECT="job-application-agent-portfolio"
-REPO="<your-github-username>/job-application-agent"
+SA="github-deployer@job-application-agent-493810.iam.gserviceaccount.com"
+PROJECT="job-application-agent-493810"
+REPO="maksym-panibrat/job-application-agent"
 
-for role in roles/run.admin roles/artifactregistry.writer roles/secretmanager.secretAccessor roles/iam.serviceAccountUser roles/cloudbuild.builds.editor; do
+for role in roles/run.admin roles/artifactregistry.writer roles/secretmanager.secretAccessor roles/iam.serviceAccountUser roles/cloudbuild.builds.editor roles/storage.admin; do
   gcloud projects add-iam-policy-binding $PROJECT --member="serviceAccount:$SA" --role="$role"
 done
 
@@ -86,7 +86,7 @@ gcloud iam workload-identity-pools providers describe github-provider \
 
 ## 6. Google AI Studio API key
 
-Visit https://aistudio.google.com/apikey, generate a key, and store it as the `google-api-key` secret (step 3).
+Visit <https://aistudio.google.com/apikey>, generate a key, and store it as the `google-api-key` secret (step 3).
 
 ## 7. After first deploy
 
@@ -100,4 +100,22 @@ Run the demo seed job:
 
 ```bash
 gcloud run jobs execute seed-demo --region us-central1 --wait
+```
+
+## Troubleshooting
+
+### `forbidden from accessing the bucket [*_cloudbuild]` during deploy
+
+Cloud Build needs `roles/storage.admin` on the service account (included in step 5 above). If you provisioned before this was documented, add it manually:
+
+```bash
+gcloud projects add-iam-policy-binding job-application-agent-493810 \
+  --member="serviceAccount:github-deployer@job-application-agent-493810.iam.gserviceaccount.com" \
+  --role="roles/storage.admin"
+```
+
+Then re-run the failed GitHub Actions deploy job:
+
+```bash
+gh run rerun <run-id> --failed --repo maksym-panibrat/job-application-agent
 ```
