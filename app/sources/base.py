@@ -1,8 +1,13 @@
+from __future__ import annotations
+
 from abc import ABC, abstractmethod
 from datetime import datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel
+
+if TYPE_CHECKING:
+    from app.models.user_profile import UserProfile
 
 
 class JobData(BaseModel):
@@ -45,7 +50,7 @@ class JobSource(ABC):
         settings: Any,
         session: Any,
         *,
-        profile: Any = None,
+        profile: UserProfile | None = None,
     ) -> tuple[list[JobData], Any]:
         """
         Search for jobs matching query/location.
