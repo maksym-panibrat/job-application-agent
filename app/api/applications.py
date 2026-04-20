@@ -56,6 +56,7 @@ async def list_applications(
                 "match_rationale": app.match_rationale,
                 "match_strengths": app.match_strengths,
                 "match_gaps": app.match_gaps,
+                "user_interest": app.user_interest,
                 "created_at": app.created_at,
                 "job": {
                     "id": str(job.id),
@@ -168,6 +169,32 @@ async def review_application(
         background_tasks.add_task(_generate_in_background, uuid.UUID(app_id), checkpointer)
 
     return {"id": str(app.id), "status": app.status, "generation_status": app.generation_status}
+
+
+@router.patch("/{app_id}/interest")
+async def set_interest(
+    app_id: uuid.UUID,
+    data: dict,
+    profile: UserProfile = Depends(get_current_profile),
+    session: AsyncSession = Depends(get_db),
+):
+    """Mark a match as interested or not-interested without opening full review."""
+    interest = data.get("interest")  # "interested", "not_interested", or None
+    if interest not in ("interested", "not_interested", None):
+        raise HTTPException(
+            status_code=422,
+            detail="interest must be 'interested', 'not_interested', or null",
+        )
+
+    app = await session.get(Application, app_id)
+    if app is None or app.profile_id != profile.id:
+        raise HTTPException(status_code=404, detail="Application not found")
+
+    app.user_interest = interest
+    session.add(app)
+    await session.commit()
+    await session.refresh(app)
+    return {"id": str(app.id), "user_interest": app.user_interest}
 
 
 @router.patch("/{app_id}/documents/{doc_id}")
