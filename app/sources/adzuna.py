@@ -71,6 +71,8 @@ class AdzunaSource(JobSource):
         cursor: Any,
         settings: Any,
         session: AsyncSession,
+        *,
+        profile: Any = None,
     ) -> tuple[list[JobData], Any]:
         """
         Search Adzuna for jobs. cursor = page number (int, default 1).

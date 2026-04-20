@@ -41,6 +41,7 @@ async def get_profile(
         "search_keywords": profile.search_keywords,
         "search_active": profile.search_active,
         "search_expires_at": profile.search_expires_at,
+        "target_company_slugs": profile.target_company_slugs,
         "skills": [
             {
                 "id": str(s.id),
@@ -83,6 +84,7 @@ async def update_profile(
     allowed = {
         "full_name", "email", "phone", "linkedin_url", "github_url", "portfolio_url",
         "target_roles", "target_locations", "remote_ok", "seniority", "search_keywords",
+        "target_company_slugs",
     }
     filtered = {k: v for k, v in data.items() if k in allowed}
     updated = await profile_service.update_profile(profile.id, filtered, session)

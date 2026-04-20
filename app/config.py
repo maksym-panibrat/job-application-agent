@@ -40,6 +40,13 @@ class Settings(BaseSettings):
     jsearch_max_results_per_query: int = 10
     matching_max_concurrency: int = 2
     matching_jobs_per_batch: int = 20
+    remotive_enabled: bool = True
+    remoteok_enabled: bool = True
+    arbeitnow_enabled: bool = True
+    greenhouse_board_enabled: bool = True
+    remotive_max_results: int = 50
+    arbeitnow_max_pages_per_sync: int = 2
+    remoteok_user_agent: str = "job-application-agent/1.0 (+https://github.com/panibrat/job-application-agent)"
 
     cors_allowed_origins: list[str] = ["http://localhost:5173", "http://localhost:3000"]
 
