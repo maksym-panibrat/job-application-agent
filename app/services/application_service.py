@@ -5,6 +5,7 @@ Called by match_service when a job scores above threshold.
 Drives the generation agent and saves resulting documents to DB.
 """
 
+import time
 import uuid
 from datetime import UTC, datetime
 
@@ -64,6 +65,8 @@ async def generate_materials(
     Background task: generate tailored resume, cover letter, custom answers.
     Updates generation_status on the Application row.
     """
+    t0 = time.perf_counter()
+    await log.ainfo("generation.started", application_id=str(application_id))
     app = await session.get(Application, application_id)
     if not app:
         await log.awarning("generate_materials.not_found", application_id=str(application_id))
@@ -125,9 +128,10 @@ async def generate_materials(
 
     except Exception as exc:
         await log.aexception(
-            "generate_materials.failed",
+            "generation.failed",
             application_id=str(application_id),
             error=str(exc),
+            duration_ms=int((time.perf_counter() - t0) * 1000),
         )
         app.generation_status = "failed"
         app.updated_at = datetime.now(UTC)
@@ -140,7 +144,12 @@ async def generate_materials(
     app.updated_at = datetime.now(UTC)
     session.add(app)
     await session.commit()
-    await log.ainfo("generate_materials.done", application_id=str(application_id))
+    await log.ainfo(
+        "generation.completed",
+        application_id=str(application_id),
+        status=app.generation_status,
+        duration_ms=int((time.perf_counter() - t0) * 1000),
+    )
 
 
 async def _generate_direct(
