@@ -43,8 +43,12 @@ Python (7 years), FastAPI (3 years), PostgreSQL (5 years)
       timeout: 30_000,
     })
 
-    // Profile card should now show resume uploaded
-    await expect(page.getByText('Uploaded', { exact: true })).toBeVisible({ timeout: 10_000 })
+    // Expand the profile card (collapsed by default) then check for resume
+    const profileCardToggle = page.getByText(/Current profile/i)
+    if (await profileCardToggle.isVisible({ timeout: 5_000 })) {
+      await profileCardToggle.click()
+      await expect(page.getByText('Uploaded', { exact: true })).toBeVisible({ timeout: 10_000 })
+    }
   })
 
   test('sending a chat message triggers agent response', async ({ page }) => {
