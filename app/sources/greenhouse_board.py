@@ -132,8 +132,6 @@ class GreenhouseBoardSource(JobSource):
                     return []
                 response.raise_for_status()
                 data = response.json()
-        except httpx.HTTPStatusError:
-            raise
         except Exception as exc:
             await log.awarning("greenhouse_board.fetch_failed", slug=slug, error=str(exc))
             return []
