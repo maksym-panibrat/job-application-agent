@@ -1,10 +1,8 @@
-# Regression: matching agent fan-out sent all N jobs to the Anthropic API
-# simultaneously with no concurrency cap, causing 429 "concurrent connections
-# exceeded" errors during job sync.
-# Discovered via runtime error on POST /api/jobs/sync.
+# Regression: matching agent fan-out sent all N jobs to the API
+# simultaneously with no concurrency cap, causing 429 errors.
+# Also validates the fan-out does not block the event loop.
 
-import threading
-import time
+import asyncio
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -22,7 +20,6 @@ def _make_job(i: int) -> dict:
 
 
 def _fake_llm_response():
-    """Return a mock that looks like a ChatAnthropic response with tool_calls."""
     resp = MagicMock()
     resp.tool_calls = [
         {
@@ -41,36 +38,30 @@ def _fake_llm_response():
 @pytest.mark.asyncio
 async def test_matching_agent_limits_concurrent_api_calls():
     """Fan-out scoring must not exceed matching_max_concurrency simultaneous
-    API calls. Before the fix, all N jobs called the LLM at once."""
+    API calls. Validated using asyncio tracking (not threading)."""
     max_concurrency = 3
     num_jobs = 10
-    peak_concurrent = {"value": 0}
+    call_lock = asyncio.Lock()
     active = {"value": 0}
-    lock = threading.Lock()
+    peak_concurrent = {"value": 0}
 
-    def tracking_invoke(messages, **kwargs):
-        with lock:
+    async def tracking_ainvoke(messages, **kwargs):
+        async with call_lock:
             active["value"] += 1
             peak_concurrent["value"] = max(peak_concurrent["value"], active["value"])
-        time.sleep(0.05)  # simulate API latency
-        with lock:
+        await asyncio.sleep(0.05)  # simulate API latency
+        async with call_lock:
             active["value"] -= 1
         return _fake_llm_response()
 
     mock_llm = MagicMock()
-    mock_llm.invoke = tracking_invoke
     mock_bound = MagicMock()
-    mock_bound.invoke = tracking_invoke
+    mock_bound.ainvoke = tracking_ainvoke
     mock_llm.bind_tools.return_value = mock_bound
 
     with (
-        patch(
-            "app.agents.matching_agent.get_llm",
-            return_value=mock_llm,
-        ),
-        patch(
-            "app.agents.matching_agent.get_settings",
-        ) as mock_settings,
+        patch("app.agents.matching_agent.get_llm", return_value=mock_llm),
+        patch("app.agents.matching_agent.get_settings") as mock_settings,
     ):
         settings = MagicMock()
         settings.matching_max_concurrency = max_concurrency
