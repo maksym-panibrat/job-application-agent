@@ -4,6 +4,7 @@ and writes a marker to llm_status so the UI can show a budget-exhausted banner.
 """
 from datetime import UTC, datetime
 
+from google.api_core.exceptions import ResourceExhausted as GaxResourceExhausted
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import BaseMessage
 
@@ -27,18 +28,23 @@ def _next_month_utc() -> datetime:
 
 async def safe_ainvoke(
     model: BaseChatModel,
-    messages: list[BaseMessage],
+    messages,
     session=None,
+    **kwargs,
 ) -> BaseMessage:
     """
-    Invoke model.ainvoke(messages). If ResourceExhausted, write llm_status
+    Invoke model.ainvoke(messages, **kwargs). If the Gemini quota is exhausted
+    (ResourceExhausted or a 429 response containing 'quota'), write llm_status
     marker and raise BudgetExhausted. Other exceptions propagate normally.
     """
     try:
-        return await model.ainvoke(messages)
+        return await model.ainvoke(messages, **kwargs)
     except Exception as exc:
-        exc_str = str(type(exc).__name__) + str(exc)
-        if "ResourceExhausted" in exc_str or "429" in exc_str or "quota" in exc_str.lower():
+        exc_str = str(exc)
+        is_budget_exhausted = isinstance(exc, GaxResourceExhausted) or (
+            "429" in exc_str and "quota" in exc_str.lower()
+        )
+        if is_budget_exhausted:
             resumes_at = _next_month_utc()
             if session is not None:
                 await _write_exhausted_marker(session, resumes_at)

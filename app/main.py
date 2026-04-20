@@ -4,8 +4,9 @@ from contextlib import asynccontextmanager
 
 import sentry_sdk
 import structlog
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
@@ -71,12 +72,14 @@ async def lifespan(app: FastAPI):
     psycopg_uri = str(settings.database_url).replace("+asyncpg", "")
     # setup() runs CREATE INDEX CONCURRENTLY which cannot run inside a pipeline,
     # so we run it once on a plain connection before opening the pipeline saver.
+    from psycopg.errors import DuplicateTable
+
     async with AsyncPostgresSaver.from_conn_string(psycopg_uri) as setup_checkpointer:
         try:
             await setup_checkpointer.setup()
-        except Exception as exc:
-            if "already exists" not in str(exc).lower():
-                raise
+        except DuplicateTable:
+            pass  # checkpoint tables already exist from a previous deploy
+        # all other exceptions propagate and fail lifespan — loud failure at startup
     async with AsyncPostgresSaver.from_conn_string(psycopg_uri, pipeline=True) as checkpointer:
         app.state.checkpointer = checkpointer
         await log.ainfo("checkpointer.ready")
@@ -88,9 +91,10 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Job Application Agent", lifespan=lifespan)
 
+_startup_settings = get_settings()
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:3000"],
+    allow_origins=_startup_settings.cors_allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -118,8 +122,7 @@ app.include_router(status_router)
 app.include_router(users_router)
 
 # OAuth routes — only mount if credentials are configured
-settings = get_settings()
-if settings.google_oauth_client_id and settings.google_oauth_client_secret:
+if _startup_settings.google_oauth_client_id and _startup_settings.google_oauth_client_secret:
     from app.api.auth import auth_backend, fastapi_users, get_google_oauth_client
 
     google_oauth_client = get_google_oauth_client()
@@ -127,7 +130,7 @@ if settings.google_oauth_client_id and settings.google_oauth_client_secret:
         fastapi_users.get_oauth_router(
             google_oauth_client,
             auth_backend,
-            settings.jwt_secret.get_secret_value(),
+            _startup_settings.jwt_secret.get_secret_value(),
             redirect_url="/auth/callback",
             is_verified_by_default=True,
         ),
@@ -136,11 +139,26 @@ if settings.google_oauth_client_id and settings.google_oauth_client_secret:
     )
 
 # Dev-only endpoints for E2E testing
-if settings.environment in ("development", "test"):
+if _startup_settings.environment in ("development", "test"):
     from app.api.test_helpers import router as test_helpers_router
     app.include_router(test_helpers_router)
 
-# Serve React build if it exists
+# SPA catch-all: serve React build. The route is always registered so it is
+# testable via monkeypatching static_dir; the handler returns 404 if the
+# build doesn't exist (dev without a build, or CI without frontend step).
 static_dir = os.path.join(os.path.dirname(__file__), "static")
-if os.path.exists(static_dir):
-    app.mount("/", StaticFiles(directory=static_dir, html=True), name="static")
+_assets_dir = os.path.join(static_dir, "assets")
+if os.path.exists(_assets_dir):
+    app.mount("/assets", StaticFiles(directory=_assets_dir), name="static-assets")
+
+
+@app.get("/{full_path:path}", include_in_schema=False)
+async def spa_fallback(full_path: str):
+    if full_path:
+        candidate = os.path.join(static_dir, full_path)
+        if os.path.isfile(candidate):
+            return FileResponse(candidate)
+    index = os.path.join(static_dir, "index.html")
+    if os.path.exists(index):
+        return FileResponse(index)
+    raise HTTPException(status_code=404, detail="Frontend build not found")

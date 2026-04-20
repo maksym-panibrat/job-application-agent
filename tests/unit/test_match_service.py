@@ -12,6 +12,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 import structlog.testing
 
+from app.models.application import Application
+from app.models.job import Job
+from app.models.user_profile import UserProfile
+
 _P = "app.services.match_service"
 _GET_SKILLS = f"{_P}.profile_service.get_skills"
 _GET_EXPS = f"{_P}.profile_service.get_work_experiences"
@@ -25,38 +29,44 @@ def setup_env():
     os.environ.setdefault("GOOGLE_API_KEY", "fake-test-key")
 
 
-def _make_profile() -> MagicMock:
-    p = MagicMock()
-    p.id = uuid.uuid4()
-    p.full_name = "Test User"
-    p.seniority = "senior"
-    p.target_roles = ["Software Engineer"]
-    p.remote_ok = True
-    p.base_resume_md = "Resume content"
-    return p
+def _make_profile() -> UserProfile:
+    return UserProfile(
+        id=uuid.uuid4(),
+        user_id=uuid.uuid4(),
+        full_name="Test User",
+        email="test@test.com",
+        base_resume_md="# Test User\n\nSoftware engineer.",
+        target_roles=["Software Engineer"],
+        seniority="senior",
+        remote_ok=True,
+    )
 
 
-def _make_job(job_id: uuid.UUID | None = None) -> MagicMock:
-    j = MagicMock()
-    j.id = job_id or uuid.uuid4()
-    j.title = "Software Engineer"
-    j.company_name = "Acme Corp"
-    j.description_md = "A great job."
-    return j
+def _make_job(job_id: uuid.UUID | None = None) -> Job:
+    return Job(
+        id=job_id or uuid.uuid4(),
+        source="adzuna",
+        external_id=str(uuid.uuid4()),
+        title="Software Engineer",
+        company_name="Acme Corp",
+        apply_url="https://example.com/apply",
+        description_md="A great job.",
+    )
 
 
 def _make_application(
     app_id: uuid.UUID | None = None, job_id: uuid.UUID | None = None
-) -> MagicMock:
-    a = MagicMock()
-    a.id = app_id or uuid.uuid4()
-    a.job_id = job_id or uuid.uuid4()
-    a.status = "pending_review"
-    a.match_score = None
-    a.match_rationale = None
-    a.match_strengths = []
-    a.match_gaps = []
-    return a
+) -> Application:
+    return Application(
+        id=app_id or uuid.uuid4(),
+        job_id=job_id or uuid.uuid4(),
+        profile_id=uuid.uuid4(),
+        status="pending_review",
+        match_score=None,
+        match_rationale=None,
+        match_strengths=[],
+        match_gaps=[],
+    )
 
 
 def _make_score_result(application_id: str, score: float):

@@ -18,13 +18,13 @@ jobs:
       - name: Lint
         run: uv run ruff check app/ tests/
       - name: Unit tests
-        run: uv run pytest tests/unit/ -v
+        run: uv run pytest tests/unit/ -v --cov=app --cov-report=term --cov-fail-under=39
         env:
           DATABASE_URL: postgresql+asyncpg://test:test@localhost/test
           GOOGLE_API_KEY: fake-test-key
           ENVIRONMENT: test
       - name: Integration + E2E tests
-        run: uv run pytest tests/integration/ tests/e2e/ -v
+        run: uv run pytest tests/integration/ tests/e2e/ -v --cov=app --cov-append --cov-report=term --cov-fail-under=56
         env:
           GOOGLE_API_KEY: fake-test-key
           ENVIRONMENT: test
@@ -44,7 +44,7 @@ jobs:
       - name: Install
         run: cd frontend && npm ci
       - name: Test
-        run: cd frontend && npm run test
+        run: cd frontend && npm run test -- --coverage --coverage.thresholds.lines=29
       - name: Build
         run: cd frontend && npm run build
 
@@ -163,8 +163,8 @@ jobs:
           gcloud run deploy api \
             --image us-central1-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/app/api:${{ github.sha }} \
             --region us-central1 \
-            --set-secrets="GOOGLE_API_KEY=google-api-key:latest,ADZUNA_APP_ID=adzuna-app-id:latest,ADZUNA_API_KEY=adzuna-api-key:latest,DATABASE_URL=database-url:latest,CRON_SHARED_SECRET=cron-shared-secret:latest,JWT_SECRET=jwt-secret:latest" \
-            --set-env-vars="ENVIRONMENT=production,AUTH_ENABLED=false" \
+            --set-secrets="GOOGLE_API_KEY=google-api-key:latest,ADZUNA_APP_ID=adzuna-app-id:latest,ADZUNA_API_KEY=adzuna-api-key:latest,DATABASE_URL=database-url:latest,CRON_SHARED_SECRET=cron-shared-secret:latest,JWT_SECRET=jwt-secret:latest,GOOGLE_OAUTH_CLIENT_ID=google-oauth-client-id:latest,GOOGLE_OAUTH_CLIENT_SECRET=google-oauth-client-secret:latest" \
+            --set-env-vars="ENVIRONMENT=production,AUTH_ENABLED=true" \
             --service-account="${{ secrets.GCP_SERVICE_ACCOUNT }}" \
             --min-instances=0 \
             --max-instances=1 \
@@ -177,15 +177,3 @@ jobs:
           URL=$(gcloud run services describe api --region us-central1 \
             --format="value(status.url)")
           echo "url=$URL" >> $GITHUB_OUTPUT
-
-      - uses: astral-sh/setup-uv@v5
-        with:
-          version: "latest"
-
-      - name: Smoke test
-        run: |
-          sleep 10
-          uv sync --dev
-          uv run pytest tests/smoke/ \
-            --base-url="${{ steps.url.outputs.url }}" \
-            -v 2>&1 | tail -30

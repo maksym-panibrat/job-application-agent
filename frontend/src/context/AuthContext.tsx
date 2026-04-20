@@ -37,7 +37,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         })
         .finally(() => setLoading(false))
     } else {
-      setLoading(false)
+      // Dev mode (AUTH_ENABLED=false): backend auto-provisions a user for every
+      // request, so getMe() succeeds without a token. Prod: returns 401, user
+      // stays null, and RequireAuth redirects to the landing page.
+      api.getMe()
+        .then(setUser)
+        .catch(() => {})
+        .finally(() => setLoading(false))
     }
   }, [])
 

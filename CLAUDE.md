@@ -44,6 +44,11 @@ cd frontend && npm run dev          # dev server
 cd frontend && npm run build        # build to app/static/
 cd frontend && npm test             # component tests (vitest)
 cd frontend && npm run test:e2e     # Playwright e2e
+
+# Pre-commit hooks (run automatically on commit/push after install)
+uv run pre-commit install                    # lint on commit
+uv run pre-commit install --hook-type pre-push  # unit tests on push
+uv run pre-commit run --all-files            # run manually on all files
 ```
 
 ## Architecture
@@ -145,7 +150,7 @@ Limits: 5 profile edits/hour, 3 resume uploads/day, 1 manual sync/day.
 - **Alembic model registration**: `env.py` imports from `app.models`. When adding a new model, register it in `app/models/__init__.py`.
 - **Neon URL**: `sslmode=require` and `channel_binding=require` are stripped from `DATABASE_URL` in both `alembic/env.py` and `app/database.py`; `ssl=True` is passed as a `connect_arg` instead.
 - **`AsyncPostgresSaver.setup()`** must run on a plain (non-pipeline) connection because it issues `CREATE INDEX CONCURRENTLY` — see `app/main.py` lifespan.
-- **Matching throttle**: the matching agent uses a `threading.Semaphore` + 1.5s sleep between calls and 10s/30s exponential backoff on 429, falling back to `score=0.0` after retries. `ScoreResult.strengths/gaps` coerces prose to lists.
+- **Matching throttle**: the matching agent uses an `asyncio.Semaphore` + 1.5s sleep between calls and 10s/30s exponential backoff on 429/rate_limit errors, falling back to `score=0.0` after retries. `ScoreResult.strengths/gaps` coerces prose to lists.
 - **LangGraph checkpoint tables**: `checkpoint_*` tables are managed by `AsyncPostgresSaver.setup()`, not by Alembic. Do not add them to migrations.
 
 ### Key constraints

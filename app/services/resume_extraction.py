@@ -11,6 +11,7 @@ import re
 import structlog
 from langchain_google_genai import ChatGoogleGenerativeAI
 
+from app.agents.llm_safe import safe_ainvoke
 from app.config import get_settings
 
 log = structlog.get_logger()
@@ -60,7 +61,7 @@ async def extract_profile_from_resume(resume_md: str) -> dict:
                 google_api_key=settings.google_api_key.get_secret_value(),
             )
         prompt = EXTRACTION_PROMPT.format(resume_md=resume_md[:8000])
-        response = await llm.ainvoke(prompt)
+        response = await safe_ainvoke(llm, prompt)
         raw = response.content if isinstance(response.content, str) else str(response.content)
 
         # Strip markdown code fences if present

@@ -3,11 +3,11 @@ Matching agent — LangGraph StateGraph with Send-based fan-out.
 
 Graph: load_context → fan_out (Send) → score_job (×N parallel) → persist_results
 
-Uses Haiku for cost efficiency. cache_control on profile_text (shared across all scorings).
+Uses Flash for cost efficiency.
 """
 
+import asyncio
 import operator
-import threading
 from typing import Annotated
 
 import structlog
@@ -19,6 +19,7 @@ from langgraph.types import Send
 from pydantic import BaseModel, field_validator
 from typing_extensions import TypedDict
 
+from app.agents.llm_safe import BudgetExhausted, safe_ainvoke
 from app.config import get_settings
 
 log = structlog.get_logger()
@@ -42,7 +43,7 @@ class ScoreResult(BaseModel):
     @field_validator("strengths", "gaps", mode="before")
     @classmethod
     def coerce_to_list(cls, v: object) -> list[str]:
-        """Haiku sometimes returns bullet-point strings instead of JSON arrays."""
+        """Flash sometimes returns bullet-point strings instead of JSON arrays."""
         if isinstance(v, list):
             return v
         if isinstance(v, str):
@@ -99,7 +100,7 @@ Call the record_score tool with your assessment."""
 
 def build_graph() -> StateGraph:
     settings = get_settings()
-    semaphore = threading.Semaphore(settings.matching_max_concurrency)
+    semaphore = asyncio.Semaphore(settings.matching_max_concurrency)
 
     @tool
     def record_score(
@@ -115,7 +116,6 @@ def build_graph() -> StateGraph:
     llm = get_llm().bind_tools(tools, tool_choice="record_score")
 
     def load_context_node(state: MatchState) -> dict:
-        # profile_text and jobs are already in state (provided at invocation)
         return {}
 
     def fan_out(state: MatchState) -> list[Send]:
@@ -124,9 +124,7 @@ def build_graph() -> StateGraph:
             for job in state["jobs"]
         ]
 
-    def score_job_node(state: SingleJobState) -> dict:
-        import time
-
+    async def score_job_node(state: SingleJobState) -> dict:
         job = state["job"]
         prompt = SCORING_PROMPT.format(
             profile_text=state["profile_text"],
@@ -138,20 +136,32 @@ def build_graph() -> StateGraph:
             "run_name": f"score-{job['company'][:20]}-{job['title'][:30]}",
             "metadata": {"application_id": job["application_id"]},
         }
-        # Retry loop: handle API rate limit errors with backoff.
-        # Falls back to score=0.0 (auto_rejected) after exhausting retries so
-        # a single 429 doesn't crash the entire fan-out.
+        # Retry loop: handle transient API rate limit errors with backoff.
+        # BudgetExhausted (monthly quota) is NOT retried — it is caught and
+        # converted to score=0.0 so the entire matching run is not aborted.
+        # Falls back to score=0.0 after exhausting retries for transient errors.
         backoffs = [10, 30]
         for attempt, backoff in enumerate([0] + backoffs):
             if backoff:
-                time.sleep(backoff)
-            with semaphore:
-                time.sleep(1.5)  # throttle: ~2 req/s per slot → ~8k tokens/min
+                await asyncio.sleep(backoff)
+            async with semaphore:
+                await asyncio.sleep(1.5)  # throttle: ~2 req/s per slot
                 try:
-                    result = llm.invoke([HumanMessage(content=prompt)], config=run_config)
+                    result = await safe_ainvoke(
+                        llm, [HumanMessage(content=prompt)], config=run_config
+                    )
                     break
+                except BudgetExhausted:
+                    log.warning("match.budget_exhausted_skip", title=job["title"])
+                    return {"scores": [ScoreResult(
+                        application_id=job["application_id"],
+                        score=0.0,
+                        rationale="Skipped: LLM quota exhausted",
+                        strengths=[],
+                        gaps=[],
+                    )]}
                 except Exception as exc:
-                    is_rate_limit = "rate_limit" in str(exc).lower() or "429" in str(exc)
+                    is_rate_limit = "429" in str(exc) or "rate_limit" in str(exc).lower()
                     if is_rate_limit and attempt < len(backoffs):
                         continue
                     if is_rate_limit:
@@ -182,7 +192,6 @@ def build_graph() -> StateGraph:
         return {"scores": [score_result]}
 
     async def persist_results_node(state: MatchState) -> dict:
-        # Results are persisted by the caller (match_service) after graph completion
         return {}
 
     builder = StateGraph(MatchState)

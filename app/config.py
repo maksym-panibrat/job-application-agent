@@ -41,11 +41,18 @@ class Settings(BaseSettings):
     matching_max_concurrency: int = 2
     matching_jobs_per_batch: int = 20
 
+    cors_allowed_origins: list[str] = ["http://localhost:5173", "http://localhost:3000"]
+
     @model_validator(mode="after")
     def validate_production_secrets(self) -> "Settings":
         if self.environment == "production":
             if self.jwt_secret.get_secret_value() == "dev-secret":
                 raise ValueError("jwt_secret must be set in production")
+            if self.cron_shared_secret.get_secret_value() == "dev-cron-secret":
+                raise ValueError("cron_shared_secret must be set in production")
+            if self.auth_enabled:
+                if not self.google_oauth_client_id or not self.google_oauth_client_secret:
+                    raise ValueError("Google OAuth credentials required when AUTH_ENABLED=true")
         return self
 
 

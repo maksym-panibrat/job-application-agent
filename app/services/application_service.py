@@ -12,6 +12,7 @@ import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
+from app.agents.llm_safe import safe_ainvoke
 from app.models.application import Application, GeneratedDocument
 from app.models.job import Job
 from app.models.user_profile import UserProfile
@@ -184,7 +185,7 @@ async def _generate_direct(
         company=job.company_name,
         description=truncate_description(job.description_md or ""),
     )
-    resume_result = await llm.ainvoke([HumanMessage(content=resume_prompt)])
+    resume_result = await safe_ainvoke(llm, [HumanMessage(content=resume_prompt)])
     documents.append(
         {
             "doc_type": "tailored_resume",
@@ -200,7 +201,7 @@ async def _generate_direct(
         company=job.company_name,
         description=truncate_description(job.description_md or ""),
     )
-    cl_result = await llm.ainvoke([HumanMessage(content=cl_prompt)])
+    cl_result = await safe_ainvoke(llm, [HumanMessage(content=cl_prompt)])
     documents.append(
         {
             "doc_type": "cover_letter",
