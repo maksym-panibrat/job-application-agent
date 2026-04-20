@@ -44,6 +44,11 @@ cd frontend && npm run dev          # dev server
 cd frontend && npm run build        # build to app/static/
 cd frontend && npm test             # component tests (vitest)
 cd frontend && npm run test:e2e     # Playwright e2e
+
+# Pre-commit hooks (run automatically on commit/push after install)
+uv run pre-commit install                    # lint on commit
+uv run pre-commit install --hook-type pre-push  # unit tests on push
+uv run pre-commit run --all-files            # run manually on all files
 ```
 
 ## Architecture

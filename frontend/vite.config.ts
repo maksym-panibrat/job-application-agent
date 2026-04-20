@@ -13,6 +13,7 @@ export default defineConfig({
       reporter: ['text', 'lcov'],
       include: ['src/**/*.{ts,tsx}'],
       exclude: ['src/test/**', 'src/**/*.test.*', 'src/main.tsx'],
+      thresholds: { lines: 29 },
     },
   },
   plugins: [react()],

@@ -18,13 +18,13 @@ jobs:
       - name: Lint
         run: uv run ruff check app/ tests/
       - name: Unit tests
-        run: uv run pytest tests/unit/ -v
+        run: uv run pytest tests/unit/ -v --cov=app --cov-report=term --cov-fail-under=56
         env:
           DATABASE_URL: postgresql+asyncpg://test:test@localhost/test
           GOOGLE_API_KEY: fake-test-key
           ENVIRONMENT: test
       - name: Integration + E2E tests
-        run: uv run pytest tests/integration/ tests/e2e/ -v
+        run: uv run pytest tests/integration/ tests/e2e/ -v --cov=app --cov-append --cov-report=term
         env:
           GOOGLE_API_KEY: fake-test-key
           ENVIRONMENT: test
@@ -44,7 +44,7 @@ jobs:
       - name: Install
         run: cd frontend && npm ci
       - name: Test
-        run: cd frontend && npm run test
+        run: cd frontend && npm run test -- --coverage --coverage.thresholds.lines=29
       - name: Build
         run: cd frontend && npm run build
 
