@@ -144,13 +144,16 @@ jobs:
       - name: Run migrations
         run: |
           IMAGE="us-central1-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/app/api:${{ github.sha }}"
+          SA="${{ secrets.GCP_SERVICE_ACCOUNT }}"
           if gcloud run jobs describe alembic-migrate --region us-central1 &>/dev/null; then
-            gcloud run jobs update alembic-migrate --image "$IMAGE" --region us-central1
+            gcloud run jobs update alembic-migrate --image "$IMAGE" --region us-central1 \
+              --service-account="$SA"
           else
             gcloud run jobs create alembic-migrate \
               --image "$IMAGE" --region us-central1 \
               --command="alembic,upgrade,head" \
-              --set-secrets="DATABASE_URL=database-url:latest"
+              --set-secrets="DATABASE_URL=database-url:latest" \
+              --service-account="$SA"
           fi
           gcloud run jobs execute alembic-migrate --region us-central1 --wait
 
@@ -161,6 +164,7 @@ jobs:
             --region us-central1 \
             --set-secrets="GOOGLE_API_KEY=google-api-key:latest,ADZUNA_APP_ID=adzuna-app-id:latest,ADZUNA_API_KEY=adzuna-api-key:latest,DATABASE_URL=database-url:latest,CRON_SHARED_SECRET=cron-shared-secret:latest,JWT_SECRET=jwt-secret:latest" \
             --set-env-vars="ENVIRONMENT=production,AUTH_ENABLED=false" \
+            --service-account="${{ secrets.GCP_SERVICE_ACCOUNT }}" \
             --min-instances=0 \
             --max-instances=1 \
             --allow-unauthenticated \
