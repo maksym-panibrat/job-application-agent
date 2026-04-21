@@ -25,6 +25,7 @@ class Settings(BaseSettings):
     cron_shared_secret: SecretStr = SecretStr("dev-cron-secret")
     search_auto_pause_days: int = 7
     sentry_dsn: SecretStr | None = None
+    sentry_release: str | None = None
     langsmith_tracing: bool = False
     langsmith_api_key: SecretStr | None = None
     langsmith_project: str = "job-application-agent"

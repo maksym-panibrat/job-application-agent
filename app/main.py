@@ -71,8 +71,13 @@ async def lifespan(app: FastAPI):
                 dsn=dsn_val,
                 traces_sample_rate=0.1,
                 environment=settings.environment,
+                release=settings.sentry_release,
             )
-            await log.ainfo("sentry.enabled", dsn_suffix=dsn_val[-4:])
+            await log.ainfo(
+                "sentry.enabled",
+                dsn_suffix=dsn_val[-4:],
+                release=settings.sentry_release,
+            )
         except Exception as exc:
             await log.awarning("sentry.init_failed", error=str(exc))
     else:
