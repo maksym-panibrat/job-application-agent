@@ -28,7 +28,7 @@ Exit codes:
     2  Configuration error (missing env vars / bad args)
 
 Step mapping (matches stabilisation plan):
-    Step 1  GET /api/auth/google/authorize  → redirect_uri param matches expected Cloud Run callback
+    Step 1  GET /auth/google/authorize     → redirect_uri param matches expected Cloud Run callback
     Step 2  GET /health                     → {"status": "ok"}
     Step 3  GET /api/profile               → 200 with smoke user's profile
     Step 4  PATCH /api/profile             → update full_name, assert round-trip
