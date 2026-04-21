@@ -5,6 +5,7 @@ run with `-m live_api` to include them, otherwise they are skipped.
 """
 
 import os
+import uuid
 from unittest.mock import MagicMock
 
 import pytest
@@ -65,8 +66,8 @@ async def test_greenhouse_board_valid_slug():
     from app.sources.greenhouse_board import GreenhouseBoardSource
 
     profile = UserProfile(
-        id="00000000-0000-0000-0000-000000000001",
-        user_id="00000000-0000-0000-0000-000000000001",
+        id=uuid.UUID("00000000-0000-0000-0000-000000000001"),
+        user_id=uuid.UUID("00000000-0000-0000-0000-000000000001"),
         target_company_slugs={"greenhouse": [slug]},
         source_cursors={},
         search_active=False,

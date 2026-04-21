@@ -12,7 +12,7 @@ function ProfileCard({ profile }: { profile: Profile }) {
   const [open, setOpen] = useState(false)
 
   const hasContact = profile.email || profile.phone || profile.linkedin_url || profile.github_url || profile.portfolio_url
-  const hasPrefs = profile.target_roles.length > 0 || profile.target_locations.length > 0 || profile.seniority || profile.search_keywords.length > 0
+  const hasPrefs = profile.target_roles.length > 0 || profile.target_locations.length > 0 || profile.seniority || profile.search_keywords.length > 0 || (profile.target_company_slugs?.greenhouse?.length ?? 0) > 0
   const hasSkills = profile.skills.length > 0
   const hasExperience = profile.work_experiences.length > 0
 
