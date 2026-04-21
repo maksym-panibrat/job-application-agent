@@ -39,8 +39,8 @@ seed-smoke-user:
 # ---------------------------------------------------------------------------
 # smoke
 #
-# Run the 9-step golden-path smoke test.
-# Requires: SMOKE_BASE_URL and SMOKE_BEARER_TOKEN to be set.
+# Run the golden-path smoke test.
+# Requires: SMOKE_BASE_URL, SMOKE_BEARER_TOKEN, and SMOKE_CRON_SECRET to be set.
 # ---------------------------------------------------------------------------
 smoke:
 	uv run python scripts/smoke/golden_path.py
@@ -60,3 +60,4 @@ help:
 	@echo "Required env vars for smoke:"
 	@echo "  SMOKE_BASE_URL       e.g. https://api-xxx-uc.a.run.app"
 	@echo "  SMOKE_BEARER_TOKEN   JWT from make smoke-token"
+	@echo "  SMOKE_CRON_SECRET    Value of CRON_SHARED_SECRET prod secret"
