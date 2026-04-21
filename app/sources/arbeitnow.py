@@ -33,7 +33,7 @@ class ArbeitnowSource(JobSource):
 
     @property
     def supports_query_cursor(self) -> bool:
-        return True
+        return False
 
     def _make_cache_key(self, query: str, location: str | None, page: int) -> str:
         raw = f"arbeitnow|{query}|{location or ''}|{page}"
@@ -118,7 +118,7 @@ class ArbeitnowSource(JobSource):
             )
 
         jobs = self._parse_results(data, query)
-        return jobs, page + 1
+        return jobs, page + 1 if jobs else None
 
     def _parse_results(self, data: dict, query: str) -> list[JobData]:
         tokens = query.lower().split() if query.strip() else []
