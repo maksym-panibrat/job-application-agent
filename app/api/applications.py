@@ -290,8 +290,8 @@ async def submit_application(
     session: AsyncSession = Depends(get_db),
 ):
     """
-    Attempt ATS API submission (Greenhouse only).
-    Lever/Ashby fall back to method=manual (open apply URL in browser).
+    Attempt ATS API submission (Greenhouse or Lever).
+    Other ATS types fall back to method=manual (open apply URL in browser).
     """
     import uuid
     from datetime import datetime
@@ -304,15 +304,22 @@ async def submit_application(
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
 
-    if not job.supports_api_apply:
-        # Lever/Ashby: tell frontend to open apply URL
-        return {"method": "manual", "apply_url": job.apply_url}
-
-    # Get tailored resume and cover letter from generated documents
+    # Load all generated documents
     docs_result = await session.execute(
         select(GeneratedDocument).where(GeneratedDocument.application_id == app.id)
     )
     docs = {d.doc_type: d for d in docs_result.scalars().all()}
+
+    # Check custom_answers for unanswered required questions
+    custom_answers_doc = docs.get("custom_answers")
+    custom_answers: dict[str, str] | None = None
+    if custom_answers_doc and custom_answers_doc.structured_content:
+        custom_answers = custom_answers_doc.structured_content
+        unanswered = [
+            label for label, answer in custom_answers.items() if not answer
+        ]
+        if unanswered:
+            return {"method": "needs_review", "unanswered_questions": unanswered}
 
     resume_doc = docs.get("tailored_resume")
     cover_letter_doc = docs.get("cover_letter")
@@ -324,25 +331,52 @@ async def submit_application(
         else None
     )
 
-    # Parse name from profile
-    name_parts = (profile.full_name or "").split(maxsplit=1)
-    first_name = name_parts[0] if name_parts else "Candidate"
-    last_name = name_parts[1] if len(name_parts) > 1 else ""
+    # Resolve first/last name from profile
+    if profile.first_name:
+        first_name = profile.first_name
+        last_name = profile.last_name or ""
+    else:
+        name_parts = (profile.full_name or "").split(maxsplit=1)
+        first_name = name_parts[0] if name_parts else ""
+        last_name = name_parts[1] if len(name_parts) > 1 else ""
 
-    from app.sources.greenhouse import try_submit
+    ats_type = job.ats_type or ""
 
-    result = await try_submit(
-        apply_url=job.apply_url,
-        first_name=first_name,
-        last_name=last_name,
-        email=profile.email or "",
-        phone=profile.phone,
-        resume_md=resume_md,
-        cover_letter_md=cover_letter_md,
-    )
+    if ats_type == "greenhouse" and job.supports_api_apply:
+        from app.sources.greenhouse import try_submit as greenhouse_submit
 
-    if result.get("success"):
-        app.status = "applied"
+        result = await greenhouse_submit(
+            apply_url=job.apply_url,
+            first_name=first_name,
+            last_name=last_name,
+            email=profile.email or "",
+            phone=profile.phone,
+            resume_md=resume_md,
+            cover_letter_md=cover_letter_md,
+            custom_answers=custom_answers,
+        )
+    elif ats_type == "lever":
+        from app.sources.lever_submit import try_submit as lever_submit
+
+        result = await lever_submit(
+            apply_url=job.apply_url,
+            resume_text=resume_md or "",
+            cover_letter_md=cover_letter_md or "",
+            first_name=first_name,
+            last_name=last_name,
+            email=profile.email or "",
+            api_key=None,
+        )
+    else:
+        result = {"method": "manual", "apply_url": job.apply_url}
+
+    # Record audit fields on successful or manual submission
+    if result.get("success") or result.get("method") == "manual":
+        app.submitted_at = datetime.now(UTC)
+        app.submission_method = result["method"]
+        app.submission_result = result
+        if result.get("success"):
+            app.status = "applied"
         app.updated_at = datetime.now(UTC)
         session.add(app)
         await session.commit()
