@@ -21,16 +21,19 @@ async def get_job_questions(board_token: str, job_id: str) -> list[dict]:
     Returns list of dicts with keys: label, type, required.
     """
     url = f"{BOARDS_API}/{board_token}/jobs/{job_id}"
-    async with AsyncClient(timeout=15) as client:
-        resp = await client.get(url, params={"questions": "true"})
-        if resp.status_code != 200:
-            return []
-        data = resp.json()
+    try:
+        async with AsyncClient(timeout=15) as client:
+            resp = await client.get(url, params={"questions": "true"})
+            if resp.status_code != 200:
+                return []
+            data = resp.json()
+    except Exception:
+        return []
 
     questions = []
     for q in data.get("questions", []):
         label = q.get("label", "")
-        if label and q.get("type") not in ("attachment",):
+        if label and q.get("type") not in ("attachment", "input_file"):
             questions.append(
                 {
                     "label": label,
@@ -134,16 +137,19 @@ async def try_submit(
 
     job_id = job_match.group(1)
 
-    result = await submit_application(
-        board_token=board_token,
-        job_id=job_id,
-        first_name=first_name,
-        last_name=last_name,
-        email=email,
-        phone=phone,
-        resume_md=resume_md,
-        cover_letter_md=cover_letter_md,
-        custom_answers=custom_answers,
-    )
-    result["method"] = "api"
+    try:
+        result = await submit_application(
+            board_token=board_token,
+            job_id=job_id,
+            first_name=first_name,
+            last_name=last_name,
+            email=email,
+            phone=phone,
+            resume_md=resume_md,
+            cover_letter_md=cover_letter_md,
+            custom_answers=custom_answers,
+        )
+    except Exception as exc:
+        return {"success": False, "method": "greenhouse_api", "error": str(exc)}
+    result["method"] = "greenhouse_api"
     return result
