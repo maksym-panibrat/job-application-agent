@@ -3,6 +3,8 @@
 export interface Profile {
   id: string
   full_name: string | null
+  first_name?: string | null
+  last_name?: string | null
   email: string | null
   phone: string | null
   linkedin_url: string | null
@@ -17,6 +19,11 @@ export interface Profile {
   search_active: boolean
   search_expires_at: string | null
   target_company_slugs?: { greenhouse?: string[]; lever?: string[]; ashby?: string[] }
+  work_authorization?: string | null
+  requires_sponsorship?: boolean | null
+  salary_expectation_usd?: number | null
+  available_from?: string | null
+  standard_answers?: Record<string, string>
   skills: Skill[]
   work_experiences: WorkExperience[]
 }
