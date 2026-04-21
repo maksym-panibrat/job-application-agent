@@ -55,6 +55,10 @@ Thumbs.db
 # Git worktrees
 .worktrees/
 
+# Claude Code (keep settings.json + hooks/ + agents/ tracked)
+.claude/settings.local.json
+.claude/worktrees/
+
 # Misc
 *.log
 *.sqlite
