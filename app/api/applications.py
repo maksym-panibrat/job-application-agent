@@ -103,6 +103,8 @@ async def get_application(
         "match_rationale": app.match_rationale,
         "match_strengths": app.match_strengths,
         "match_gaps": app.match_gaps,
+        "submitted_at": app.submitted_at,
+        "submission_method": app.submission_method,
         "created_at": app.created_at,
         "job": {
             "id": str(job.id),
@@ -125,6 +127,7 @@ async def get_application(
                 "id": str(d.id),
                 "doc_type": d.doc_type,
                 "content_md": d.user_edited_md or d.content_md,
+                "structured_content": d.structured_content,
                 "has_edits": d.user_edited_md is not None,
                 "generation_model": d.generation_model,
                 "created_at": d.created_at,
@@ -343,7 +346,7 @@ async def submit_application(
         last_name = profile.last_name or ""
     else:
         name_parts = (profile.full_name or "").split(maxsplit=1)
-        first_name = name_parts[0] if name_parts else ""
+        first_name = name_parts[0] if name_parts else "Candidate"
         last_name = name_parts[1] if len(name_parts) > 1 else ""
 
     ats_type = job.ats_type or ""

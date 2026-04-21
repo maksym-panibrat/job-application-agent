@@ -206,11 +206,20 @@ def build_graph(checkpointer: AsyncPostgresSaver) -> StateGraph:
 
         # Build structured_content: {question_label: answer_text}
         # Parse the Markdown output for "A: ..." lines following each question block.
+        # Accumulate continuation lines until the next **Q:** header.
         structured_content: dict = {}
         current_label: str | None = None
+        answer_buffer: list[str] = []
+
+        def _flush_buffer():
+            if current_label is not None and answer_buffer:
+                structured_content[current_label] = " ".join(answer_buffer).strip()
+
         for line in content_md.splitlines():
             stripped = line.strip()
             if stripped.startswith("**Q:") and stripped.endswith("**"):
+                _flush_buffer()
+                answer_buffer = []
                 q_text = stripped[4:-2].strip()
                 # Match back to the original label (case-insensitive prefix match)
                 for lbl in labels:
@@ -220,8 +229,11 @@ def build_graph(checkpointer: AsyncPostgresSaver) -> StateGraph:
                 else:
                     current_label = q_text
             elif stripped.startswith("A:") and current_label is not None:
-                structured_content[current_label] = stripped[2:].strip()
-                current_label = None
+                answer_buffer = [stripped[2:].strip()]
+            elif stripped and current_label is not None and answer_buffer:
+                answer_buffer.append(stripped)
+
+        _flush_buffer()
 
         return {
             "documents": [
