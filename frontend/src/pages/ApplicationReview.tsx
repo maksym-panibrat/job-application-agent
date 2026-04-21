@@ -204,16 +204,17 @@ export default function ApplicationReview() {
     },
   })
 
-  // Initialise customAnswers from the custom_answers doc when it first arrives
-  const customAnswersDocRef = useRef<Record<string, string> | null>(null)
+  // Initialise customAnswers from the custom_answers doc when it first arrives.
+  // Track by doc ID (not object reference) so poll-cycle re-renders don't clobber edits.
+  const customAnswersDoc = app?.documents?.find((d) => d.doc_type === 'custom_answers')
+  const customAnswersDocRef = useRef<string | null>(null)
   useEffect(() => {
-    const doc = app?.documents?.find((d) => d.doc_type === 'custom_answers')
-    const sc = doc?.structured_content
-    if (sc && Object.keys(sc).length > 0 && customAnswersDocRef.current !== sc) {
-      customAnswersDocRef.current = sc
+    const sc = customAnswersDoc?.structured_content
+    if (customAnswersDoc?.id && customAnswersDoc.id !== customAnswersDocRef.current && sc && Object.keys(sc).length > 0) {
+      customAnswersDocRef.current = customAnswersDoc.id
       setCustomAnswers(sc)
     }
-  }, [app?.documents])
+  }, [customAnswersDoc?.id])
 
   const approve = useMutation({
     mutationFn: () => api.reviewApplication(id!, 'approved'),
@@ -295,7 +296,7 @@ export default function ApplicationReview() {
             <div className="flex flex-col items-end gap-1">
               <button
                 onClick={() => submit.mutate()}
-                disabled={submit.isPending || isGenerating || !docs.length || hasUnansweredCustomQuestions}
+                disabled={submit.isPending || isGenerating || !docs.length || hasUnansweredCustomQuestions || submit.data?.method === 'needs_review'}
                 className="px-3 py-1.5 text-sm font-medium bg-green-600 text-white rounded-md hover:bg-green-700 disabled:opacity-50"
               >
                 {submit.isPending ? 'Submitting...' : 'Apply'}
