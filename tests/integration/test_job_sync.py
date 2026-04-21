@@ -137,3 +137,94 @@ async def test_sync_profile_with_mocked_source(db_session):
     # Verify cursor was updated in profile
     await db_session.refresh(profile)
     assert "mock_source" in profile.source_cursors
+
+
+@pytest.mark.asyncio
+async def test_sync_profile_cross_source_dedup_prefers_greenhouse_board(db_session):
+    """Cross-source dedup keeps the highest-preference source (greenhouse_board > remotive > adzuna)."""
+    from sqlalchemy import text
+
+    from app.models.user import User
+    from app.services.profile_service import get_or_create_profile
+
+    user = User(id=uuid.uuid4(), email="dedup@test.com")
+    db_session.add(user)
+    await db_session.commit()
+
+    profile = await get_or_create_profile(user.id, db_session)
+    profile.search_keywords = ["software engineer"]
+    profile.target_locations = ["New York"]
+    profile.remote_ok = True
+    db_session.add(profile)
+    await db_session.commit()
+    await db_session.refresh(profile)
+
+    shared_job = JobData(
+        external_id="job-001",
+        title="Software Engineer",
+        company_name="Acme Corp",
+        apply_url="https://example.com",
+        workplace_type="remote",
+    )
+
+    mock_gh = MagicMock()
+    mock_gh.source_name = "greenhouse_board"
+    mock_gh.needs_enrichment = False
+    mock_gh.supports_query_cursor = False
+    mock_gh.search = AsyncMock(return_value=([shared_job], None))
+
+    mock_remotive = MagicMock()
+    mock_remotive.source_name = "remotive"
+    mock_remotive.needs_enrichment = False
+    mock_remotive.supports_query_cursor = False
+    mock_remotive.search = AsyncMock(return_value=([shared_job], None))
+
+    mock_adzuna = MagicMock()
+    mock_adzuna.source_name = "adzuna"
+    mock_adzuna.needs_enrichment = True
+    mock_adzuna.supports_query_cursor = True
+    mock_adzuna.search = AsyncMock(return_value=([shared_job], 2))
+
+    await job_sync_service.sync_profile(
+        profile, db_session, sources=[mock_gh, mock_remotive, mock_adzuna]
+    )
+
+    count_result = await db_session.execute(
+        text("SELECT COUNT(*) FROM jobs WHERE company_name = 'Acme Corp'")
+    )
+    assert count_result.scalar() == 1
+
+    source_result = await db_session.execute(
+        text("SELECT source FROM jobs WHERE company_name = 'Acme Corp'")
+    )
+    assert source_result.scalar() == "greenhouse_board"
+
+
+@pytest.mark.asyncio
+async def test_sync_profile_non_paginating_source_called_once(db_session):
+    """Non-paginating source is called exactly once regardless of how many queries the profile yields."""
+    from app.models.user import User
+    from app.services.profile_service import get_or_create_profile
+
+    user = User(id=uuid.uuid4(), email="nonpaginate@test.com")
+    db_session.add(user)
+    await db_session.commit()
+
+    profile = await get_or_create_profile(user.id, db_session)
+    # Multiple keywords → generate_queries yields multiple tuples for paginating sources
+    profile.search_keywords = ["python", "backend", "golang"]
+    profile.target_locations = ["New York"]
+    profile.remote_ok = True
+    db_session.add(profile)
+    await db_session.commit()
+    await db_session.refresh(profile)
+
+    mock_source = MagicMock()
+    mock_source.source_name = "remotive"
+    mock_source.needs_enrichment = False
+    mock_source.supports_query_cursor = False
+    mock_source.search = AsyncMock(return_value=([], None))
+
+    await job_sync_service.sync_profile(profile, db_session, sources=[mock_source])
+
+    assert mock_source.search.call_count == 1
