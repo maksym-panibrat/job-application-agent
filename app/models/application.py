@@ -17,20 +17,14 @@ class Application(SQLModel, table=True):
     generation_attempts: int = 0
     match_score: float | None = None
     match_rationale: str | None = None
-    match_strengths: list[str] = Field(
-        default_factory=list, sa_column=Column(ARRAY(sa.String))
-    )
-    match_gaps: list[str] = Field(
-        default_factory=list, sa_column=Column(ARRAY(sa.String))
-    )
+    match_strengths: list[str] = Field(default_factory=list, sa_column=Column(ARRAY(sa.String)))
+    match_gaps: list[str] = Field(default_factory=list, sa_column=Column(ARRAY(sa.String)))
     user_interest: str | None = Field(default=None, sa_column=Column(String, nullable=True))
     submitted_at: datetime | None = Field(
         default=None, sa_column=Column(sa.DateTime(timezone=True), nullable=True)
     )
     submission_method: str | None = None
-    submission_result: dict | None = Field(
-        default=None, sa_column=Column(JSONB, nullable=True)
-    )
+    submission_result: dict | None = Field(default=None, sa_column=Column(JSONB, nullable=True))
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(UTC),
         sa_column=Column(sa.DateTime(timezone=True), nullable=False),
@@ -54,9 +48,7 @@ class GeneratedDocument(SQLModel, table=True):
     content_md: str
     user_edited_md: str | None = None
     generation_model: str | None = None
-    structured_content: dict | None = Field(
-        default=None, sa_column=Column(JSONB, nullable=True)
-    )
+    structured_content: dict | None = Field(default=None, sa_column=Column(JSONB, nullable=True))
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(UTC),
         sa_column=Column(sa.DateTime(timezone=True), nullable=False),

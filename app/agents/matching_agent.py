@@ -75,6 +75,7 @@ def get_llm():
     settings = get_settings()
     if settings.environment == "test":
         from app.agents.test_llm import get_fake_llm
+
         return get_fake_llm("matching")
     return ChatGoogleGenerativeAI(
         model=settings.llm_matching_model,
@@ -153,13 +154,17 @@ def build_graph() -> StateGraph:
                     break
                 except BudgetExhausted:
                     log.warning("match.budget_exhausted_skip", title=job["title"])
-                    return {"scores": [ScoreResult(
-                        application_id=job["application_id"],
-                        score=0.0,
-                        rationale="Skipped: LLM quota exhausted",
-                        strengths=[],
-                        gaps=[],
-                    )]}
+                    return {
+                        "scores": [
+                            ScoreResult(
+                                application_id=job["application_id"],
+                                score=0.0,
+                                rationale="Skipped: LLM quota exhausted",
+                                strengths=[],
+                                gaps=[],
+                            )
+                        ]
+                    }
                 except Exception as exc:
                     is_rate_limit = "429" in str(exc) or "rate_limit" in str(exc).lower()
                     if is_rate_limit and attempt < len(backoffs):
@@ -170,13 +175,17 @@ def build_graph() -> StateGraph:
                             title=job["title"],
                             attempts=attempt + 1,
                         )
-                        return {"scores": [ScoreResult(
-                            application_id=job["application_id"],
-                            score=0.0,
-                            rationale="Skipped: API rate limit exceeded after retries",
-                            strengths=[],
-                            gaps=[],
-                        )]}
+                        return {
+                            "scores": [
+                                ScoreResult(
+                                    application_id=job["application_id"],
+                                    score=0.0,
+                                    rationale="Skipped: API rate limit exceeded after retries",
+                                    strengths=[],
+                                    gaps=[],
+                                )
+                            ]
+                        }
                     raise
 
         tool_call = result.tool_calls[0] if result.tool_calls else {}

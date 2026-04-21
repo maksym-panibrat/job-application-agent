@@ -48,9 +48,7 @@ async def test_remoteok_returns_jobs():
 
 @pytest.mark.asyncio
 async def test_arbeitnow_returns_jobs_or_empty():
-    result = await ArbeitnowSource().search(
-        "software engineer", None, 1, _make_settings(), None
-    )
+    result = await ArbeitnowSource().search("software engineer", None, 1, _make_settings(), None)
     jobs, next_cursor = result
     assert isinstance(jobs, list)
     assert next_cursor is None or isinstance(next_cursor, int)

@@ -24,9 +24,7 @@ class AdzunaSource(JobSource):
         raw = f"adzuna|title_only|{category}|{query}|{location or ''}|{page}"
         return hashlib.sha256(raw.encode()).hexdigest()
 
-    async def _get_cached(
-        self, cache_key: str, session: AsyncSession
-    ) -> dict | None:
+    async def _get_cached(self, cache_key: str, session: AsyncSession) -> dict | None:
         result = await session.execute(
             select(JobSearchCache).where(
                 JobSearchCache.query_hash == cache_key,

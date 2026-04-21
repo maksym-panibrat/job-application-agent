@@ -69,6 +69,7 @@ def get_llm():
     settings = get_settings()
     if settings.environment == "test":
         from app.agents.test_llm import get_fake_llm
+
         return get_fake_llm("generation")
     return ChatGoogleGenerativeAI(
         model=settings.llm_generation_model,
@@ -194,7 +195,7 @@ def build_graph(checkpointer: AsyncPostgresSaver) -> StateGraph:
             return q["label"] if isinstance(q, dict) else q
 
         labels = [_label(q) for q in questions]
-        formatted = "\n".join(f"{i+1}. {lbl}" for i, lbl in enumerate(labels))
+        formatted = "\n".join(f"{i + 1}. {lbl}" for i, lbl in enumerate(labels))
         prompt = CUSTOM_QUESTIONS_PROMPT.format(
             profile_text=state["profile_text"][:2000],
             title=state["job_title"],

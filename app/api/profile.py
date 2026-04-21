@@ -89,11 +89,25 @@ async def update_profile(
             session=session,
         )
     allowed = {
-        "full_name", "email", "phone", "linkedin_url", "github_url", "portfolio_url",
-        "target_roles", "target_locations", "remote_ok", "seniority", "search_keywords",
+        "full_name",
+        "email",
+        "phone",
+        "linkedin_url",
+        "github_url",
+        "portfolio_url",
+        "target_roles",
+        "target_locations",
+        "remote_ok",
+        "seniority",
+        "search_keywords",
         "target_company_slugs",
-        "first_name", "last_name", "work_authorization", "requires_sponsorship",
-        "salary_expectation_usd", "available_from", "standard_answers",
+        "first_name",
+        "last_name",
+        "work_authorization",
+        "requires_sponsorship",
+        "salary_expectation_usd",
+        "available_from",
+        "standard_answers",
     }
     filtered = {k: v for k, v in data.items() if k in allowed}
     updated = await profile_service.update_profile(profile.id, filtered, session)
@@ -129,9 +143,7 @@ async def upload_resume(
     # Deduplicate by SHA256 against stored raw bytes to skip re-extraction of identical files
     file_sha256 = hashlib.sha256(raw).hexdigest()
     stored_sha256 = (
-        hashlib.sha256(profile.base_resume_raw).hexdigest()
-        if profile.base_resume_raw
-        else None
+        hashlib.sha256(profile.base_resume_raw).hexdigest() if profile.base_resume_raw else None
     )
     if stored_sha256 and stored_sha256 == file_sha256:
         return {
@@ -165,6 +177,7 @@ async def toggle_search(
     updates: dict = {"search_active": search_active}
     if search_active:
         from app.config import get_settings
+
         settings = get_settings()
         updates["search_expires_at"] = datetime.now(UTC) + timedelta(
             days=settings.search_auto_pause_days

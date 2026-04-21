@@ -14,8 +14,8 @@ from typing import Union
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = 'f3a1b2c4d5e6'
-down_revision: Union[str, None] = 'b4f9c3e10d2a'
+revision: str = "f3a1b2c4d5e6"
+down_revision: Union[str, None] = "b4f9c3e10d2a"
 branch_labels = None
 depends_on = None
 
@@ -28,9 +28,9 @@ def upgrade() -> None:
     )
     # Change the column default
     op.alter_column(
-        'applications',
-        'generation_status',
-        server_default='none',
+        "applications",
+        "generation_status",
+        server_default="none",
         existing_type=sa.String(),
         existing_nullable=False,
     )
@@ -38,13 +38,12 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     op.alter_column(
-        'applications',
-        'generation_status',
-        server_default='pending',
+        "applications",
+        "generation_status",
+        server_default="pending",
         existing_type=sa.String(),
         existing_nullable=False,
     )
     op.execute(
-        "UPDATE applications SET generation_status = 'pending' "
-        "WHERE generation_status = 'none'"
+        "UPDATE applications SET generation_status = 'pending' WHERE generation_status = 'none'"
     )

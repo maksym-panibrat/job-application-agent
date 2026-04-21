@@ -96,6 +96,7 @@ async def test_try_submit_post_body_contains_name_and_email():
         )
 
     import json
+
     body = json.loads(captured["body"])
     assert body["first_name"] == "Jane"
     assert body["last_name"] == "Doe"

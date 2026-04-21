@@ -163,9 +163,7 @@ async def score_and_match(
     scored_apps = []
     for score_result in result.get("scores", []):
         app_result = await session.execute(
-            select(Application).where(
-                Application.id == uuid.UUID(score_result.application_id)
-            )
+            select(Application).where(Application.id == uuid.UUID(score_result.application_id))
         )
         app = app_result.scalar_one_or_none()
         if not app:

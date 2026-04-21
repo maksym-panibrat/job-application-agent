@@ -55,9 +55,7 @@ def make_profile(slugs: dict) -> MagicMock:
 
 
 async def do_search(source, profile):
-    return await source.search(
-        "", None, None, make_settings(), MagicMock(), profile=profile
-    )
+    return await source.search("", None, None, make_settings(), MagicMock(), profile=profile)
 
 
 @pytest.mark.asyncio
@@ -108,9 +106,7 @@ async def test_greenhouse_board_404_skips_slug(monkeypatch):
     profile = make_profile({"greenhouse": ["bad-slug", "stripe"]})
 
     with respx.mock:
-        respx.get(f"{GREENHOUSE_BOARDS_BASE}/bad-slug/jobs").mock(
-            return_value=httpx.Response(404)
-        )
+        respx.get(f"{GREENHOUSE_BOARDS_BASE}/bad-slug/jobs").mock(return_value=httpx.Response(404))
         respx.get(f"{GREENHOUSE_BOARDS_BASE}/stripe/jobs").mock(
             return_value=httpx.Response(200, json=STRIPE_JOB_FIXTURE)
         )

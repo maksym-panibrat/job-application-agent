@@ -188,6 +188,7 @@ async def run_generation(
 
     async def _generate_all():
         from app.database import get_session_factory
+
         factory = get_session_factory()
         for app_id in app_ids:
             async with factory() as gen_session:
@@ -222,9 +223,7 @@ async def clear_seed_data(
         # Delete documents first (FK: documents -> applications)
         if app_ids:
             docs_result = await session.execute(
-                select(GeneratedDocument).where(
-                    GeneratedDocument.application_id.in_(app_ids)
-                )
+                select(GeneratedDocument).where(GeneratedDocument.application_id.in_(app_ids))
             )
             for doc in docs_result.scalars().all():
                 await session.delete(doc)

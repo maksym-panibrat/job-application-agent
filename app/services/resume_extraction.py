@@ -73,6 +73,7 @@ async def extract_profile_from_resume(resume_md: str) -> dict:
     try:
         if settings.environment == "test":
             from app.agents.test_llm import get_fake_llm
+
             llm = get_fake_llm("resume_extraction")
         else:
             llm = ChatGoogleGenerativeAI(

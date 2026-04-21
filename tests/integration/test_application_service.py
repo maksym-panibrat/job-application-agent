@@ -75,9 +75,7 @@ async def test_save_documents_creates_records(db_session):
     assert len(saved) == 2
 
     result = await db_session.execute(
-        select(GeneratedDocument).where(
-            GeneratedDocument.application_id == application.id
-        )
+        select(GeneratedDocument).where(GeneratedDocument.application_id == application.id)
     )
     stored = result.scalars().all()
     assert len(stored) == 2
@@ -122,9 +120,7 @@ async def test_generate_materials_direct_path_with_fake_llm(db_session):
     assert application.generation_status == "ready"
 
     result = await db_session.execute(
-        select(GeneratedDocument).where(
-            GeneratedDocument.application_id == application.id
-        )
+        select(GeneratedDocument).where(GeneratedDocument.application_id == application.id)
     )
     docs = result.scalars().all()
     assert len(docs) == 2

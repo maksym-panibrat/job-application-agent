@@ -28,9 +28,7 @@ class WorkExperience(SQLModel, table=True):
         default=None, sa_column=Column(sa.DateTime(timezone=True), nullable=True)
     )
     description_md: str | None = None
-    technologies: list[str] = Field(
-        default_factory=list, sa_column=Column(ARRAY(sa.String))
-    )
+    technologies: list[str] = Field(default_factory=list, sa_column=Column(ARRAY(sa.String)))
 
 
 class UserProfile(SQLModel, table=True):
@@ -45,17 +43,11 @@ class UserProfile(SQLModel, table=True):
     portfolio_url: str | None = None
     base_resume_md: str | None = None
     base_resume_raw: bytes | None = None
-    target_roles: list[str] = Field(
-        default_factory=list, sa_column=Column(ARRAY(sa.String))
-    )
-    target_locations: list[str] = Field(
-        default_factory=list, sa_column=Column(ARRAY(sa.String))
-    )
+    target_roles: list[str] = Field(default_factory=list, sa_column=Column(ARRAY(sa.String)))
+    target_locations: list[str] = Field(default_factory=list, sa_column=Column(ARRAY(sa.String)))
     remote_ok: bool = True
     seniority: str | None = None
-    search_keywords: list[str] = Field(
-        default_factory=list, sa_column=Column(ARRAY(sa.String))
-    )
+    search_keywords: list[str] = Field(default_factory=list, sa_column=Column(ARRAY(sa.String)))
     source_cursors: dict = Field(default_factory=dict, sa_column=Column(JSONB))
     target_company_slugs: dict = Field(
         default_factory=dict,

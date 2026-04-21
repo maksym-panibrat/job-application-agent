@@ -36,6 +36,7 @@ async def send_message(
     checkpointer = getattr(app_state, "checkpointer", None)
 
     if checkpointer is None:
+
         async def no_op():
             msg = json.dumps({"content": "Agent not available — checkpointer not initialized."})
             yield f"data: {msg}\n\n"

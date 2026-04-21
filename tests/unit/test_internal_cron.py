@@ -37,10 +37,14 @@ def test_sync_correct_secret_calls_task():
     client = make_app(secret="real-secret")
     with patch(
         "app.api.internal_cron.run_job_sync",
-        new=AsyncMock(return_value={
-            "profiles_synced": 0, "total_new_jobs": 0,
-            "total_updated_jobs": 0, "total_stale_jobs": 0,
-        }),
+        new=AsyncMock(
+            return_value={
+                "profiles_synced": 0,
+                "total_new_jobs": 0,
+                "total_updated_jobs": 0,
+                "total_stale_jobs": 0,
+            }
+        ),
     ) as mock:
         resp = client.post("/internal/cron/sync", headers={"X-Cron-Secret": "real-secret"})
     assert resp.status_code == 200
@@ -65,9 +69,13 @@ def test_maintenance_correct_secret_calls_task():
     client = make_app(secret="real-secret")
     with patch(
         "app.api.internal_cron.run_daily_maintenance",
-        new=AsyncMock(return_value={
-            "stale_jobs": 0, "searches_paused": 0, "applications_trimmed": 0,
-        }),
+        new=AsyncMock(
+            return_value={
+                "stale_jobs": 0,
+                "searches_paused": 0,
+                "applications_trimmed": 0,
+            }
+        ),
     ) as mock:
         resp = client.post("/internal/cron/maintenance", headers={"X-Cron-Secret": "real-secret"})
     assert resp.status_code == 200

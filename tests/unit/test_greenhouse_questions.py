@@ -62,9 +62,7 @@ async def test_get_job_questions_returns_question_structure():
 @pytest.mark.asyncio
 async def test_get_job_questions_returns_empty_on_404():
     with respx.mock:
-        respx.get(f"{BOARDS_API}/badco/jobs/99999").mock(
-            return_value=httpx.Response(404)
-        )
+        respx.get(f"{BOARDS_API}/badco/jobs/99999").mock(return_value=httpx.Response(404))
         result = await get_job_questions("badco", "99999")
 
     assert result == []
@@ -86,9 +84,14 @@ async def test_get_job_questions_by_url_valid_greenhouse_url():
     apply_url = "https://boards.greenhouse.io/exampleco/jobs/12345"
     with respx.mock:
         respx.get(f"{BOARDS_API}/exampleco/jobs/12345").mock(
-            return_value=httpx.Response(200, json={"questions": [
-                {"label": "Why us?", "type": "textarea", "required": True},
-            ]})
+            return_value=httpx.Response(
+                200,
+                json={
+                    "questions": [
+                        {"label": "Why us?", "type": "textarea", "required": True},
+                    ]
+                },
+            )
         )
         result = await get_job_questions_by_url(apply_url)
 

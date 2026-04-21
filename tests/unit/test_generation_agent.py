@@ -54,10 +54,13 @@ def _graph_patches():
 async def test_graph_generates_two_docs_without_custom_questions():
     """Graph produces tailored_resume + cover_letter, pauses before review."""
     p1, p2 = _graph_patches()
-    with patch_llm("app.agents.generation_agent", [
-        "# Tailored Resume\n\nStrong Python background relevant to this role.",
-        "Dear Hiring Manager,\n\nI am excited to apply for this position.",
-    ]):
+    with patch_llm(
+        "app.agents.generation_agent",
+        [
+            "# Tailored Resume\n\nStrong Python background relevant to this role.",
+            "Dear Hiring Manager,\n\nI am excited to apply for this position.",
+        ],
+    ):
         with p1, p2:
             checkpointer = MemorySaver()
             graph = build_graph(checkpointer)
@@ -80,11 +83,14 @@ async def test_graph_generates_three_docs_with_custom_questions():
         "custom_questions": ["Describe a challenging project you led."],
     }
     p1, p2 = _graph_patches()
-    with patch_llm("app.agents.generation_agent", [
-        "# Tailored Resume",
-        "Dear Hiring Manager",
-        "**Q: Describe a challenging project**\nA: I led a microservices migration.",
-    ]):
+    with patch_llm(
+        "app.agents.generation_agent",
+        [
+            "# Tailored Resume",
+            "Dear Hiring Manager",
+            "**Q: Describe a challenging project**\nA: I led a microservices migration.",
+        ],
+    ):
         with p1, p2:
             checkpointer = MemorySaver()
             graph = build_graph(checkpointer)

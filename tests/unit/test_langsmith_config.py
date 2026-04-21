@@ -13,6 +13,7 @@ def test_langsmith_defaults(monkeypatch):
     monkeypatch.delenv("LANGSMITH_PROJECT", raising=False)
 
     import app.config as cfg
+
     cfg._settings = None
     from app.config import Settings
 
@@ -30,6 +31,7 @@ def test_langsmith_settings_from_env(monkeypatch):
     monkeypatch.setenv("LANGSMITH_PROJECT", "my-project")
 
     import app.config as cfg
+
     cfg._settings = None
     from app.config import Settings
 

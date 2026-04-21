@@ -15,32 +15,34 @@ log = structlog.get_logger()
 # ---------------------------------------------------------------------------
 # Color palette
 # ---------------------------------------------------------------------------
-_NAVY = (26, 54, 93)       # headings
-_DARK = (40, 40, 40)       # body text
-_MID = (100, 100, 100)     # secondary / metadata
-_RULE = (200, 210, 220)    # horizontal rules under h2
+_NAVY = (26, 54, 93)  # headings
+_DARK = (40, 40, 40)  # body text
+_MID = (100, 100, 100)  # secondary / metadata
+_RULE = (200, 210, 220)  # horizontal rules under h2
 
 # ---------------------------------------------------------------------------
 # Character normalization (fpdf2 core fonts are latin-1 only)
 # ---------------------------------------------------------------------------
-_UNICODE_TO_ASCII = str.maketrans({
-    '\u2014': '-',     # em dash
-    '\u2013': '-',     # en dash
-    '\u2012': '-',     # figure dash
-    '\u2010': '-',     # hyphen
-    '\u2011': '-',     # non-breaking hyphen
-    '\u201c': '"',     # left double quotation mark
-    '\u201d': '"',     # right double quotation mark
-    '\u2018': "'",     # left single quotation mark
-    '\u2019': "'",     # right single quotation mark
-    '\u2026': '...',   # ellipsis
-    '\u00a0': ' ',     # non-breaking space
-    '\u2022': '-',     # bullet
-    '\u00b7': '-',     # middle dot
-    '\u00ae': '(R)',   # registered sign
-    '\u00a9': '(C)',   # copyright sign
-    '\u2122': '(TM)',  # trade mark sign
-})
+_UNICODE_TO_ASCII = str.maketrans(
+    {
+        "\u2014": "-",  # em dash
+        "\u2013": "-",  # en dash
+        "\u2012": "-",  # figure dash
+        "\u2010": "-",  # hyphen
+        "\u2011": "-",  # non-breaking hyphen
+        "\u201c": '"',  # left double quotation mark
+        "\u201d": '"',  # right double quotation mark
+        "\u2018": "'",  # left single quotation mark
+        "\u2019": "'",  # right single quotation mark
+        "\u2026": "...",  # ellipsis
+        "\u00a0": " ",  # non-breaking space
+        "\u2022": "-",  # bullet
+        "\u00b7": "-",  # middle dot
+        "\u00ae": "(R)",  # registered sign
+        "\u00a9": "(C)",  # copyright sign
+        "\u2122": "(TM)",  # trade mark sign
+    }
+)
 
 
 def _clean(text: str) -> str:
@@ -204,9 +206,7 @@ async def export_pdf(doc_id: uuid.UUID, session: AsyncSession) -> bytes:
         raise ValueError(f"Document {doc_id} not found")
 
     effective_md = doc.user_edited_md or doc.content_md
-    html_body = markdown2.markdown(
-        effective_md, extras=["tables", "fenced-code-blocks", "strike"]
-    )
+    html_body = markdown2.markdown(effective_md, extras=["tables", "fenced-code-blocks", "strike"])
     html = f"<html><body>{html_body}</body></html>"
 
     loop = asyncio.get_event_loop()

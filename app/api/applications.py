@@ -249,6 +249,7 @@ async def stream_generation_status(
 
     async def event_stream():
         from app.database import get_session_factory
+
         factory = get_session_factory()
         for _ in range(60):  # max 5 minutes
             async with factory() as s:
@@ -324,9 +325,7 @@ async def submit_application(
     custom_answers: dict[str, str] | None = None
     if custom_answers_doc and custom_answers_doc.structured_content:
         custom_answers = custom_answers_doc.structured_content
-        unanswered = [
-            label for label, answer in custom_answers.items() if not answer
-        ]
+        unanswered = [label for label, answer in custom_answers.items() if not answer]
         if unanswered:
             return {"method": "needs_review", "unanswered_questions": unanswered}
 

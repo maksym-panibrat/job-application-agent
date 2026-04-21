@@ -63,14 +63,29 @@ the Greenhouse board slug (visible at boards.greenhouse.io/{slug}). Store as
 {"greenhouse": ["slug1", "slug2"]} in target_company_slugs. Common slugs are lowercase,
 no spaces (e.g., stripe, airbnb, openai). Ask for confirmation if the slug is not obvious."""
 
-PROFILE_SCALAR_FIELDS = frozenset({
-    "target_roles", "seniority", "target_locations", "remote_ok",
-    "search_keywords", "full_name", "email", "phone",
-    "linkedin_url", "github_url", "portfolio_url",
-    "target_company_slugs",
-    "first_name", "last_name", "work_authorization", "requires_sponsorship",
-    "salary_expectation_usd", "available_from", "standard_answers",
-})
+PROFILE_SCALAR_FIELDS = frozenset(
+    {
+        "target_roles",
+        "seniority",
+        "target_locations",
+        "remote_ok",
+        "search_keywords",
+        "full_name",
+        "email",
+        "phone",
+        "linkedin_url",
+        "github_url",
+        "portfolio_url",
+        "target_company_slugs",
+        "first_name",
+        "last_name",
+        "work_authorization",
+        "requires_sponsorship",
+        "salary_expectation_usd",
+        "available_from",
+        "standard_answers",
+    }
+)
 
 
 class OnboardingState(TypedDict):
@@ -84,6 +99,7 @@ def get_llm():
     settings = get_settings()
     if settings.environment == "test":
         from app.agents.test_llm import get_fake_llm
+
         return get_fake_llm("onboarding")
     return ChatGoogleGenerativeAI(
         model=settings.llm_generation_model,

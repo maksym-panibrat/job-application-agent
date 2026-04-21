@@ -141,8 +141,6 @@ async def test_sync_is_idempotent_for_jobs(db_session):
 
     await sync_profile(profile, db_session, sources=[source_2])
 
-    result = await db_session.execute(
-        select(Job).where(Job.external_id == "unique-job-001")
-    )
+    result = await db_session.execute(select(Job).where(Job.external_id == "unique-job-001"))
     jobs = result.scalars().all()
     assert len(jobs) == 1  # no duplicate

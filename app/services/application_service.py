@@ -75,9 +75,7 @@ async def generate_materials(
         return
 
     if app.generation_attempts >= 3:
-        await log.awarning(
-            "generate_materials.max_attempts", application_id=str(application_id)
-        )
+        await log.awarning("generate_materials.max_attempts", application_id=str(application_id))
         return
 
     # Mark as generating
@@ -112,6 +110,7 @@ async def generate_materials(
             if job.ats_type == "greenhouse" and job.supports_api_apply and job.apply_url:
                 try:
                     from app.sources.greenhouse import get_job_questions_by_url
+
                     custom_questions = await get_job_questions_by_url(job.apply_url)
                 except Exception:
                     pass  # fall back to empty — graph still generates resume + cover letter
@@ -187,6 +186,7 @@ async def _generate_direct(
     settings = get_settings()
     if settings.environment == "test":
         from app.agents.test_llm import get_fake_llm
+
         llm = get_fake_llm("generation")
     else:
         llm = ChatGoogleGenerativeAI(

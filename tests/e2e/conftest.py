@@ -60,8 +60,10 @@ async def test_app(asyncpg_url, psycopg_url, monkeypatch):
 
     # Reset settings singleton so the env vars above take effect
     import app.config as cfg
+
     monkeypatch.setattr(cfg, "_settings", None)
     import app.database as db_mod
+
     monkeypatch.setattr(db_mod, "engine", None)
     monkeypatch.setattr(db_mod, "async_session_factory", None)
 
@@ -75,6 +77,7 @@ async def test_app(asyncpg_url, psycopg_url, monkeypatch):
     from sqlalchemy.ext.asyncio import create_async_engine
 
     from app.main import app as fastapi_app
+
     engine = create_async_engine(asyncpg_url, echo=False)
     async with engine.begin() as conn:
         await conn.run_sync(SQLModel.metadata.drop_all)

@@ -2,6 +2,7 @@
 LLM safety wrapper: catches ResourceExhausted from Gemini, raises BudgetExhausted,
 and writes a marker to llm_status so the UI can show a budget-exhausted banner.
 """
+
 from datetime import UTC, datetime
 
 from google.api_core.exceptions import ResourceExhausted as GaxResourceExhausted

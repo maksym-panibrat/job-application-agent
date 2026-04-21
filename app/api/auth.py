@@ -2,6 +2,7 @@
 fastapi-users Google OAuth wiring.
 Only mounted when settings.auth_enabled = True.
 """
+
 import uuid
 from collections.abc import AsyncGenerator
 

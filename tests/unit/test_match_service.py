@@ -71,6 +71,7 @@ def _make_application(
 
 def _make_score_result(application_id: str, score: float):
     from app.agents.matching_agent import ScoreResult
+
     return ScoreResult(
         application_id=application_id,
         score=score,

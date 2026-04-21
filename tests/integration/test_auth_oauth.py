@@ -43,6 +43,7 @@ async def auth_client(db_session, monkeypatch):
     monkeypatch.setenv("GOOGLE_OAUTH_CLIENT_SECRET", "fake-client-secret")
 
     import app.config as cfg
+
     monkeypatch.setattr(cfg, "_settings", None)
 
     from app.main import app
@@ -74,9 +75,7 @@ async def test_protected_route_without_token_returns_401(auth_client):
 async def test_protected_route_with_valid_jwt_returns_200(auth_client):
     client, user_id = auth_client
     token = _mint_jwt(user_id)
-    response = await client.get(
-        "/api/applications", headers={"Authorization": f"Bearer {token}"}
-    )
+    response = await client.get("/api/applications", headers={"Authorization": f"Bearer {token}"})
     assert response.status_code == 200
 
 
@@ -84,9 +83,7 @@ async def test_protected_route_with_valid_jwt_returns_200(auth_client):
 async def test_protected_route_with_expired_jwt_returns_401(auth_client):
     client, user_id = auth_client
     token = _mint_jwt(user_id, expired=True)
-    response = await client.get(
-        "/api/applications", headers={"Authorization": f"Bearer {token}"}
-    )
+    response = await client.get("/api/applications", headers={"Authorization": f"Bearer {token}"})
     assert response.status_code == 401
 
 
@@ -104,7 +101,5 @@ async def test_protected_route_with_unknown_user_id_returns_401(auth_client):
     """A valid JWT whose sub does not exist in the DB returns 401."""
     client, _ = auth_client
     token = _mint_jwt(uuid.uuid4())  # random user_id not in DB
-    response = await client.get(
-        "/api/applications", headers={"Authorization": f"Bearer {token}"}
-    )
+    response = await client.get("/api/applications", headers={"Authorization": f"Bearer {token}"})
     assert response.status_code == 401

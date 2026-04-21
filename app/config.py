@@ -46,7 +46,9 @@ class Settings(BaseSettings):
     greenhouse_board_enabled: bool = True
     remotive_max_results: int = 50
     arbeitnow_max_pages_per_sync: int = 2
-    remoteok_user_agent: str = "job-application-agent/1.0 (+https://github.com/panibrat/job-application-agent)"
+    remoteok_user_agent: str = (
+        "job-application-agent/1.0 (+https://github.com/panibrat/job-application-agent)"
+    )
 
     cors_allowed_origins: list[str] = ["http://localhost:5173", "http://localhost:3000"]
 

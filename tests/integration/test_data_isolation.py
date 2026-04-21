@@ -4,6 +4,7 @@ Integration test: data isolation between two users.
 Verifies that user A cannot read or mutate user B's profile, applications,
 or documents. Returns 404 (not 403) to avoid leaking resource existence.
 """
+
 import time
 import uuid
 
@@ -52,8 +53,10 @@ async def isolation_app(isolation_asyncpg_url, monkeypatch):
     monkeypatch.setenv("GOOGLE_OAUTH_CLIENT_SECRET", "test-client-secret")
 
     import app.config as cfg
+
     monkeypatch.setattr(cfg, "_settings", None)
     import app.database as db_mod
+
     monkeypatch.setattr(db_mod, "engine", None)
     monkeypatch.setattr(db_mod, "async_session_factory", None)
 
@@ -88,6 +91,7 @@ async def test_users_cannot_read_each_others_profile(isolation_app):
 
     # Seed users into the DB via the session factory
     from app.database import get_session_factory
+
     factory = get_session_factory()
     async with factory() as session:
         session.add(User(id=user_a, email="a@test.com", is_active=True))
@@ -115,6 +119,7 @@ async def test_user_cannot_read_other_users_application(isolation_app):
     user_b = uuid.uuid4()
 
     from app.database import get_session_factory
+
     factory = get_session_factory()
     async with factory() as session:
         session.add(User(id=user_a, email=f"a2-{user_a}@test.com", is_active=True))

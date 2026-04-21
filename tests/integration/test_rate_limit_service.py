@@ -85,13 +85,9 @@ async def test_check_daily_quota_raises_at_limit(db_session):
     """After limit+1 calls with the same user+action+day, raises HTTP 429."""
     user_id = uuid.uuid4()
     for _ in range(3):
-        await check_daily_quota(
-            user_id, action="resume_upload", limit=3, session=db_session
-        )
+        await check_daily_quota(user_id, action="resume_upload", limit=3, session=db_session)
     with pytest.raises(HTTPException) as exc_info:
-        await check_daily_quota(
-            user_id, action="resume_upload", limit=3, session=db_session
-        )
+        await check_daily_quota(user_id, action="resume_upload", limit=3, session=db_session)
     assert exc_info.value.status_code == 429
 
 
@@ -101,8 +97,6 @@ async def test_check_daily_quota_different_users_are_independent(db_session):
     user_a = uuid.uuid4()
     user_b = uuid.uuid4()
     for _ in range(3):
-        await check_daily_quota(
-            user_a, action="resume_upload", limit=3, session=db_session
-        )
+        await check_daily_quota(user_a, action="resume_upload", limit=3, session=db_session)
     # user_b should still be at 0
     await check_daily_quota(user_b, action="resume_upload", limit=3, session=db_session)

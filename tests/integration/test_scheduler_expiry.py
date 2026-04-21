@@ -79,9 +79,7 @@ async def test_no_expiry_not_paused(db_session):
     """
     User with search_active=True but no search_expires_at is not paused.
     """
-    profile = await _create_user_and_profile(
-        db_session, search_active=True, expires_delta=None
-    )
+    profile = await _create_user_and_profile(db_session, search_active=True, expires_delta=None)
 
     await run_daily_maintenance()
 
@@ -113,9 +111,7 @@ async def test_multiple_users_only_expired_paused(db_session):
     active = await _create_user_and_profile(
         db_session, search_active=True, expires_delta=timedelta(days=3)
     )
-    no_expiry = await _create_user_and_profile(
-        db_session, search_active=True, expires_delta=None
-    )
+    no_expiry = await _create_user_and_profile(db_session, search_active=True, expires_delta=None)
 
     await run_daily_maintenance()
 

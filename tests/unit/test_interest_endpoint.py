@@ -1,4 +1,5 @@
 """Unit tests for the /api/applications/{id}/interest endpoint."""
+
 import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -10,6 +11,7 @@ from app.models.user_profile import UserProfile
 
 def _make_test_app():
     import os
+
     os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://x:x@localhost/x")
     os.environ.setdefault("GOOGLE_API_KEY", "fake")
     from app.api.applications import router

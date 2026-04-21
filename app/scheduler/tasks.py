@@ -89,9 +89,7 @@ async def run_generation_queue() -> dict:
                 succeeded += 1
         except Exception as exc:
             failed += 1
-            await log.aexception(
-                "scheduler.generation_error", app_id=str(app_id), error=str(exc)
-            )
+            await log.aexception("scheduler.generation_error", app_id=str(app_id), error=str(exc))
 
     return {"attempted": attempted, "succeeded": succeeded, "failed": failed}
 
@@ -154,4 +152,3 @@ async def run_daily_maintenance() -> dict:
         "searches_paused": len(expired_profiles),
         "applications_trimmed": trimmed,
     }
-

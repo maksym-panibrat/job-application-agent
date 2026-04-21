@@ -48,9 +48,7 @@ async def test_remoteok_happy_path(monkeypatch):
     settings = make_settings()
 
     with respx.mock:
-        respx.get(REMOTEOK_BASE_URL).mock(
-            return_value=httpx.Response(200, json=FIXTURE_RESPONSE)
-        )
+        respx.get(REMOTEOK_BASE_URL).mock(return_value=httpx.Response(200, json=FIXTURE_RESPONSE))
         jobs, cursor = await source.search("python", None, None, settings, MagicMock())
 
     assert cursor is None
@@ -110,9 +108,7 @@ async def test_remoteok_query_filter(monkeypatch):
     ]
 
     with respx.mock:
-        respx.get(REMOTEOK_BASE_URL).mock(
-            return_value=httpx.Response(200, json=fixture)
-        )
+        respx.get(REMOTEOK_BASE_URL).mock(return_value=httpx.Response(200, json=fixture))
         jobs, _ = await source.search("python backend", None, None, settings, MagicMock())
 
     assert len(jobs) == 1
@@ -154,9 +150,7 @@ async def test_remoteok_salary_missing(monkeypatch):
     ]
 
     with respx.mock:
-        respx.get(REMOTEOK_BASE_URL).mock(
-            return_value=httpx.Response(200, json=fixture)
-        )
+        respx.get(REMOTEOK_BASE_URL).mock(return_value=httpx.Response(200, json=fixture))
         jobs, _ = await source.search("python", None, None, settings, MagicMock())
 
     assert len(jobs) == 1
@@ -193,9 +187,7 @@ async def test_remoteok_empty_query_keeps_all(monkeypatch):
     ]
 
     with respx.mock:
-        respx.get(REMOTEOK_BASE_URL).mock(
-            return_value=httpx.Response(200, json=fixture)
-        )
+        respx.get(REMOTEOK_BASE_URL).mock(return_value=httpx.Response(200, json=fixture))
         jobs, _ = await source.search("", None, None, settings, MagicMock())
 
     assert len(jobs) == 2

@@ -6,6 +6,7 @@ These tests verify:
 - The summary contains at minimum a status key and a numeric count key
 - Invalid secrets are rejected with 403
 """
+
 import pytest
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import create_async_engine

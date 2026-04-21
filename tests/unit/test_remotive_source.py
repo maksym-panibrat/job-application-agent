@@ -62,9 +62,7 @@ async def test_remotive_happy_path(monkeypatch):
     settings = make_settings()
 
     with respx.mock:
-        respx.get(REMOTIVE_BASE_URL).mock(
-            return_value=httpx.Response(200, json=FIXTURE_RESPONSE)
-        )
+        respx.get(REMOTIVE_BASE_URL).mock(return_value=httpx.Response(200, json=FIXTURE_RESPONSE))
         jobs, cursor = await source.search("python", None, None, settings, MagicMock())
 
     assert cursor is None
@@ -88,9 +86,7 @@ async def test_remotive_empty_jobs(monkeypatch):
     settings = make_settings()
 
     with respx.mock:
-        respx.get(REMOTIVE_BASE_URL).mock(
-            return_value=httpx.Response(200, json={"jobs": []})
-        )
+        respx.get(REMOTIVE_BASE_URL).mock(return_value=httpx.Response(200, json={"jobs": []}))
         jobs, cursor = await source.search("python", None, None, settings, MagicMock())
 
     assert jobs == []

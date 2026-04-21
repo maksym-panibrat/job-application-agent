@@ -127,9 +127,7 @@ async def test_sync_profile_with_mocked_source(db_session):
     assert result["updated_jobs"] == 0
 
     # Verify job was upserted
-    jobs_result = await db_session.execute(
-        select(Job).where(Job.source == "mock_source")
-    )
+    jobs_result = await db_session.execute(select(Job).where(Job.source == "mock_source"))
     jobs = jobs_result.scalars().all()
     assert len(jobs) == 1
     assert jobs[0].title == "Python Engineer"

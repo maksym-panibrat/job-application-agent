@@ -19,9 +19,7 @@ log = structlog.get_logger()
 
 
 async def get_profile_by_user(user_id: uuid.UUID, session: AsyncSession) -> UserProfile | None:
-    result = await session.execute(
-        select(UserProfile).where(UserProfile.user_id == user_id)
-    )
+    result = await session.execute(select(UserProfile).where(UserProfile.user_id == user_id))
     return result.scalar_one_or_none()
 
 
@@ -35,9 +33,7 @@ async def get_or_create_profile(user_id: uuid.UUID, session: AsyncSession) -> Us
     return profile
 
 
-async def update_profile(
-    profile_id: uuid.UUID, data: dict, session: AsyncSession
-) -> UserProfile:
+async def update_profile(profile_id: uuid.UUID, data: dict, session: AsyncSession) -> UserProfile:
     profile = await session.get(UserProfile, profile_id)
     for key, value in data.items():
         if hasattr(profile, key) and value is not None:
@@ -91,8 +87,13 @@ async def _apply_extracted_resume_data(
 ) -> None:
     """Apply LLM-extracted resume data to the profile, skills, and work_experiences."""
     SCALAR_FIELDS = {
-        "full_name", "email", "phone", "linkedin_url",
-        "github_url", "portfolio_url", "target_roles",
+        "full_name",
+        "email",
+        "phone",
+        "linkedin_url",
+        "github_url",
+        "portfolio_url",
+        "target_roles",
     }
     skills = list(data.pop("skills", None) or [])
     experiences = list(data.pop("work_experiences", None) or [])
@@ -135,9 +136,7 @@ async def _apply_extracted_resume_data(
 
 
 async def get_skills(profile_id: uuid.UUID, session: AsyncSession) -> list[Skill]:
-    result = await session.execute(
-        select(Skill).where(Skill.profile_id == profile_id)
-    )
+    result = await session.execute(select(Skill).where(Skill.profile_id == profile_id))
     return list(result.scalars().all())
 
 
@@ -202,6 +201,7 @@ async def replace_all_work_experiences(
     """Delete all existing work experiences for the profile and insert the new set."""
     if len(experiences) > 50:
         from fastapi import HTTPException
+
         raise HTTPException(status_code=422, detail="Maximum 50 work experiences allowed")
     await session.execute(delete(WorkExperience).where(WorkExperience.profile_id == profile_id))
     result = []
@@ -213,9 +213,7 @@ async def replace_all_work_experiences(
     return result
 
 
-async def upsert_skill(
-    profile_id: uuid.UUID, skill_data: dict, session: AsyncSession
-) -> Skill:
+async def upsert_skill(profile_id: uuid.UUID, skill_data: dict, session: AsyncSession) -> Skill:
     """Insert or update a skill matched by (profile_id, name)."""
     result = await session.execute(
         select(Skill).where(

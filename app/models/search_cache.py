@@ -21,6 +21,4 @@ class JobSearchCache(SQLModel, table=True):
     )
     expires_at: datetime = Field(sa_column=Column(sa.DateTime(timezone=True), nullable=False))
 
-    __table_args__ = (
-        sa.Index("ix_search_cache_lookup", "source", "query_hash", "expires_at"),
-    )
+    __table_args__ = (sa.Index("ix_search_cache_lookup", "source", "query_hash", "expires_at"),)

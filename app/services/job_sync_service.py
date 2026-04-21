@@ -127,7 +127,7 @@ def _dedup_jobs(jobs: list[JobData], profile: UserProfile) -> list[JobData]:
         groups[key].append(j)
 
     result: list[JobData] = []
-    target_loc = (profile.target_locations[0].lower() if profile.target_locations else "")
+    target_loc = profile.target_locations[0].lower() if profile.target_locations else ""
 
     for group in groups.values():
         if len(group) == 1:
@@ -136,7 +136,8 @@ def _dedup_jobs(jobs: list[JobData], profile: UserProfile) -> list[JobData]:
 
         # Prefer remote variant
         remote = [
-            j for j in group
+            j
+            for j in group
             if (j.workplace_type or "").lower() == "remote"
             or (j.location and "remote" in j.location.lower())
         ]
@@ -237,11 +238,7 @@ async def _get_already_enriched(
         )
     )
     rows = result.all()
-    return {
-        ext_id
-        for ext_id, desc in rows
-        if desc and len(desc) > 500
-    }
+    return {ext_id for ext_id, desc in rows if desc and len(desc) > 500}
 
 
 async def sync_profile(

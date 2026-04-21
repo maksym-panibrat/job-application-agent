@@ -5,7 +5,6 @@ All integration tests use a single Postgres container per session,
 with per-test schema teardown to keep tests isolated.
 """
 
-
 import pytest
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlmodel import SQLModel
@@ -24,7 +23,9 @@ def postgres_container():
 def asyncpg_url(postgres_container):
     raw = postgres_container.get_connection_url()
     # testcontainers returns psycopg2 URL; convert to asyncpg
-    return raw.replace("psycopg2", "asyncpg").replace("postgresql+asyncpg://", "postgresql+asyncpg://")
+    return raw.replace("psycopg2", "asyncpg").replace(
+        "postgresql+asyncpg://", "postgresql+asyncpg://"
+    )
 
 
 @pytest.fixture(scope="session")
@@ -62,7 +63,9 @@ def patch_settings(asyncpg_url, monkeypatch):
     monkeypatch.setenv("CRON_SHARED_SECRET", "dev-cron-secret")
     # Reset the cached settings singleton between tests
     import app.config as cfg
+
     monkeypatch.setattr(cfg, "_settings", None)
     import app.database as db_mod
+
     monkeypatch.setattr(db_mod, "engine", None)
     monkeypatch.setattr(db_mod, "async_session_factory", None)

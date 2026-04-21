@@ -60,8 +60,10 @@ async def test_safe_ainvoke_writes_db_marker_when_session_provided():
     session = MagicMock()
 
     with patch("app.agents.llm_safe._write_exhausted_marker") as mock_write:
+
         async def _noop(*a, **kw):
             return None
+
         mock_write.side_effect = _noop
 
         with pytest.raises(BudgetExhausted):

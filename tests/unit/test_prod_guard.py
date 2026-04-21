@@ -12,6 +12,7 @@ def test_test_helpers_not_mounted_in_production(monkeypatch):
     monkeypatch.setenv("AUTH_ENABLED", "false")
 
     import app.config as cfg_module
+
     cfg_module._settings = None
 
     # Remove cached app.main so it re-evaluates the conditional router mount
@@ -20,6 +21,7 @@ def test_test_helpers_not_mounted_in_production(monkeypatch):
             del sys.modules[mod]
 
     import app.main as main_module
+
     client = TestClient(main_module.app, raise_server_exceptions=False)
 
     # Verify test_helpers routes are absent from the router (not just blocked at HTTP level)

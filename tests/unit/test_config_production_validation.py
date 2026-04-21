@@ -17,12 +17,14 @@ def _prod_base() -> dict:
 
 def test_valid_production_settings_accepted():
     from app.config import Settings
+
     s = Settings(**_prod_base())
     assert s.environment == "production"
 
 
 def test_default_cron_secret_rejected_in_production():
     from app.config import Settings
+
     data = _prod_base()
     data["cron_shared_secret"] = "dev-cron-secret"
     with pytest.raises(ValueError, match="cron_shared_secret"):
@@ -31,6 +33,7 @@ def test_default_cron_secret_rejected_in_production():
 
 def test_missing_oauth_client_id_rejected_when_auth_enabled():
     from app.config import Settings
+
     data = _prod_base()
     data.pop("google_oauth_client_id")
     with pytest.raises(ValueError, match="OAuth"):
@@ -39,6 +42,7 @@ def test_missing_oauth_client_id_rejected_when_auth_enabled():
 
 def test_missing_oauth_client_secret_rejected_when_auth_enabled():
     from app.config import Settings
+
     data = _prod_base()
     data.pop("google_oauth_client_secret")
     with pytest.raises(ValueError, match="OAuth"):
@@ -47,6 +51,7 @@ def test_missing_oauth_client_secret_rejected_when_auth_enabled():
 
 def test_oauth_not_required_when_auth_disabled():
     from app.config import Settings
+
     data = _prod_base()
     data["auth_enabled"] = False
     data.pop("google_oauth_client_id")
@@ -57,6 +62,7 @@ def test_oauth_not_required_when_auth_disabled():
 
 def test_default_jwt_secret_still_rejected_in_production():
     from app.config import Settings
+
     data = _prod_base()
     data["jwt_secret"] = "dev-secret"
     with pytest.raises(ValueError, match="jwt_secret"):

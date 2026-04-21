@@ -2,6 +2,7 @@
 Simple Postgres-backed rate limiter and usage quota checker.
 Uses INSERT ... ON CONFLICT DO UPDATE to atomically increment counters.
 """
+
 import uuid
 from datetime import UTC, date, datetime, timedelta
 
@@ -53,9 +54,7 @@ async def check_daily_quota(
 ) -> None:
     """Raise HTTP 429 if user has exceeded daily limit for this action."""
     today = date.today()
-    stmt = pg_insert(UsageCounter).values(
-        user_id=user_id, action=action, utc_day=today, count=1
-    )
+    stmt = pg_insert(UsageCounter).values(user_id=user_id, action=action, utc_day=today, count=1)
     stmt = stmt.on_conflict_do_update(
         constraint="uq_usage_counters_user_action_day",
         set_={"count": UsageCounter.count + 1},

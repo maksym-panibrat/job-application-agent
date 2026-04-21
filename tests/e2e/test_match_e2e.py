@@ -38,6 +38,7 @@ def _mock_source(name: str, jobs: list[JobData]) -> MagicMock:
 
 def _make_matching_llm(score: float) -> MagicMock:
     """Fake matching LLM that always returns the given score."""
+
     def fake_invoke(messages, **kwargs):
         resp = MagicMock()
         resp.tool_calls = [
@@ -145,22 +146,27 @@ async def test_matches_ordered_by_score_desc(test_app, monkeypatch):
 
     # Alternate scores: job 0 → 0.7, job 1 → 0.9
     call_count = [0]
+
     def alternating_llm():
         scores = [0.7, 0.9]
+
         def fake_invoke(messages, **kwargs):
             score = scores[call_count[0] % len(scores)]
             call_count[0] += 1
             resp = MagicMock()
-            resp.tool_calls = [{
-                "name": "record_score",
-                "args": {
-                    "score": score,
-                    "rationale": f"Score {score}",
-                    "strengths": ["ok"],
-                    "gaps": [],
-                },
-            }]
+            resp.tool_calls = [
+                {
+                    "name": "record_score",
+                    "args": {
+                        "score": score,
+                        "rationale": f"Score {score}",
+                        "strengths": ["ok"],
+                        "gaps": [],
+                    },
+                }
+            ]
             return resp
+
         llm = MagicMock()
         llm.invoke = fake_invoke
         bound = MagicMock()

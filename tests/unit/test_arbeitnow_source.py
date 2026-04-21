@@ -43,9 +43,7 @@ async def test_arbeitnow_happy_path(monkeypatch):
     settings = make_settings()
 
     with respx.mock:
-        respx.get(ARBEITNOW_BASE_URL).mock(
-            return_value=httpx.Response(200, json=FIXTURE_RESPONSE)
-        )
+        respx.get(ARBEITNOW_BASE_URL).mock(return_value=httpx.Response(200, json=FIXTURE_RESPONSE))
         jobs, cursor = await source.search("backend", None, None, settings, MagicMock())
 
     assert len(jobs) == 1
@@ -68,9 +66,7 @@ async def test_arbeitnow_empty_page_stops_pagination(monkeypatch):
     settings = make_settings()
 
     with respx.mock:
-        respx.get(ARBEITNOW_BASE_URL).mock(
-            return_value=httpx.Response(200, json={"data": []})
-        )
+        respx.get(ARBEITNOW_BASE_URL).mock(return_value=httpx.Response(200, json={"data": []}))
         jobs, cursor = await source.search("backend", None, None, settings, MagicMock())
 
     assert jobs == []
@@ -90,9 +86,7 @@ async def test_arbeitnow_query_filter(monkeypatch):
     }
 
     with respx.mock:
-        respx.get(ARBEITNOW_BASE_URL).mock(
-            return_value=httpx.Response(200, json=response_data)
-        )
+        respx.get(ARBEITNOW_BASE_URL).mock(return_value=httpx.Response(200, json=response_data))
         jobs, _ = await source.search("backend", None, None, settings, MagicMock())
 
     assert len(jobs) == 1
@@ -112,9 +106,7 @@ async def test_arbeitnow_empty_query_keeps_all(monkeypatch):
     }
 
     with respx.mock:
-        respx.get(ARBEITNOW_BASE_URL).mock(
-            return_value=httpx.Response(200, json=response_data)
-        )
+        respx.get(ARBEITNOW_BASE_URL).mock(return_value=httpx.Response(200, json=response_data))
         jobs, _ = await source.search("", None, None, settings, MagicMock())
 
     assert len(jobs) == 2

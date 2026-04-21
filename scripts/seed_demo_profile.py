@@ -31,16 +31,19 @@ async def main() -> None:
     async with factory() as session:
         # Ensure the dev user row exists
         from sqlmodel import select
+
         result = await session.execute(select(User).where(User.id == SINGLE_USER_ID))
         if result.scalar_one_or_none() is None:
-            session.add(User(
-                id=SINGLE_USER_ID,
-                email="dev@local",
-                is_active=True,
-                is_verified=True,
-                is_superuser=True,
-                hashed_password="",
-            ))
+            session.add(
+                User(
+                    id=SINGLE_USER_ID,
+                    email="dev@local",
+                    is_active=True,
+                    is_verified=True,
+                    is_superuser=True,
+                    hashed_password="",
+                )
+            )
             await session.commit()
 
         profile = await get_or_create_profile(SINGLE_USER_ID, session)
