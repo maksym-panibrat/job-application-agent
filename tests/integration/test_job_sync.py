@@ -141,7 +141,7 @@ async def test_sync_profile_with_mocked_source(db_session):
 
 @pytest.mark.asyncio
 async def test_sync_profile_cross_source_dedup_prefers_greenhouse_board(db_session):
-    """Cross-source dedup keeps the highest-preference source (greenhouse_board > remotive > adzuna)."""
+    """Cross-source dedup keeps the highest-preference source (greenhouse_board > remotive > adzuna)."""  # noqa: E501
     from sqlalchemy import text
 
     from app.models.user import User
@@ -202,7 +202,7 @@ async def test_sync_profile_cross_source_dedup_prefers_greenhouse_board(db_sessi
 
 @pytest.mark.asyncio
 async def test_sync_profile_non_paginating_source_called_once(db_session):
-    """Non-paginating source is called exactly once regardless of how many queries the profile yields."""
+    """Non-paginating source is called exactly once regardless of how many queries the profile yields."""  # noqa: E501
     from app.models.user import User
     from app.services.profile_service import get_or_create_profile
 
