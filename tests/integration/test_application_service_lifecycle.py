@@ -5,6 +5,7 @@ Integration tests for application_service state transitions and document persist
 import uuid
 
 import pytest
+from langgraph.checkpoint.memory import MemorySaver
 from sqlmodel import select
 
 from app.models.application import Application, GeneratedDocument
@@ -130,6 +131,31 @@ async def test_generate_materials_sets_status_to_ready(db_session):
     )
     docs = result.scalars().all()
     assert len(docs) >= 2  # at minimum: tailored_resume + cover_letter
+    doc_types = {d.doc_type for d in docs}
+    assert "tailored_resume" in doc_types
+    assert "cover_letter" in doc_types
+
+
+@pytest.mark.asyncio
+async def test_generate_materials_graph_path_sets_ready(db_session):
+    """
+    generate_materials() with a MemorySaver checkpointer exercises the LangGraph
+    code path (the production route). Since ENVIRONMENT=test, the fake LLM is used.
+    Verifies that the graph path correctly saves documents and sets status to "ready".
+    """
+    app_row, _, _ = await _seed_application(db_session)
+
+    checkpointer = MemorySaver()
+    await generate_materials(app_row.id, db_session, checkpointer=checkpointer)
+
+    await db_session.refresh(app_row)
+    assert app_row.generation_status == "ready"
+
+    result = await db_session.execute(
+        select(GeneratedDocument).where(GeneratedDocument.application_id == app_row.id)
+    )
+    docs = result.scalars().all()
+    assert len(docs) >= 2
     doc_types = {d.doc_type for d in docs}
     assert "tailored_resume" in doc_types
     assert "cover_letter" in doc_types

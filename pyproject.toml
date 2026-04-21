@@ -53,3 +53,6 @@ select = ["E", "F", "I", "UP"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+markers = [
+    "live_api: marks tests as making real external API calls (deselect with '-m not live_api')",
+]

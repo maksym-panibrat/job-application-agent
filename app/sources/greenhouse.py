@@ -15,24 +15,49 @@ log = structlog.get_logger()
 BOARDS_API = "https://boards-api.greenhouse.io/v1/boards"
 
 
-async def get_job_questions(board_token: str, job_id: str) -> list[str]:
+async def get_job_questions(board_token: str, job_id: str) -> list[dict]:
     """
     Fetch custom questions for a Greenhouse job posting.
-    Returns list of question strings.
+    Returns list of dicts with keys: label, type, required.
     """
     url = f"{BOARDS_API}/{board_token}/jobs/{job_id}"
-    async with AsyncClient(timeout=15) as client:
-        resp = await client.get(url, params={"questions": "true"})
-        if resp.status_code != 200:
-            return []
-        data = resp.json()
+    try:
+        async with AsyncClient(timeout=15) as client:
+            resp = await client.get(url, params={"questions": "true"})
+            if resp.status_code != 200:
+                return []
+            data = resp.json()
+    except Exception:
+        return []
 
     questions = []
     for q in data.get("questions", []):
         label = q.get("label", "")
-        if label and q.get("type") not in ("attachment",):
-            questions.append(label)
+        if label and q.get("type") not in ("attachment", "input_file"):
+            questions.append(
+                {
+                    "label": label,
+                    "type": q.get("type", "input_text"),
+                    "required": bool(q.get("required", False)),
+                }
+            )
     return questions
+
+
+async def get_job_questions_by_url(apply_url: str) -> list[dict]:
+    """
+    Convenience wrapper: extract board token and job ID from a Greenhouse apply URL,
+    then delegate to get_job_questions. Returns [] on any parse failure.
+    """
+    import re
+
+    board_token = extract_greenhouse_board_token(apply_url)
+    if not board_token:
+        return []
+    job_match = re.search(r"/jobs/(\d+)", apply_url)
+    if not job_match:
+        return []
+    return await get_job_questions(board_token, job_match.group(1))
 
 
 async def submit_application(
@@ -112,16 +137,19 @@ async def try_submit(
 
     job_id = job_match.group(1)
 
-    result = await submit_application(
-        board_token=board_token,
-        job_id=job_id,
-        first_name=first_name,
-        last_name=last_name,
-        email=email,
-        phone=phone,
-        resume_md=resume_md,
-        cover_letter_md=cover_letter_md,
-        custom_answers=custom_answers,
-    )
-    result["method"] = "api"
+    try:
+        result = await submit_application(
+            board_token=board_token,
+            job_id=job_id,
+            first_name=first_name,
+            last_name=last_name,
+            email=email,
+            phone=phone,
+            resume_md=resume_md,
+            cover_letter_md=cover_letter_md,
+            custom_answers=custom_answers,
+        )
+    except Exception as exc:
+        return {"success": False, "method": "greenhouse_api", "error": str(exc)}
+    result["method"] = "greenhouse_api"
     return result

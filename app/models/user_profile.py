@@ -57,6 +57,20 @@ class UserProfile(SQLModel, table=True):
         default_factory=list, sa_column=Column(ARRAY(sa.String))
     )
     source_cursors: dict = Field(default_factory=dict, sa_column=Column(JSONB))
+    target_company_slugs: dict = Field(
+        default_factory=dict,
+        sa_column=Column(JSONB, nullable=False, server_default=sa.text("'{}'::jsonb")),
+    )
+    first_name: str | None = None
+    last_name: str | None = None
+    work_authorization: str | None = None
+    requires_sponsorship: bool | None = None
+    salary_expectation_usd: int | None = None
+    available_from: str | None = None
+    standard_answers: dict = Field(
+        default_factory=dict,
+        sa_column=Column(JSONB, nullable=False, server_default=sa.text("'{}'::jsonb")),
+    )
     search_active: bool = True
     search_expires_at: datetime | None = Field(
         default=None, sa_column=Column(sa.DateTime(timezone=True), nullable=True)

@@ -41,6 +41,7 @@ async def save_documents(
         if row:
             row.content_md = doc["content_md"]
             row.generation_model = doc.get("generation_model")
+            row.structured_content = doc.get("structured_content")
             session.add(row)
             saved.append(row)
         else:
@@ -49,6 +50,7 @@ async def save_documents(
                 doc_type=doc["doc_type"],
                 content_md=doc["content_md"],
                 generation_model=doc.get("generation_model"),
+                structured_content=doc.get("structured_content"),
             )
             session.add(gdoc)
             saved.append(gdoc)
@@ -106,6 +108,14 @@ async def generate_materials(
             thread_id = f"gen-{application_id}"
             config = {"configurable": {"thread_id": thread_id}}
 
+            custom_questions: list = []
+            if job.ats_type == "greenhouse" and job.supports_api_apply and job.apply_url:
+                try:
+                    from app.sources.greenhouse import get_job_questions_by_url
+                    custom_questions = await get_job_questions_by_url(job.apply_url)
+                except Exception:
+                    pass  # fall back to empty — graph still generates resume + cover letter
+
             initial_state = {
                 "application_id": str(application_id),
                 "profile_text": profile_text,
@@ -113,7 +123,7 @@ async def generate_materials(
                 "job_company": job.company_name,
                 "job_description": job.description_md or "",
                 "base_resume_md": profile.base_resume_md or "",
-                "custom_questions": [],
+                "custom_questions": custom_questions,
                 "documents": [],
                 "generation_status": "pending",
                 "user_decision": {},

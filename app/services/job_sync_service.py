@@ -1,13 +1,18 @@
 """
 Job sync service — drives the search pipeline:
   1. Generate search queries from profile
-  2. For each query × source: check cursor, call source.search(), collect JobData
-  3. Dedup by (title, company) — keep best location variant
-  4. Enrich each unique job with full description from detail page
-  5. Upsert jobs, update cursors, mark stale jobs
+  2. For each source: paginating sources iterate queries with cursor tracking;
+     non-paginating sources are called once with empty params
+  3. Per-source dedup by (title, company) — keep best location variant
+  4. Cross-source dedup — keep highest-preference source per (title, company, location)
+  5. Enrich each unique job with full description from detail page
+  6. Upsert jobs, update cursors, mark stale jobs
 """
 
 import asyncio
+import hashlib  # noqa: F401 — available for future use
+import re
+import time
 from collections import defaultdict
 
 import structlog
@@ -20,11 +25,50 @@ from app.models.user_profile import UserProfile
 from app.services import job_service, profile_service
 from app.sources.adzuna import AdzunaSource
 from app.sources.adzuna_enrichment import fetch_full_description
+from app.sources.arbeitnow import ArbeitnowSource
 from app.sources.ats_detection import detect_ats_type, supports_api_apply
 from app.sources.base import JobData, JobSource
+from app.sources.greenhouse_board import GreenhouseBoardSource
 from app.sources.jsearch import JSearchSource
+from app.sources.remoteok import RemoteOKSource
+from app.sources.remotive import RemotiveSource
 
 log = structlog.get_logger()
+
+SOURCE_PREFERENCE: dict[str, int] = {
+    "greenhouse_board": 6,
+    "remotive": 5,
+    "remoteok": 4,
+    "arbeitnow": 3,
+    "adzuna": 2,
+    "jsearch": 1,
+}
+
+
+def _normalize(s: str) -> str:
+    return re.sub(r"[^\w\s]", "", s.lower()).strip()
+
+
+def _location_bucket(job: JobData) -> str:
+    if job.workplace_type == "remote":
+        return "remote"
+    if job.location and re.search(r"\bremote\b", job.location, re.I):
+        return "remote"
+    return _normalize(job.location or "")
+
+
+def _dedup_jobs_across_sources(
+    jobs_by_source: dict[str, list[JobData]],
+) -> list[tuple[str, JobData]]:
+    """Keep one job per cross-source key; prefer higher SOURCE_PREFERENCE."""
+    seen: dict[tuple, tuple[str, JobData]] = {}
+    for source_name, jobs in jobs_by_source.items():
+        pref = SOURCE_PREFERENCE.get(source_name, 0)
+        for job in jobs:
+            key = (_normalize(job.title), _normalize(job.company_name), _location_bucket(job))
+            if key not in seen or pref > SOURCE_PREFERENCE.get(seen[key][0], 0):
+                seen[key] = (source_name, job)
+    return list(seen.values())
 
 
 def generate_queries(profile: UserProfile) -> list[tuple[str, str | None]]:
@@ -209,82 +253,143 @@ async def sync_profile(
     Run a full sync for one profile. Returns a summary dict.
     """
     settings = get_settings()
+    t0_total = time.perf_counter()
+
     if sources is None:
         sources = []
+        if settings.remotive_enabled:
+            sources.append(RemotiveSource())
+        if settings.remoteok_enabled:
+            sources.append(RemoteOKSource())
+        if settings.arbeitnow_enabled:
+            sources.append(ArbeitnowSource())
+        if settings.greenhouse_board_enabled and (profile.target_company_slugs or {}).get(
+            "greenhouse"
+        ):
+            sources.append(GreenhouseBoardSource())
         if settings.jsearch_api_key.get_secret_value():
             sources.append(JSearchSource())
         if settings.adzuna_app_id and settings.adzuna_api_key.get_secret_value():
             sources.append(AdzunaSource())
-        if not sources:
-            await log.awarning(
-                "job_sync.no_sources_configured",
-                profile_id=str(profile.id),
-            )
-            return {"new_jobs": 0, "updated_jobs": 0, "stale_jobs": 0}
+
+    if not sources:
+        await log.awarning("job_sync.no_sources_configured", profile_id=str(profile.id))
+        return {"new_jobs": 0, "updated_jobs": 0, "stale_jobs": 0}
 
     queries = generate_queries(profile)
-    if not queries:
+    paginating_sources = [s for s in sources if s.supports_query_cursor]
+    if paginating_sources and not queries:
         await log.awarning(
             "job_sync.skipped_incomplete_profile",
             profile_id=str(profile.id),
             reason="no target_locations and remote_ok=False",
         )
-        return {"new_jobs": 0, "updated_jobs": 0, "stale_jobs": 0}
+        # Still continue — non-paginating sources can run without queries
+        if not [s for s in sources if not s.supports_query_cursor]:
+            return {"new_jobs": 0, "updated_jobs": 0, "stale_jobs": 0}
 
     cursors: dict = dict(profile.source_cursors or {})
+    jobs_by_source: dict[str, list[JobData]] = {}
 
-    total_new = 0
-    total_updated = 0
-
+    # Collect per source
     for source in sources:
         source_name = source.source_name
-        source_cursors = cursors.get(source_name, {})
-
-        # Collect all job data for this source across all queries
+        t0_source = time.perf_counter()
+        source_errors = 0
         all_job_data: list[JobData] = []
 
-        for query, location in queries:
-            cursor_key = f"{query}|{location or ''}"
-            cursor = source_cursors.get(cursor_key, 1)
-
+        if source.supports_query_cursor:
+            # Paginating source: iterate queries with cursor tracking
+            source_cursors = cursors.get(source_name, {})
+            for query, location in queries:
+                cursor_key = f"{query}|{location or ''}"
+                cursor = source_cursors.get(cursor_key, 1)
+                try:
+                    job_data_list, next_cursor = await source.search(
+                        query, location, cursor, settings, session, profile=profile
+                    )
+                    all_job_data.extend(job_data_list)
+                    source_cursors[cursor_key] = next_cursor
+                except Exception as exc:
+                    source_errors += 1
+                    await log.awarning(
+                        "job_sync.source_error",
+                        source=source_name,
+                        query=query,
+                        error=str(exc),
+                    )
+            cursors[source_name] = source_cursors
+        else:
+            # Non-paginating source: single call, no cursor needed
             try:
-                job_data_list, next_cursor = await source.search(
-                    query, location, cursor, settings, session
+                job_data_list, _ = await source.search(
+                    "", None, None, settings, session, profile=profile
                 )
+                all_job_data.extend(job_data_list)
             except Exception as exc:
+                source_errors += 1
                 await log.awarning(
                     "job_sync.source_error",
                     source=source_name,
-                    query=query,
                     error=str(exc),
                 )
-                continue
 
-            all_job_data.extend(job_data_list)
-            source_cursors[cursor_key] = next_cursor
-
-        # Dedup by (title, company) across all query results
+        # Per-source within-source dedup
         unique_jobs = _dedup_jobs(all_job_data, profile)
+        jobs_by_source[source_name] = unique_jobs
 
-        # Enrich with full descriptions — skip for sources that already provide them
-        if source.needs_enrichment:
-            already_enriched = await _get_already_enriched(unique_jobs, source_name, session)
-            enriched_jobs = await _enrich_jobs(unique_jobs, already_enriched)
-        else:
-            enriched_jobs = unique_jobs
+        await log.ainfo(
+            "jobs.source.summary",
+            source=source_name,
+            fetched=len(all_job_data),
+            unique_within=len(unique_jobs),
+            errors=source_errors,
+            duration_ms=int((time.perf_counter() - t0_source) * 1000),
+        )
 
-        # Upsert
-        for job_data in enriched_jobs:
-            _, created = await job_service.upsert_job(job_data, source_name, session)
-            if created:
-                total_new += 1
-            else:
-                total_updated += 1
+    # Cross-source dedup
+    deduped = _dedup_jobs_across_sources(jobs_by_source)
+    total_before = sum(len(v) for v in jobs_by_source.values())
 
-        cursors[source_name] = source_cursors
+    kept_by_source: dict[str, int] = {}
+    dropped_by_source: dict[str, int] = {}
+    for src_name, jobs in jobs_by_source.items():
+        kept = sum(1 for winner_src, _ in deduped if winner_src == src_name)
+        kept_by_source[src_name] = kept
+        dropped_by_source[src_name] = len(jobs) - kept
 
-    # Update source_cursors on profile
+    await log.ainfo(
+        "jobs.cross_source_dedup.summary",
+        total_before=total_before,
+        total_after=len(deduped),
+        kept_by_source=kept_by_source,
+        dropped_by_source=dropped_by_source,
+    )
+
+    # Update source_cursors on profile (paginating sources only updated their cursors)
     await profile_service.update_profile(profile.id, {"source_cursors": cursors}, session)
+
+    # Enrich + upsert, using winning source name
+    per_source_counts: dict[str, dict[str, int]] = {}
+    total_new = 0
+    total_updated = 0
+
+    for winning_source, job_data in deduped:
+        # Enrich if the winning source needs it
+        winning_source_obj = next((s for s in sources if s.source_name == winning_source), None)
+        if winning_source_obj and winning_source_obj.needs_enrichment:
+            already_enriched = await _get_already_enriched([job_data], winning_source, session)
+            enriched_list = await _enrich_jobs([job_data], already_enriched)
+            job_data = enriched_list[0]
+
+        _, created = await job_service.upsert_job(job_data, winning_source, session)
+        counts = per_source_counts.setdefault(winning_source, {"new": 0, "updated": 0})
+        if created:
+            counts["new"] += 1
+            total_new += 1
+        else:
+            counts["updated"] += 1
+            total_updated += 1
 
     # Mark stale jobs
     stale = await job_service.mark_stale_jobs(settings.job_stale_after_days, session)
@@ -294,6 +399,12 @@ async def sync_profile(
         "updated_jobs": total_updated,
         "stale_jobs": stale,
         "sources": [s.source_name for s in sources],
+        "per_source": per_source_counts,
     }
-    await log.ainfo("job_sync.complete", profile_id=str(profile.id), **result)
+    await log.ainfo(
+        "job_sync.complete",
+        profile_id=str(profile.id),
+        duration_ms=int((time.perf_counter() - t0_total) * 1000),
+        **result,
+    )
     return result

@@ -18,6 +18,8 @@ function makeApp(overrides: Partial<Application> = {}): Application {
     match_gaps: ['Go experience'],
     user_interest: null,
     created_at: new Date().toISOString(),
+    submitted_at: null,
+    submission_method: null,
     job: {
       id: 'job-1',
       title: 'Python Engineer',

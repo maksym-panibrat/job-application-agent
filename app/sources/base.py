@@ -1,8 +1,13 @@
+from __future__ import annotations
+
 from abc import ABC, abstractmethod
 from datetime import datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel
+
+if TYPE_CHECKING:
+    from app.models.user_profile import UserProfile
 
 
 class JobData(BaseModel):
@@ -31,6 +36,11 @@ class JobSource(ABC):
         """Whether jobs from this source need a separate enrichment fetch for full descriptions."""
         return True
 
+    @property
+    def supports_query_cursor(self) -> bool:
+        """Whether this source supports cursor-based pagination per query."""
+        return True
+
     @abstractmethod
     async def search(
         self,
@@ -39,6 +49,8 @@ class JobSource(ABC):
         cursor: Any,
         settings: Any,
         session: Any,
+        *,
+        profile: UserProfile | None = None,
     ) -> tuple[list[JobData], Any]:
         """
         Search for jobs matching query/location.

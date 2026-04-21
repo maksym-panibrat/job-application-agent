@@ -136,7 +136,7 @@ function DocumentEditor({
   }, [doc.content_md])
 
   const save = useMutation({
-    mutationFn: () => api.updateDocument(appId, doc.id, content),
+    mutationFn: () => api.updateDocument(appId, doc.id, { user_edited_md: content }),
     onSuccess: () => {
       setSaved(true)
       qc.invalidateQueries({ queryKey: ['application', appId] })
@@ -179,11 +179,21 @@ function DocumentEditor({
   )
 }
 
+function submissionMethodLabel(method: string | null): string {
+  if (!method) return ''
+  return {
+    greenhouse_api: 'Submitted via Greenhouse API',
+    lever_api: 'Submitted via Lever API',
+    manual: 'Applied manually',
+  }[method] ?? `Submitted (${method})`
+}
+
 export default function ApplicationReview() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const qc = useQueryClient()
   const [activeTab, setActiveTab] = useState(0)
+  const [customAnswers, setCustomAnswers] = useState<Record<string, string>>({})
 
   const { data: app, isLoading } = useQuery({
     queryKey: ['application', id],
@@ -193,6 +203,18 @@ export default function ApplicationReview() {
       return (status === 'generating' || status === 'pending') ? 3000 : false
     },
   })
+
+  // Initialise customAnswers from the custom_answers doc when it first arrives.
+  // Track by doc ID (not object reference) so poll-cycle re-renders don't clobber edits.
+  const customAnswersDoc = app?.documents?.find((d) => d.doc_type === 'custom_answers')
+  const customAnswersDocRef = useRef<string | null>(null)
+  useEffect(() => {
+    const sc = customAnswersDoc?.structured_content
+    if (customAnswersDoc?.id && customAnswersDoc.id !== customAnswersDocRef.current && sc && Object.keys(sc).length > 0) {
+      customAnswersDocRef.current = customAnswersDoc.id
+      setCustomAnswers(sc)
+    }
+  }, [customAnswersDoc?.id])
 
   const approve = useMutation({
     mutationFn: () => api.reviewApplication(id!, 'approved'),
@@ -212,12 +234,14 @@ export default function ApplicationReview() {
 
   const submit = useMutation({
     mutationFn: () => api.submitApplication(id!),
-    onSuccess: (result) => {
+    onSuccess: async (result) => {
+      if (result.method === 'needs_review') return
       if (result.method === 'manual' && result.apply_url) {
         window.open(result.apply_url, '_blank')
-        api.reviewApplication(id!, 'applied')
+        await api.reviewApplication(id!, 'applied')
       }
       qc.invalidateQueries({ queryKey: ['applications'] })
+      qc.invalidateQueries({ queryKey: ['application', id] })
     },
   })
 
@@ -234,6 +258,8 @@ export default function ApplicationReview() {
   const docs = app.documents ?? []
   const isGenerating = app.generation_status === 'generating' || app.generation_status === 'pending'
   const isFailed = app.generation_status === 'failed'
+  const hasCustomQuestions = Object.keys(customAnswers).length > 0
+  const hasUnansweredCustomQuestions = hasCustomQuestions && Object.values(customAnswers).some((a) => !a)
 
   return (
     <div className="max-w-4xl mx-auto">
@@ -267,13 +293,18 @@ export default function ApplicationReview() {
                 {approve.isPending ? 'Approving...' : 'Approve'}
               </button>
             )}
-            <button
-              onClick={() => submit.mutate()}
-              disabled={submit.isPending || isGenerating || !docs.length}
-              className="px-3 py-1.5 text-sm font-medium bg-green-600 text-white rounded-md hover:bg-green-700 disabled:opacity-50"
-            >
-              {submit.isPending ? 'Submitting...' : 'Apply'}
-            </button>
+            <div className="flex flex-col items-end gap-1">
+              <button
+                onClick={() => submit.mutate()}
+                disabled={submit.isPending || isGenerating || !docs.length || hasUnansweredCustomQuestions || submit.data?.method === 'needs_review'}
+                className="px-3 py-1.5 text-sm font-medium bg-green-600 text-white rounded-md hover:bg-green-700 disabled:opacity-50"
+              >
+                {submit.isPending ? 'Submitting...' : 'Apply'}
+              </button>
+              {hasUnansweredCustomQuestions && (
+                <span className="text-xs text-amber-600">Answer all custom questions before applying</span>
+              )}
+            </div>
           </div>
         </div>
 
@@ -338,15 +369,68 @@ export default function ApplicationReview() {
       )}
 
       {/* Submit result */}
-      {submit.data && (
+      {submit.data?.method === 'needs_review' && (
+        <div className="mt-4 p-3 text-sm rounded-md bg-amber-50 text-amber-700">
+          <p className="font-medium mb-1">Some questions need your answers before submitting:</p>
+          <ul className="list-disc list-inside space-y-0.5">
+            {submit.data.unanswered_questions?.map((q) => (
+              <li key={q}>{q}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {submit.data && submit.data.method !== 'needs_review' && (
         <div className={`mt-4 p-3 text-sm rounded-md ${
-          submit.data.success ? 'bg-green-50 text-green-700' : 'bg-amber-50 text-amber-700'
+          submit.data.success ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'
         }`}>
           {submit.data.success
-            ? 'Application submitted successfully!'
-            : submit.data.method === 'manual'
-            ? 'Opened apply URL in new tab (manual application required)'
+            ? (submit.data.method === 'manual'
+                ? 'Opened apply URL in new tab (manual application required)'
+                : 'Application submitted successfully!')
             : `Submit failed: ${submit.data.error}`}
+        </div>
+      )}
+
+      {/* Post-submit audit info */}
+      {app.submitted_at && (
+        <div className="mt-4 p-3 text-sm rounded-md bg-gray-50 text-gray-600">
+          <span>{submissionMethodLabel(app.submission_method)}</span>
+          {' · '}
+          <span>{new Date(app.submitted_at).toLocaleString()}</span>
+        </div>
+      )}
+
+      {/* Custom Questions */}
+      {hasCustomQuestions && (
+        <div className="mt-6">
+          <h2 className="text-sm font-semibold text-gray-700 mb-3">Custom Questions</h2>
+          <div className="space-y-4">
+            {Object.entries(customAnswers).map(([question, answer]) => (
+              <div key={question}>
+                <div className="flex items-center gap-2 mb-1">
+                  <label className="text-sm text-gray-600">{question}</label>
+                  {!answer && (
+                    <span className="px-1.5 py-0.5 text-xs font-medium bg-amber-100 text-amber-700 rounded">
+                      Needs review
+                    </span>
+                  )}
+                </div>
+                <textarea
+                  value={answer}
+                  onChange={(e) => {
+                    const updatedAnswers = { ...customAnswers, [question]: e.target.value }
+                    submit.reset()
+                    setCustomAnswers(updatedAnswers)
+                    if (customAnswersDoc) {
+                      api.updateDocument(id!, customAnswersDoc.id, { structured_content: updatedAnswers })
+                    }
+                  }}
+                  className="w-full h-24 text-sm border border-gray-200 rounded-md p-2 focus:outline-none focus:ring-2 focus:ring-blue-500 resize-y"
+                  spellCheck
+                />
+              </div>
+            ))}
+          </div>
         </div>
       )}
     </div>

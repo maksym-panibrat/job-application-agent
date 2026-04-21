@@ -31,14 +31,23 @@ log = structlog.get_logger()
 SYSTEM_PROMPT = """You are a job application assistant helping a user build their profile.
 
 Your goals:
-1. Learn their target roles and seniority level
-2. Learn their location — this is REQUIRED to start job search:
+1. Collect their first and last name separately if not already known.
+2. Learn their target roles and seniority level.
+3. Learn their location — this is REQUIRED to start job search:
    - Ask for a city or metro area (e.g. "San Francisco Bay Area", "New York", "Austin")
    - OR confirm they want remote-only positions (set remote_ok=true, leave target_locations empty)
    - A vague answer like "open to anything" is not enough — pin down a location or remote-only
-3. Understand their key skills and experience highlights they want to emphasize
-4. Note any companies or industries to exclude
-5. Confirm their contact info (LinkedIn, GitHub, portfolio)
+4. Understand their key skills and experience highlights they want to emphasize.
+5. Note any companies or industries to exclude.
+6. Confirm their contact info (LinkedIn, GitHub, portfolio).
+7. Collect work authorization and sponsorship needs:
+   - Ask which status applies: US citizen, US permanent resident, US work visa, UK citizen,
+     EU citizen, or other. Store as work_authorization.
+   - Ask if they require employer sponsorship (requires_sponsorship true/false).
+8. Ask about salary expectations (annual USD) and when they are available to start (available_from).
+9. As users share answers to common application questions ("why do you want to work here?",
+   "are you willing to relocate?", "what is your greatest strength?", etc.), bank them in
+   `standard_answers` as `{question_key: answer}` for reuse across future applications.
 
 Ask one or two questions at a time. Be conversational and concise.
 When you have enough information to update the profile, call the `save_profile_updates` tool.
@@ -47,12 +56,20 @@ You can call it multiple times as you learn more.
 Do not consider the profile search-ready until target_locations is set OR remote_ok is true.
 
 Once the profile feels complete, summarize what you've captured and tell the user they can
-update preferences anytime by chatting here."""
+update preferences anytime by chatting here.
+
+Target companies: If the user names specific companies they want to follow, ask them for
+the Greenhouse board slug (visible at boards.greenhouse.io/{slug}). Store as
+{"greenhouse": ["slug1", "slug2"]} in target_company_slugs. Common slugs are lowercase,
+no spaces (e.g., stripe, airbnb, openai). Ask for confirmation if the slug is not obvious."""
 
 PROFILE_SCALAR_FIELDS = frozenset({
     "target_roles", "seniority", "target_locations", "remote_ok",
     "search_keywords", "full_name", "email", "phone",
     "linkedin_url", "github_url", "portfolio_url",
+    "target_company_slugs",
+    "first_name", "last_name", "work_authorization", "requires_sponsorship",
+    "salary_expectation_usd", "available_from", "standard_answers",
 })
 
 
@@ -82,8 +99,17 @@ def build_graph(checkpointer: AsyncPostgresSaver) -> StateGraph:
         Pass a JSON string with any subset of these fields:
         target_roles (list), seniority (str), target_locations (list),
         remote_ok (bool), search_keywords (list), full_name (str),
+        first_name (str), last_name (str),
         email (str), phone (str), linkedin_url (str), github_url (str),
-        portfolio_url (str), skills (list of {name, category, proficiency, years}),
+        portfolio_url (str), target_company_slugs (dict, e.g.
+        {"greenhouse": ["stripe", "airbnb"], "lever": [], "ashby": []}),
+        work_authorization (str, one of: us_citizen, us_permanent_resident,
+        us_work_visa, uk_citizen, eu_citizen, other),
+        requires_sponsorship (bool),
+        salary_expectation_usd (int, annual USD),
+        available_from (str, ISO date YYYY-MM-DD),
+        standard_answers (dict, freeform key/value bank for common application questions),
+        skills (list of {name, category, proficiency, years}),
         work_experiences (list of {company, title, start_date (YYYY-MM-DD), end_date,
         description_md, technologies (list)}).
         """

@@ -22,18 +22,27 @@ from app.config import get_settings
 from app.database import init_db
 
 
+def _add_cloud_run_severity(logger, method, event_dict):
+    # Cloud Run reads "severity" (uppercase) for log severity badges.
+    # structlog's add_log_level writes "level" (lowercase) — copy it here.
+    event_dict["severity"] = event_dict.get("level", "info").upper()
+    return event_dict
+
+
 def configure_logging(settings) -> None:
+    is_dev = settings.environment == "development"
+    processors = [
+        structlog.contextvars.merge_contextvars,
+        structlog.processors.add_log_level,
+        structlog.processors.TimeStamper(fmt="iso"),
+    ]
+    if not is_dev:
+        processors.append(_add_cloud_run_severity)
+    processors.append(
+        structlog.dev.ConsoleRenderer() if is_dev else structlog.processors.JSONRenderer()
+    )
     structlog.configure(
-        processors=[
-            structlog.contextvars.merge_contextvars,
-            structlog.processors.add_log_level,
-            structlog.processors.TimeStamper(fmt="iso"),
-            (
-                structlog.dev.ConsoleRenderer()
-                if settings.environment == "development"
-                else structlog.processors.JSONRenderer()
-            ),
-        ],
+        processors=processors,
         wrapper_class=structlog.make_filtering_bound_logger(
             getattr(logging, settings.log_level.upper())
         ),

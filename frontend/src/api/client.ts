@@ -3,6 +3,8 @@
 export interface Profile {
   id: string
   full_name: string | null
+  first_name?: string | null
+  last_name?: string | null
   email: string | null
   phone: string | null
   linkedin_url: string | null
@@ -16,6 +18,12 @@ export interface Profile {
   search_keywords: string[]
   search_active: boolean
   search_expires_at: string | null
+  target_company_slugs?: { greenhouse?: string[]; lever?: string[]; ashby?: string[] }
+  work_authorization?: string | null
+  requires_sponsorship?: boolean | null
+  salary_expectation_usd?: number | null
+  available_from?: string | null
+  standard_answers?: Record<string, string>
   skills: Skill[]
   work_experiences: WorkExperience[]
 }
@@ -63,6 +71,8 @@ export interface Application {
   match_gaps: string[]
   user_interest: 'interested' | 'not_interested' | null
   created_at: string
+  submitted_at: string | null
+  submission_method: string | null
   job: Job | null
 }
 
@@ -75,6 +85,7 @@ export interface Document {
   id: string
   doc_type: string
   content_md: string
+  structured_content?: Record<string, string> | null
   has_edits: boolean
   generation_model: string | null
   created_at: string
@@ -148,10 +159,10 @@ export const api = {
       method: 'PATCH',
       body: JSON.stringify({ status }),
     }),
-  updateDocument: (appId: string, docId: string, content: string) =>
+  updateDocument: (appId: string, docId: string, data: { user_edited_md?: string; structured_content?: Record<string, string> }) =>
     apiFetch<{ id: string; saved: boolean }>(
       `/api/applications/${appId}/documents/${docId}`,
-      { method: 'PATCH', body: JSON.stringify({ user_edited_md: content }) }
+      { method: 'PATCH', body: JSON.stringify(data) }
     ),
   setInterest: (appId: string, interest: 'interested' | 'not_interested' | null) =>
     apiFetch<void>(`/api/applications/${appId}/interest`, {
@@ -163,7 +174,7 @@ export const api = {
       method: 'POST',
     }),
   submitApplication: (id: string) =>
-    apiFetch<{ success?: boolean; method: string; apply_url?: string; error?: string }>(
+    apiFetch<{ success?: boolean; method: string; apply_url?: string; error?: string; unanswered_questions?: string[] }>(
       `/api/applications/${id}/submit`,
       { method: 'POST' }
     ),
