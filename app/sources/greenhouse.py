@@ -15,10 +15,10 @@ log = structlog.get_logger()
 BOARDS_API = "https://boards-api.greenhouse.io/v1/boards"
 
 
-async def get_job_questions(board_token: str, job_id: str) -> list[str]:
+async def get_job_questions(board_token: str, job_id: str) -> list[dict]:
     """
     Fetch custom questions for a Greenhouse job posting.
-    Returns list of question strings.
+    Returns list of dicts with keys: label, type, required.
     """
     url = f"{BOARDS_API}/{board_token}/jobs/{job_id}"
     async with AsyncClient(timeout=15) as client:
@@ -31,8 +31,30 @@ async def get_job_questions(board_token: str, job_id: str) -> list[str]:
     for q in data.get("questions", []):
         label = q.get("label", "")
         if label and q.get("type") not in ("attachment",):
-            questions.append(label)
+            questions.append(
+                {
+                    "label": label,
+                    "type": q.get("type", "input_text"),
+                    "required": bool(q.get("required", False)),
+                }
+            )
     return questions
+
+
+async def get_job_questions_by_url(apply_url: str) -> list[dict]:
+    """
+    Convenience wrapper: extract board token and job ID from a Greenhouse apply URL,
+    then delegate to get_job_questions. Returns [] on any parse failure.
+    """
+    import re
+
+    board_token = extract_greenhouse_board_token(apply_url)
+    if not board_token:
+        return []
+    job_match = re.search(r"/jobs/(\d+)", apply_url)
+    if not job_match:
+        return []
+    return await get_job_questions(board_token, job_match.group(1))
 
 
 async def submit_application(

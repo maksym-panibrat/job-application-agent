@@ -30,6 +30,7 @@ class GeneratedDoc(TypedDict):
     doc_type: str  # tailored_resume, cover_letter, custom_answers
     content_md: str
     generation_model: str
+    structured_content: dict | None
 
 
 class GenerationState(TypedDict):
@@ -39,7 +40,7 @@ class GenerationState(TypedDict):
     job_company: str
     job_description: str
     base_resume_md: str
-    custom_questions: list[str]
+    custom_questions: list  # list[str] or list[dict] with at least {"label": str}
     documents: Annotated[list[GeneratedDoc], operator.add]
     generation_status: str
     user_decision: dict  # set on resume after interrupt
@@ -159,6 +160,7 @@ def build_graph(checkpointer: AsyncPostgresSaver) -> StateGraph:
                     "doc_type": "tailored_resume",
                     "content_md": _extract_text(result.content),
                     "generation_model": model_name,
+                    "structured_content": None,
                 }
             ]
         }
@@ -177,6 +179,7 @@ def build_graph(checkpointer: AsyncPostgresSaver) -> StateGraph:
                     "doc_type": "cover_letter",
                     "content_md": _extract_text(result.content),
                     "generation_model": model_name,
+                    "structured_content": None,
                 }
             ]
         }
@@ -185,7 +188,13 @@ def build_graph(checkpointer: AsyncPostgresSaver) -> StateGraph:
         questions = state.get("custom_questions", [])
         if not questions:
             return {}
-        formatted = "\n".join(f"{i+1}. {q}" for i, q in enumerate(questions))
+
+        # Support both list[str] and list[dict] with at least {"label": str}
+        def _label(q) -> str:
+            return q["label"] if isinstance(q, dict) else q
+
+        labels = [_label(q) for q in questions]
+        formatted = "\n".join(f"{i+1}. {lbl}" for i, lbl in enumerate(labels))
         prompt = CUSTOM_QUESTIONS_PROMPT.format(
             profile_text=state["profile_text"][:2000],
             title=state["job_title"],
@@ -193,12 +202,34 @@ def build_graph(checkpointer: AsyncPostgresSaver) -> StateGraph:
             questions=formatted,
         )
         result = await safe_ainvoke(llm, [HumanMessage(content=prompt)])
+        content_md = _extract_text(result.content)
+
+        # Build structured_content: {question_label: answer_text}
+        # Parse the Markdown output for "A: ..." lines following each question block.
+        structured_content: dict = {}
+        current_label: str | None = None
+        for line in content_md.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("**Q:") and stripped.endswith("**"):
+                q_text = stripped[4:-2].strip()
+                # Match back to the original label (case-insensitive prefix match)
+                for lbl in labels:
+                    if lbl.lower() in q_text.lower() or q_text.lower() in lbl.lower():
+                        current_label = lbl
+                        break
+                else:
+                    current_label = q_text
+            elif stripped.startswith("A:") and current_label is not None:
+                structured_content[current_label] = stripped[2:].strip()
+                current_label = None
+
         return {
             "documents": [
                 {
                     "doc_type": "custom_answers",
-                    "content_md": _extract_text(result.content),
+                    "content_md": content_md,
                     "generation_model": model_name,
+                    "structured_content": structured_content or None,
                 }
             ]
         }
