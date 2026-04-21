@@ -370,15 +370,14 @@ async def submit_application(
     else:
         result = {"method": "manual", "apply_url": job.apply_url}
 
-    # Record audit fields on successful or manual submission
-    if result.get("success") or result.get("method") == "manual":
-        app.submitted_at = datetime.now(UTC)
-        app.submission_method = result["method"]
-        app.submission_result = result
-        if result.get("success"):
-            app.status = "applied"
-        app.updated_at = datetime.now(UTC)
-        session.add(app)
-        await session.commit()
+    # Record audit fields for all submission attempts (needs_review already returned early)
+    app.submitted_at = datetime.now(UTC)
+    app.submission_method = result["method"]
+    app.submission_result = result
+    if result.get("success"):
+        app.status = "applied"
+    app.updated_at = datetime.now(UTC)
+    session.add(app)
+    await session.commit()
 
     return result
