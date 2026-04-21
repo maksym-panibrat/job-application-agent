@@ -71,6 +71,8 @@ export interface Application {
   match_gaps: string[]
   user_interest: 'interested' | 'not_interested' | null
   created_at: string
+  submitted_at: string | null
+  submission_method: string | null
   job: Job | null
 }
 
@@ -83,6 +85,7 @@ export interface Document {
   id: string
   doc_type: string
   content_md: string
+  structured_content?: Record<string, string> | null
   has_edits: boolean
   generation_model: string | null
   created_at: string
@@ -171,7 +174,7 @@ export const api = {
       method: 'POST',
     }),
   submitApplication: (id: string) =>
-    apiFetch<{ success?: boolean; method: string; apply_url?: string; error?: string }>(
+    apiFetch<{ success?: boolean; method: string; apply_url?: string; error?: string; unanswered_questions?: string[] }>(
       `/api/applications/${id}/submit`,
       { method: 'POST' }
     ),
