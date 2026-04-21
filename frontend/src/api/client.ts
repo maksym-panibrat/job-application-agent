@@ -159,10 +159,10 @@ export const api = {
       method: 'PATCH',
       body: JSON.stringify({ status }),
     }),
-  updateDocument: (appId: string, docId: string, content: string) =>
+  updateDocument: (appId: string, docId: string, data: { user_edited_md?: string; structured_content?: Record<string, string> }) =>
     apiFetch<{ id: string; saved: boolean }>(
       `/api/applications/${appId}/documents/${docId}`,
-      { method: 'PATCH', body: JSON.stringify({ user_edited_md: content }) }
+      { method: 'PATCH', body: JSON.stringify(data) }
     ),
   setInterest: (appId: string, interest: 'interested' | 'not_interested' | null) =>
     apiFetch<void>(`/api/applications/${appId}/interest`, {

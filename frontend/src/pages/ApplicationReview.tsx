@@ -136,7 +136,7 @@ function DocumentEditor({
   }, [doc.content_md])
 
   const save = useMutation({
-    mutationFn: () => api.updateDocument(appId, doc.id, content),
+    mutationFn: () => api.updateDocument(appId, doc.id, { user_edited_md: content }),
     onSuccess: () => {
       setSaved(true)
       qc.invalidateQueries({ queryKey: ['application', appId] })
@@ -234,11 +234,11 @@ export default function ApplicationReview() {
 
   const submit = useMutation({
     mutationFn: () => api.submitApplication(id!),
-    onSuccess: (result) => {
+    onSuccess: async (result) => {
       if (result.method === 'needs_review') return
       if (result.method === 'manual' && result.apply_url) {
         window.open(result.apply_url, '_blank')
-        api.reviewApplication(id!, 'applied')
+        await api.reviewApplication(id!, 'applied')
       }
       qc.invalidateQueries({ queryKey: ['applications'] })
       qc.invalidateQueries({ queryKey: ['application', id] })
@@ -417,9 +417,14 @@ export default function ApplicationReview() {
                 </div>
                 <textarea
                   value={answer}
-                  onChange={(e) =>
-                    setCustomAnswers((prev) => ({ ...prev, [question]: e.target.value }))
-                  }
+                  onChange={(e) => {
+                    const updatedAnswers = { ...customAnswers, [question]: e.target.value }
+                    submit.reset()
+                    setCustomAnswers(updatedAnswers)
+                    if (customAnswersDoc) {
+                      api.updateDocument(id!, customAnswersDoc.id, { structured_content: updatedAnswers })
+                    }
+                  }}
                   className="w-full h-24 text-sm border border-gray-200 rounded-md p-2 focus:outline-none focus:ring-2 focus:ring-blue-500 resize-y"
                   spellCheck
                 />

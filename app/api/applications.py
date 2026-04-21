@@ -219,6 +219,12 @@ async def update_document(
     user_edited = data.get("user_edited_md")
     if user_edited is not None:
         doc.user_edited_md = user_edited
+
+    structured = data.get("structured_content")
+    if structured is not None:
+        doc.structured_content = structured
+
+    if user_edited is not None or structured is not None:
         session.add(doc)
         await session.commit()
 
