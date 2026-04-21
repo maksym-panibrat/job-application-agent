@@ -73,6 +73,26 @@ function ProfileCard({ profile }: { profile: Profile }) {
                 {profile.search_keywords.length > 0 && (
                   <p><span className="text-gray-400">Keywords: </span>{profile.search_keywords.join(', ')}</p>
                 )}
+                {(profile.target_company_slugs?.greenhouse?.length ?? 0) > 0 && (
+                  <div className="flex gap-1 items-start">
+                    <span className="text-xs font-medium text-gray-500 shrink-0">Greenhouse:</span>
+                    <span className="text-xs text-gray-700">
+                      {profile.target_company_slugs!.greenhouse!.map((slug, i, arr) => (
+                        <span key={slug}>
+                          <a
+                            href={`https://boards.greenhouse.io/${slug}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-blue-600 underline"
+                          >
+                            {slug}
+                          </a>
+                          {i < arr.length - 1 ? ', ' : ''}
+                        </span>
+                      ))}
+                    </span>
+                  </div>
+                )}
               </div>
             </div>
           )}

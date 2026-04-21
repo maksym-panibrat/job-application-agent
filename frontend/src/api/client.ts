@@ -16,6 +16,7 @@ export interface Profile {
   search_keywords: string[]
   search_active: boolean
   search_expires_at: string | null
+  target_company_slugs?: { greenhouse?: string[]; lever?: string[]; ashby?: string[] }
   skills: Skill[]
   work_experiences: WorkExperience[]
 }

@@ -47,12 +47,18 @@ You can call it multiple times as you learn more.
 Do not consider the profile search-ready until target_locations is set OR remote_ok is true.
 
 Once the profile feels complete, summarize what you've captured and tell the user they can
-update preferences anytime by chatting here."""
+update preferences anytime by chatting here.
+
+Target companies: If the user names specific companies they want to follow, ask them for
+the Greenhouse board slug (visible at boards.greenhouse.io/{slug}). Store as
+{"greenhouse": ["slug1", "slug2"]} in target_company_slugs. Common slugs are lowercase,
+no spaces (e.g., stripe, airbnb, openai). Ask for confirmation if the slug is not obvious."""
 
 PROFILE_SCALAR_FIELDS = frozenset({
     "target_roles", "seniority", "target_locations", "remote_ok",
     "search_keywords", "full_name", "email", "phone",
     "linkedin_url", "github_url", "portfolio_url",
+    "target_company_slugs",
 })
 
 
@@ -83,7 +89,9 @@ def build_graph(checkpointer: AsyncPostgresSaver) -> StateGraph:
         target_roles (list), seniority (str), target_locations (list),
         remote_ok (bool), search_keywords (list), full_name (str),
         email (str), phone (str), linkedin_url (str), github_url (str),
-        portfolio_url (str), skills (list of {name, category, proficiency, years}),
+        portfolio_url (str), target_company_slugs (dict, e.g.
+        {"greenhouse": ["stripe", "airbnb"], "lever": [], "ashby": []}),
+        skills (list of {name, category, proficiency, years}),
         work_experiences (list of {company, title, start_date (YYYY-MM-DD), end_date,
         description_md, technologies (list)}).
         """
