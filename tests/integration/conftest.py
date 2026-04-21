@@ -59,6 +59,7 @@ def patch_settings(asyncpg_url, monkeypatch):
     monkeypatch.setenv("DATABASE_URL", asyncpg_url)
     monkeypatch.setenv("ENVIRONMENT", "test")
     monkeypatch.setenv("GOOGLE_API_KEY", "fake-test-key")
+    monkeypatch.setenv("CRON_SHARED_SECRET", "dev-cron-secret")
     # Reset the cached settings singleton between tests
     import app.config as cfg
     monkeypatch.setattr(cfg, "_settings", None)
