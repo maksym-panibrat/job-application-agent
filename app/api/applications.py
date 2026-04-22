@@ -293,17 +293,25 @@ async def regenerate_application(
     return {"id": str(app.id), "generation_status": "pending"}
 
 
+SMOKE_USER_ID = uuid.UUID("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
+
+
 @router.post("/{app_id}/submit")
 async def submit_application(
     app_id: str,
+    request: Request,
     profile: UserProfile = Depends(get_current_profile),
     session: AsyncSession = Depends(get_db),
 ):
     """
     Attempt ATS API submission (Greenhouse or Lever).
     Other ATS types fall back to method=manual (open apply URL in browser).
+
+    HTTP status codes:
+      200 — success, manual fallback, needs_review, or dry-run
+      400 — ATS rejected the submission (4xx upstream)
+      502 — ATS server error (5xx upstream) or network/timeout failure
     """
-    import uuid
     from datetime import datetime
 
     app = await session.get(Application, uuid.UUID(app_id))
@@ -313,6 +321,12 @@ async def submit_application(
     job = await session.get(Job, app.job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
+
+    # Dry-run gating: only honored for the smoke user; silently ignored otherwise
+    dry_run = False
+    if request.headers.get("x-smoke-dryrun", "").lower() == "true":
+        if profile.user_id == SMOKE_USER_ID:
+            dry_run = True
 
     # Load all generated documents
     docs_result = await session.execute(
@@ -349,6 +363,21 @@ async def submit_application(
         last_name = name_parts[1] if len(name_parts) > 1 else ""
 
     ats_type = job.ats_type or ""
+
+    # Short-circuit for smoke dry-run: write audit fields without hitting the ATS
+    if dry_run:
+        result: dict = {
+            "method": "dry_run",
+            "would_submit": True,
+            "ats_type": ats_type if ats_type else "manual",
+        }
+        app.submitted_at = datetime.now(UTC)
+        app.submission_method = "dry_run"
+        app.submission_result = result
+        app.updated_at = datetime.now(UTC)
+        session.add(app)
+        await session.commit()
+        return result
 
     if ats_type == "greenhouse" and job.supports_api_apply:
         from app.sources.greenhouse import try_submit as greenhouse_submit
@@ -388,4 +417,25 @@ async def submit_application(
     session.add(app)
     await session.commit()
 
-    return result
+    # Map ATS result to an appropriate HTTP status code
+    result_method = result.get("method", "")
+    if result_method in ("manual", "needs_review"):
+        http_status = 200
+    elif result.get("success"):
+        http_status = 200
+    elif result.get("status_code") is None:
+        # Network error / timeout / exception — upstream was unreachable
+        http_status = 502
+        result.setdefault("failure_reason", "ats_unreachable")
+    elif 400 <= result["status_code"] < 500:
+        http_status = 400
+        result.setdefault("failure_reason", f"ats_rejected_{result['status_code']}")
+    elif 500 <= result["status_code"] < 600:
+        http_status = 502
+        result.setdefault("failure_reason", f"ats_upstream_error_{result['status_code']}")
+    else:
+        http_status = 200
+
+    from fastapi.responses import JSONResponse
+
+    return JSONResponse(content=result, status_code=http_status)

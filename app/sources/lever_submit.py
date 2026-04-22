@@ -58,4 +58,9 @@ async def try_submit(
             error_type=type(exc).__name__,
             exc_info=True,
         )
-        return {"method": "manual", "apply_url": apply_url, "error": str(exc)}
+        return {
+            "method": "lever_api",
+            "success": False,
+            "status_code": None,
+            "error": str(exc),
+        }

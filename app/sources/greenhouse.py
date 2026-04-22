@@ -112,9 +112,10 @@ async def submit_application(
         resp = await client.post(url, json=payload)
 
     if resp.status_code in (200, 201):
-        return {"success": True}
+        return {"success": True, "status_code": resp.status_code}
     return {
         "success": False,
+        "status_code": resp.status_code,
         "error": f"HTTP {resp.status_code}: {resp.text[:200]}",
     }
 
@@ -168,6 +169,11 @@ async def try_submit(
             error_type=type(exc).__name__,
             exc_info=True,
         )
-        return {"success": False, "method": "greenhouse_api", "error": str(exc)}
+        return {
+            "success": False,
+            "method": "greenhouse_api",
+            "status_code": None,
+            "error": str(exc),
+        }
     result["method"] = "greenhouse_api"
     return result
