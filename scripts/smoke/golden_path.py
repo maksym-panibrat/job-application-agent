@@ -362,10 +362,12 @@ async def step6_cron_sync(
     if r.status_code != 200:
         return False, {"step": 6, "error": f"Expected 200, got {r.status_code}", "body": body}
 
-    if not isinstance(body, dict) or body.get("status") != "ok":
+    # After PR 4, BudgetExhausted returns 200 + {"status": "budget_exhausted", "resumes_at": ...}
+    # instead of silently returning "ok". Both are valid pass outcomes from prod's perspective.
+    if not isinstance(body, dict) or body.get("status") not in ("ok", "budget_exhausted"):
         return False, {
             "step": 6,
-            "error": 'Expected {"status": "ok", ...}',
+            "error": 'Expected {"status": "ok" | "budget_exhausted", ...}',
             "body": body,
         }
 
@@ -373,6 +375,7 @@ async def step6_cron_sync(
         "step": 6,
         "status": body.get("status"),
         "duration_ms": body.get("duration_ms"),
+        "resumes_at": body.get("resumes_at"),
     }
 
 
