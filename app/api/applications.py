@@ -23,24 +23,67 @@ log = structlog.get_logger()
 router = APIRouter(prefix="/api/applications", tags=["applications"])
 
 
+async def _mark_generation_failed(app_id: uuid.UUID, failure_event: str) -> None:
+    """Open a fresh session and flip ``generating`` -> ``failed``.
+
+    Used as a last-resort recovery path when a background task crashes before
+    the service layer's own try/except can set ``failed`` itself. We only
+    touch the row when it is still ``generating`` to avoid clobbering a
+    terminal state written elsewhere.
+    """
+    from app.database import get_session_factory
+
+    try:
+        factory = get_session_factory()
+        async with factory() as recovery_session:
+            row = await recovery_session.get(Application, app_id)
+            if row is not None and row.generation_status == "generating":
+                row.generation_status = "failed"
+                row.updated_at = datetime.now(UTC)
+                recovery_session.add(row)
+                await recovery_session.commit()
+    except Exception:
+        await log.aexception(failure_event, application_id=str(app_id))
+
+
 async def _generate_in_background(app_id: uuid.UUID, checkpointer) -> None:
-    """Background task: generate materials with its own DB session."""
+    """Background task: generate materials with its own DB session.
+
+    Wraps ``generate_materials`` in a fail-safe recovery block so a crash in
+    session acquisition / imports / the service call itself cannot leave the
+    row pinned in ``generating`` forever.
+    """
     from app.database import get_session_factory
     from app.services.application_service import generate_materials
 
-    factory = get_session_factory()
-    async with factory() as session:
-        await generate_materials(app_id, session, checkpointer=checkpointer)
+    try:
+        factory = get_session_factory()
+        async with factory() as session:
+            await generate_materials(app_id, session, checkpointer=checkpointer)
+    except Exception:
+        await log.aexception("generate.background_crash", application_id=str(app_id))
+        await _mark_generation_failed(app_id, "generate.background_recovery_failed")
 
 
 async def _resume_in_background(app_id: uuid.UUID, decision: dict, checkpointer) -> None:
-    """Background task: resume a paused generation graph with its own DB session."""
+    """Background task: resume a paused generation graph with its own DB session.
+
+    Wraps ``resume_generation`` in a fail-safe recovery block: if anything at
+    all (session acquisition, imports, the service call itself) raises before
+    ``resume_generation``'s internal try/except sets status to ``failed``,
+    we open a fresh session and flip ``generating`` -> ``failed`` so the row
+    never stays pinned in ``generating``.
+    """
     from app.database import get_session_factory
     from app.services.application_service import resume_generation
 
-    factory = get_session_factory()
-    async with factory() as session:
-        await resume_generation(app_id, decision, session, checkpointer=checkpointer)
+    try:
+        factory = get_session_factory()
+        async with factory() as session:
+            await resume_generation(app_id, decision, session, checkpointer=checkpointer)
+    except Exception:
+        await log.aexception("resume.background_crash", application_id=str(app_id))
+        await _mark_generation_failed(app_id, "resume.background_recovery_failed")
 
 
 @router.get("")
