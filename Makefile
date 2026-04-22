@@ -7,7 +7,28 @@
 #   make seed-smoke-user    # seed smoke user into DATABASE_URL
 #   make smoke              # run golden-path smoke test (needs SMOKE_BASE_URL + SMOKE_BEARER_TOKEN)
 
-.PHONY: smoke-token seed-smoke-user smoke help
+.PHONY: migrate migrate-status smoke-token seed-smoke-user smoke help
+
+# ---------------------------------------------------------------------------
+# migrate
+#
+# Thin wrapper over alembic that refuses to run write migrations against a
+# non-local database unless you pass I_KNOW_ITS_PROD=1.  Prevents the foot-gun
+# of running `alembic upgrade head` from a dev laptop while DATABASE_URL still
+# points at prod Neon (the exact cause of commit 28e5ce5's outage).
+#
+# Usage:
+#   make migrate ARGS="upgrade head"
+#   make migrate ARGS="downgrade -1"
+#   I_KNOW_ITS_PROD=1 make migrate ARGS="upgrade head"   # explicit opt-in
+#   make migrate-status                                   # read-only check
+# ---------------------------------------------------------------------------
+migrate:
+	uv run python scripts/alembic_safe.py $(ARGS)
+
+migrate-status:
+	uv run python scripts/alembic_safe.py current
+
 
 # ---------------------------------------------------------------------------
 # smoke-token

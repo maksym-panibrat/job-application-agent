@@ -1,4 +1,30 @@
+import { useState } from 'react'
+
 export default function Landing() {
+  const [error, setError] = useState<string | null>(null)
+  const [pending, setPending] = useState(false)
+
+  // fastapi-users' /auth/google/authorize returns {authorization_url: ...} as
+  // JSON (not a 302 redirect), so a plain <a href> would render the raw JSON
+  // body and dead-end the user. Fetch it, then navigate. The Set-Cookie
+  // (CSRF) on that response is still persisted by the browser since this is
+  // same-origin with Cloud Run.
+  async function startGoogleLogin() {
+    setError(null)
+    setPending(true)
+    try {
+      const res = await fetch('/auth/google/authorize', { credentials: 'same-origin' })
+      if (!res.ok) throw new Error(`authorize returned ${res.status}`)
+      const data = await res.json()
+      if (!data?.authorization_url) throw new Error('missing authorization_url')
+      window.location.href = data.authorization_url
+    } catch (err) {
+      setPending(false)
+      setError('Sign-in is unavailable right now. Please try again in a moment.')
+      console.error('Google OAuth start failed', err)
+    }
+  }
+
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col items-center justify-center gap-8 px-4">
       <div className="text-center max-w-lg">
@@ -8,9 +34,11 @@ export default function Landing() {
           tailored applications generated automatically.
         </p>
       </div>
-      <a
-        href="/auth/google/authorize"
-        className="inline-flex items-center gap-3 px-6 py-3 bg-white border border-gray-300 rounded-lg shadow-sm text-gray-700 font-medium hover:bg-gray-50 transition-colors"
+      <button
+        type="button"
+        onClick={startGoogleLogin}
+        disabled={pending}
+        className="inline-flex items-center gap-3 px-6 py-3 bg-white border border-gray-300 rounded-lg shadow-sm text-gray-700 font-medium hover:bg-gray-50 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
       >
         <svg className="w-5 h-5" viewBox="0 0 24 24">
           <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
@@ -18,8 +46,11 @@ export default function Landing() {
           <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z"/>
           <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
         </svg>
-        Sign in with Google
-      </a>
+        {pending ? 'Redirecting…' : 'Sign in with Google'}
+      </button>
+      {error && (
+        <p role="alert" className="text-sm text-red-600 -mt-4">{error}</p>
+      )}
       <a href="https://github.com/maksym-panibrat/job-application-agent" className="text-sm text-gray-400 hover:text-gray-600">
         View on GitHub
       </a>
