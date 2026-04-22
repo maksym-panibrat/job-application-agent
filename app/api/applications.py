@@ -251,7 +251,10 @@ async def stream_generation_status(
         from app.database import get_session_factory
 
         factory = get_session_factory()
-        for _ in range(60):  # max 5 minutes
+        # Poll the DB for up to 5 minutes (60 × 5s). If you bump this, also bump
+        # GENERATION_POLL_TIMEOUT_MS in frontend/src/pages/ApplicationReview.tsx
+        # (frontend must give up AFTER the server does — currently backend + 30s).
+        for _ in range(60):
             async with factory() as s:
                 a = await s.get(Application, uuid.UUID(app_id))
                 status = a.generation_status if a else "failed"
