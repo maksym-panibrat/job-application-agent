@@ -4,6 +4,7 @@ import jwt
 import structlog
 from fastapi import Depends, HTTPException
 from fastapi.security import OAuth2PasswordBearer
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings, get_settings
@@ -35,8 +36,20 @@ async def get_current_user(
                 hashed_password="",
             )
             session.add(user)
-            await session.commit()
-            await session.refresh(user)
+            try:
+                await session.commit()
+            except IntegrityError:
+                # Concurrent first-hit: another request auto-provisioned the
+                # single user between our SELECT and INSERT. Roll back and
+                # re-fetch — the row is there now. Caught in e2e by
+                # frontend/e2e/auth-and-nav.spec.ts (React StrictMode +
+                # multiple initial /api/* calls hit a fresh DB simultaneously).
+                await session.rollback()
+                user = await session.get(User, SINGLE_USER_ID)
+                if user is None:
+                    raise
+            else:
+                await session.refresh(user)
         return user
 
     if token is None:
