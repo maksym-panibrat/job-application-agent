@@ -1,3 +1,4 @@
+import hmac
 import time
 from collections.abc import Awaitable, Callable
 
@@ -22,7 +23,7 @@ async def verify_secret(
     settings: Settings = Depends(get_cron_settings),
 ) -> None:
     expected = settings.cron_shared_secret.get_secret_value()
-    if x_cron_secret is None or x_cron_secret != expected:
+    if x_cron_secret is None or not hmac.compare_digest(x_cron_secret, expected):
         raise HTTPException(status_code=403, detail="Invalid cron secret")
 
 

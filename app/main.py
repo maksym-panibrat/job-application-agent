@@ -49,6 +49,27 @@ def configure_logging(settings) -> None:
     )
 
 
+_SENSITIVE_HEADERS = {"authorization", "cookie", "x-cron-secret"}
+
+
+def _scrub_sensitive_data(event, hint):
+    """Strip sensitive headers and cookies from Sentry events before transmission."""
+    request = event.get("request")
+    if not request:
+        return event
+    headers = request.get("headers")
+    if headers:
+        request["headers"] = {
+            k: v for k, v in headers.items() if k.lower() not in _SENSITIVE_HEADERS
+        }
+    cookies = request.get("cookies")
+    if cookies:
+        request["cookies"] = {
+            k: v for k, v in cookies.items() if k.lower() not in _SENSITIVE_HEADERS
+        }
+    return event
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = get_settings()
@@ -72,6 +93,8 @@ async def lifespan(app: FastAPI):
                 traces_sample_rate=0.1,
                 environment=settings.environment,
                 release=settings.sentry_release,
+                send_default_pii=False,
+                before_send=_scrub_sensitive_data,
             )
             await log.ainfo(
                 "sentry.enabled",
