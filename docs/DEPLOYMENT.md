@@ -17,7 +17,7 @@ gcloud projects create job-application-agent-493810
 gcloud config set project job-application-agent-493810
 gcloud billing accounts list
 gcloud billing projects link job-application-agent-493810 --billing-account=BILLING_ACCOUNT_ID
-gcloud services enable run.googleapis.com artifactregistry.googleapis.com secretmanager.googleapis.com iamcredentials.googleapis.com cloudbuild.googleapis.com
+gcloud services enable run.googleapis.com artifactregistry.googleapis.com secretmanager.googleapis.com iamcredentials.googleapis.com cloudbuild.googleapis.com clouderrorreporting.googleapis.com
 gcloud artifacts repositories create app --repository-format=docker --location=us-central1
 ```
 
@@ -60,15 +60,7 @@ The deploy workflow probes these with `gcloud secrets describe` and only include
      gcloud secrets create google-oauth-client-secret --replication-policy=automatic --data-file=-
    ```
 
-**Sentry DSN** — error/exception tracking SaaS (<https://sentry.io>). Without this the app relies on Cloud Run logs only. See "Observability without Sentry" below if you don't want Sentry.
-
-1. Sign up at sentry.io, create a project (Platform = Python / FastAPI).
-2. Copy the DSN from **Settings → Client Keys (DSN)** (format: `https://<pubkey>@o<orgId>.ingest.us.sentry.io/<projectId>`).
-3. Store as a GCP secret:
-   ```bash
-   printf "%s" "PASTE_SENTRY_DSN_HERE" | \
-     gcloud secrets create sentry-dsn --replication-policy=automatic --data-file=-
-   ```
+> Error monitoring is handled natively via **GCP Cloud Error Reporting** (see §9). No third-party SaaS DSN required — the API was enabled in §2.
 
 ### 3c. Grant the deploy service account read access
 
@@ -76,7 +68,7 @@ Project-level `roles/secretmanager.secretAccessor` (granted in step 5) covers ne
 
 ```bash
 SA="github-deployer@job-application-agent-493810.iam.gserviceaccount.com"
-for s in google-oauth-client-id google-oauth-client-secret sentry-dsn; do
+for s in google-oauth-client-id google-oauth-client-secret; do
   gcloud secrets add-iam-policy-binding "$s" \
     --member="serviceAccount:$SA" \
     --role="roles/secretmanager.secretAccessor"
@@ -189,32 +181,50 @@ The token is signed with `JWT_SECRET` (from Secret Manager) and valid for 30 day
 
 After next push to main, watch the `smoke-prod` job run. Expected outcome: all 10 steps pass (steps 8a–8d and step 9 are XFAIL placeholders for upstream PRs).
 
-## 9. Observability without Sentry
+## 9. Observability via GCP Cloud Error Reporting
 
-If you skip step 3b's Sentry DSN, structured logs from the FastAPI app go to **Cloud Run logs only**. Diagnose a cron failure like this:
+The app emits structured JSON logs to Cloud Run stdout. Errors get auto-grouped in **GCP Console → Error Reporting** because:
+
+- `app/main.py::_add_cloud_run_severity` tags every log record with `severity` (uppercase) — Cloud Run reads this for its severity badge, and Error Reporting uses it to filter candidate events.
+- On `ERROR` / `CRITICAL` records, the same processor also writes `@type: type.googleapis.com/google.devtools.clouderrorreporting.v1beta1.ReportedErrorEvent` — the marker that tells Error Reporting to ingest the entry as a first-class error event.
+- `structlog.processors.format_exc_info` (also in `configure_logging`) converts `exc_info=True` from `log.aexception` / `log.aerror(..., exc_info=True)` into a readable Python traceback string under `exception`.
+
+### Viewing errors
+
+**Console:** <https://console.cloud.google.com/errors> → select your project. Grouped by exception type + file + line. Each group shows: first-seen, last-seen, event count, affected resources, stack trace, and a link to the source log entry.
+
+**CLI — recent errors:**
 
 ```bash
-# Tail recent app logs
+gcloud logging read 'severity>=ERROR AND resource.type="cloud_run_revision"' \
+  --limit=20 --format=json | jq '.[] | {time: .timestamp, event: .jsonPayload.event, error: .jsonPayload.error, trace: .jsonPayload.exception}'
+```
+
+**CLI — a specific cron failure:**
+
+```bash
+gcloud logging read 'resource.type="cloud_run_revision" AND jsonPayload.event="cron.generation_queue.failed"' \
+  --limit=5 --format=json | jq '.[] | .jsonPayload'
+```
+
+**CLI — tail the app:**
+
+```bash
 gcloud run services logs read api --region=us-central1 --limit=200
-
-# Zero in on a specific cron job
-gcloud run services logs read api --region=us-central1 --limit=500 \
-  | grep -E "cron\.(sync|generation_queue|maintenance)\.(failed|budget_exhausted|completed)"
 ```
 
-Structured events the un-silenced cron handler emits (`app/api/internal_cron.py`):
-- `cron.<name>.started` — every invocation
-- `cron.<name>.completed` — success (plus the task's result fields)
-- `cron.<name>.budget_exhausted` — Gemini quota hit; warning
-- `cron.<name>.failed` — unhandled exception; error with `exc_info=True` (full stack trace)
+### Event catalogue (what the cron handler emits)
 
-**Alternative**: enable GCP Cloud Error Reporting (free, native) — errors with stack traces get auto-grouped in the GCP console. Enable the API once:
+Structured events from `app/api/internal_cron.py::_run_cron` (each record also carries `cron_job=<name>` for filtering):
 
-```bash
-gcloud services enable clouderrorreporting.googleapis.com
-```
+- `cron.<name>.started` — every invocation (INFO)
+- `cron.<name>.completed` — success plus the task's result fields (INFO)
+- `cron.<name>.budget_exhausted` — Gemini monthly quota hit; deliberate 200 response (WARNING)
+- `cron.<name>.failed` — unhandled exception; 500 response with full `exception` stack trace (ERROR → routes to Error Reporting)
 
-Cloud Run stdout logs are already sampled by Error Reporting when they contain `severity=ERROR` (the `_add_cloud_run_severity` structlog processor in `app/main.py:25` already writes that field).
+### Alerting (optional)
+
+Error Reporting can email or webhook you on new error groups or spike thresholds. Configure per-project in the Error Reporting UI → **Notifications**. For Slack/PagerDuty integration, use a Cloud Logging sink to Pub/Sub and wire a webhook from there.
 
 ## Troubleshooting
 
