@@ -95,10 +95,22 @@ async def client(patch_settings, asyncpg_url):
 
     # Attach a sentinel checkpointer — the resume endpoint requires one but
     # we stub the background task so the checkpointer is never actually used.
+    # ``app`` is a module-level singleton so we must restore the prior value
+    # on teardown; otherwise other test files (notably tests/e2e/*) that
+    # reuse the same app end up with this bogus checkpointer and fail when
+    # LangGraph type-checks it.
+    _sentinel = object()
+    _prev_checkpointer = getattr(app.state, "checkpointer", _sentinel)
     app.state.checkpointer = object()
-
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-        yield ac
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            yield ac
+    finally:
+        if _prev_checkpointer is _sentinel:
+            if hasattr(app.state, "checkpointer"):
+                delattr(app.state, "checkpointer")
+        else:
+            app.state.checkpointer = _prev_checkpointer
 
 
 @pytest.fixture(autouse=True)
