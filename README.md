@@ -24,10 +24,11 @@ Resume upload + onboarding chat
 
 - **Conversational onboarding** — chat agent asks about target roles, location, preferences; updates your profile via tool calls; persists conversation state across browser sessions (LangGraph + AsyncPostgresSaver)
 - **Parallel job scoring** — LangGraph `Send` fan-out scores multiple jobs concurrently; results collected via state reducer
-- **Human-in-the-loop generation** — generation graph pauses after producing documents; resumes when you approve or edit in the UI
+- **Human-in-the-loop generation** — generation graph pauses at an `awaiting_review` interrupt after producing documents; `POST /api/applications/{id}/resume` with `approve` or `regenerate` unparks the graph (status lifecycle: `pending → generating → awaiting_review → ready`)
 - **Externalised scheduler** — no in-process scheduler; GitHub Actions cron hits `/internal/cron/*` endpoints (compatible with Cloud Run scale-to-zero)
 - **Budget safety** — Gemini `ResourceExhausted` errors are caught, stored in `llm_status`, surfaced as an amber banner; job collection keeps running
 - **Rate limiting** — Postgres-backed sliding window limits on profile edits, resume uploads, and manual syncs; per-user daily quotas
+- **Observability** — errors flow to GCP Cloud Error Reporting via structlog (`severity=ERROR` + `@type: …ReportedErrorEvent` markers); no third-party SaaS
 
 ## Tech stack
 
