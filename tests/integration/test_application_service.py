@@ -1,13 +1,15 @@
 """
 Integration tests for generate_materials() with a mocked LLM.
 
-Uses FakeListChatModel to avoid real API calls while exercising
-the full DB read/write path through the generation pipeline.
+Uses FakeListChatModel (injected via ENVIRONMENT=test in get_llm()) to avoid
+real API calls while exercising the full DB read/write path through the
+generation pipeline.
 """
 
 import uuid
 
 import pytest
+from langgraph.checkpoint.memory import MemorySaver
 from sqlmodel import select
 
 from app.models.application import Application, GeneratedDocument
@@ -106,15 +108,16 @@ async def test_save_documents_upserts_on_retry(db_session):
 
 
 @pytest.mark.asyncio
-async def test_generate_materials_direct_path_with_fake_llm(db_session):
+async def test_generate_materials_graph_path_with_fake_llm(db_session):
     """
-    generate_materials() without checkpointer falls back to _generate_direct().
-    Patch get_llm / ChatAnthropic to use FakeListChatModel.
+    generate_materials() exercises the LangGraph path (the only path since
+    PR 9a removed _generate_direct). ENVIRONMENT=test activates the
+    FakeListChatModel shim in get_llm(), so no real API calls are made.
     """
     _, profile, _, application = await _seed_db(db_session)
 
-    # ENVIRONMENT=test activates the FakeListChatModel shim in get_llm()
-    await generate_materials(application.id, db_session, checkpointer=None)
+    checkpointer = MemorySaver()
+    await generate_materials(application.id, db_session, checkpointer=checkpointer)
 
     await db_session.refresh(application)
     assert application.generation_status == "ready"
@@ -138,7 +141,8 @@ async def test_generate_materials_max_attempts_guard(db_session):
     await db_session.commit()
 
     # Should return without setting status to "ready"
-    await generate_materials(application.id, db_session, checkpointer=None)
+    checkpointer = MemorySaver()
+    await generate_materials(application.id, db_session, checkpointer=checkpointer)
 
     await db_session.refresh(application)
     # Status unchanged (still "none" — model default since generation never started)

@@ -13,7 +13,6 @@ import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
-from app.agents.llm_safe import safe_ainvoke
 from app.models.application import Application, GeneratedDocument
 from app.models.job import Job
 from app.models.user_profile import UserProfile
@@ -66,7 +65,15 @@ async def generate_materials(
     """
     Background task: generate tailored resume, cover letter, custom answers.
     Updates generation_status on the Application row.
+
+    A LangGraph checkpointer is required — there is no direct-generation
+    fallback. Callers should resolve the checkpointer from
+    ``request.app.state.checkpointer`` (initialized in the FastAPI lifespan).
     """
+    if checkpointer is None:
+        raise RuntimeError(
+            "checkpointer required — generate_materials cannot run without a LangGraph checkpointer"
+        )
     t0 = time.perf_counter()
     await log.ainfo("generation.started", application_id=str(application_id))
     app = await session.get(Application, application_id)
@@ -98,51 +105,47 @@ async def generate_materials(
         experiences = await get_work_experiences(profile.id, session)
         profile_text = format_profile_text(profile, skills, experiences)
 
-        # Use generation agent via LangGraph if checkpointer available
-        if checkpointer is not None:
-            from app.agents.generation_agent import build_graph
+        # Use generation agent via LangGraph
+        from app.agents.generation_agent import build_graph
 
-            graph = build_graph(checkpointer)
-            thread_id = f"gen-{application_id}"
-            config = {"configurable": {"thread_id": thread_id}}
+        graph = build_graph(checkpointer)
+        thread_id = f"gen-{application_id}"
+        config = {"configurable": {"thread_id": thread_id}}
 
-            custom_questions: list = []
-            if job.ats_type == "greenhouse" and job.supports_api_apply and job.apply_url:
-                from app.sources.greenhouse import (
-                    GreenhouseUnavailable,
-                    get_job_questions_by_url,
+        custom_questions: list = []
+        if job.ats_type == "greenhouse" and job.supports_api_apply and job.apply_url:
+            from app.sources.greenhouse import (
+                GreenhouseUnavailable,
+                get_job_questions_by_url,
+            )
+
+            try:
+                custom_questions = await get_job_questions_by_url(job.apply_url)
+            except GreenhouseUnavailable as exc:
+                await log.awarning(
+                    "generation.greenhouse_questions_unavailable",
+                    application_id=str(application_id),
+                    apply_url=job.apply_url,
+                    error=str(exc),
                 )
+                custom_questions = []
 
-                try:
-                    custom_questions = await get_job_questions_by_url(job.apply_url)
-                except GreenhouseUnavailable as exc:
-                    await log.awarning(
-                        "generation.greenhouse_questions_unavailable",
-                        application_id=str(application_id),
-                        apply_url=job.apply_url,
-                        error=str(exc),
-                    )
-                    custom_questions = []
+        initial_state = {
+            "application_id": str(application_id),
+            "profile_text": profile_text,
+            "job_title": job.title,
+            "job_company": job.company_name,
+            "job_description": job.description_md or "",
+            "base_resume_md": profile.base_resume_md or "",
+            "custom_questions": custom_questions,
+            "documents": [],
+            "generation_status": "pending",
+            "user_decision": {},
+        }
 
-            initial_state = {
-                "application_id": str(application_id),
-                "profile_text": profile_text,
-                "job_title": job.title,
-                "job_company": job.company_name,
-                "job_description": job.description_md or "",
-                "base_resume_md": profile.base_resume_md or "",
-                "custom_questions": custom_questions,
-                "documents": [],
-                "generation_status": "pending",
-                "user_decision": {},
-            }
-
-            # Run until interrupt (before review node)
-            await graph.ainvoke(initial_state, config)
-            # Graph is now paused at review interrupt — docs saved by save_documents_node
-        else:
-            # Fallback: direct generation without checkpointer (no interrupt/resume)
-            await _generate_direct(app, job, profile, profile_text, session)
+        # Run until interrupt (before review node)
+        await graph.ainvoke(initial_state, config)
+        # Graph is now paused at review interrupt — docs saved by save_documents_node
 
     except Exception as exc:
         await log.aexception(
@@ -168,74 +171,3 @@ async def generate_materials(
         status=app.generation_status,
         duration_ms=int((time.perf_counter() - t0) * 1000),
     )
-
-
-async def _generate_direct(
-    app: Application,
-    job: Job,
-    profile: UserProfile,
-    profile_text: str,
-    session: AsyncSession,
-) -> None:
-    """
-    Direct generation path (no LangGraph checkpointer).
-    Used when checkpointer is not available (e.g. unit tests).
-    """
-    from langchain_core.messages import HumanMessage
-    from langchain_google_genai import ChatGoogleGenerativeAI
-
-    from app.agents.generation_agent import (
-        COVER_LETTER_PROMPT,
-        RESUME_PROMPT,
-        _extract_text,
-        truncate_description,
-    )
-    from app.config import get_settings
-
-    settings = get_settings()
-    if settings.environment == "test":
-        from app.agents.test_llm import get_fake_llm
-
-        llm = get_fake_llm("generation")
-    else:
-        llm = ChatGoogleGenerativeAI(
-            model=settings.llm_generation_model,
-            google_api_key=settings.google_api_key.get_secret_value(),
-        )
-    model_name = settings.llm_generation_model
-
-    documents = []
-
-    # Resume
-    resume_prompt = RESUME_PROMPT.format(
-        base_resume_md=(profile.base_resume_md or "")[:6000],
-        title=job.title,
-        company=job.company_name,
-        description=truncate_description(job.description_md or ""),
-    )
-    resume_result = await safe_ainvoke(llm, [HumanMessage(content=resume_prompt)])
-    documents.append(
-        {
-            "doc_type": "tailored_resume",
-            "content_md": _extract_text(resume_result),
-            "generation_model": model_name,
-        }
-    )
-
-    # Cover letter
-    cl_prompt = COVER_LETTER_PROMPT.format(
-        profile_text=profile_text[:3000],
-        title=job.title,
-        company=job.company_name,
-        description=truncate_description(job.description_md or ""),
-    )
-    cl_result = await safe_ainvoke(llm, [HumanMessage(content=cl_prompt)])
-    documents.append(
-        {
-            "doc_type": "cover_letter",
-            "content_md": _extract_text(cl_result),
-            "generation_model": model_name,
-        }
-    )
-
-    await save_documents(str(app.id), documents, session)

@@ -92,7 +92,8 @@ async def test_save_documents_upserts_on_retry(db_session):
 @pytest.mark.asyncio
 async def test_generate_materials_not_found_no_error(db_session):
     """generate_materials() with a nonexistent UUID returns silently."""
-    await generate_materials(uuid.uuid4(), db_session, checkpointer=None)
+    checkpointer = MemorySaver()
+    await generate_materials(uuid.uuid4(), db_session, checkpointer=checkpointer)
     # No exception = pass
 
 
@@ -104,7 +105,8 @@ async def test_generate_materials_max_attempts_skipped(db_session):
     db_session.add(app_row)
     await db_session.commit()
 
-    await generate_materials(app_row.id, db_session, checkpointer=None)
+    checkpointer = MemorySaver()
+    await generate_materials(app_row.id, db_session, checkpointer=checkpointer)
 
     await db_session.refresh(app_row)
     # status should still be the default "none" (not "generating" or "ready")
@@ -113,35 +115,12 @@ async def test_generate_materials_max_attempts_skipped(db_session):
 
 
 @pytest.mark.asyncio
-async def test_generate_materials_sets_status_to_ready(db_session):
-    """
-    generate_materials() with checkpointer=None uses _generate_direct.
-    Since ENVIRONMENT=test, get_fake_llm("generation") is used — no real LLM call.
-    After completion: generation_status="ready" and GeneratedDocument rows exist.
-    """
-    app_row, _, _ = await _seed_application(db_session)
-
-    await generate_materials(app_row.id, db_session, checkpointer=None)
-
-    await db_session.refresh(app_row)
-    assert app_row.generation_status == "ready"
-
-    result = await db_session.execute(
-        select(GeneratedDocument).where(GeneratedDocument.application_id == app_row.id)
-    )
-    docs = result.scalars().all()
-    assert len(docs) >= 2  # at minimum: tailored_resume + cover_letter
-    doc_types = {d.doc_type for d in docs}
-    assert "tailored_resume" in doc_types
-    assert "cover_letter" in doc_types
-
-
-@pytest.mark.asyncio
 async def test_generate_materials_graph_path_sets_ready(db_session):
     """
     generate_materials() with a MemorySaver checkpointer exercises the LangGraph
-    code path (the production route). Since ENVIRONMENT=test, the fake LLM is used.
-    Verifies that the graph path correctly saves documents and sets status to "ready".
+    code path (the only route since PR 9a removed _generate_direct). Since
+    ENVIRONMENT=test, the fake LLM is used. Verifies that the graph path
+    correctly saves documents and sets status to "ready".
     """
     app_row, _, _ = await _seed_application(db_session)
 

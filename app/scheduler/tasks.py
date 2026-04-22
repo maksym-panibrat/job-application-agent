@@ -53,8 +53,13 @@ async def run_job_sync() -> dict:
     }
 
 
-async def run_generation_queue() -> dict:
-    """Generate materials for applications stuck in pending status. Returns a summary dict."""
+async def run_generation_queue(checkpointer) -> dict:
+    """Generate materials for applications stuck in pending status. Returns a summary dict.
+
+    ``checkpointer`` must be a LangGraph checkpointer (typically
+    ``request.app.state.checkpointer`` initialized in the FastAPI lifespan).
+    ``generate_materials`` raises ``RuntimeError`` if it is None.
+    """
     from app.database import get_session_factory
     from app.models.application import Application
     from app.services.application_service import generate_materials
@@ -79,7 +84,7 @@ async def run_generation_queue() -> dict:
     for app_id in app_ids:
         try:
             async with factory() as session:
-                await generate_materials(app_id, session)
+                await generate_materials(app_id, session, checkpointer=checkpointer)
                 succeeded += 1
         except Exception as exc:
             failed += 1

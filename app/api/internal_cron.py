@@ -3,7 +3,7 @@ import time
 from collections.abc import Awaitable, Callable
 
 import structlog
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
 
 from app.agents.llm_safe import BudgetExhausted
 from app.config import Settings, get_settings
@@ -77,8 +77,17 @@ async def cron_sync():
 
 
 @router.post("/generation-queue", dependencies=[Depends(verify_secret)])
-async def cron_generation_queue():
-    return await _run_cron("generation_queue", run_generation_queue)
+async def cron_generation_queue(request: Request):
+    # generate_materials requires a LangGraph checkpointer; resolve it from the
+    # app state (initialized in the FastAPI lifespan) and 503 loudly if missing.
+    checkpointer = getattr(request.app.state, "checkpointer", None)
+    if checkpointer is None:
+        raise HTTPException(status_code=503, detail="checkpointer not initialized")
+
+    async def task() -> dict:
+        return await run_generation_queue(checkpointer)
+
+    return await _run_cron("generation_queue", task)
 
 
 @router.post("/maintenance", dependencies=[Depends(verify_secret)])
