@@ -13,7 +13,8 @@ class Application(SQLModel, table=True):
     job_id: uuid.UUID = Field(foreign_key="jobs.id")
     profile_id: uuid.UUID = Field(foreign_key="user_profiles.id")
     status: str = "pending_review"  # pending_review, approved, applied, dismissed, auto_rejected
-    generation_status: str = "none"  # none, pending, generating, ready, failed
+    # Values: none, pending, generating, awaiting_review, ready, failed
+    generation_status: str = "none"
     generation_attempts: int = 0
     match_score: float | None = None
     match_rationale: str | None = None
