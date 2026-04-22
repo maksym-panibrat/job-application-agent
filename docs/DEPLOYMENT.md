@@ -26,15 +26,19 @@ gcloud artifacts repositories create app --repository-format=docker --location=u
 ### 3a. Required (deploy fails without these)
 
 ```bash
+# Gemini key — generate at https://aistudio.google.com/apikey
 printf "%s" "YOUR_GOOGLE_AI_STUDIO_KEY" | gcloud secrets create google-api-key --data-file=-
+# Adzuna job-search API
 printf "%s" "YOUR_ADZUNA_APP_ID" | gcloud secrets create adzuna-app-id --data-file=-
 printf "%s" "YOUR_ADZUNA_API_KEY" | gcloud secrets create adzuna-api-key --data-file=-
+# Neon Postgres pooled URL (see §1)
 printf "%s" "postgresql+asyncpg://..." | gcloud secrets create database-url --data-file=-
+# 32-byte randoms for the cron header and JWT signing key
 printf "%s" "$(openssl rand -hex 32)" | gcloud secrets create cron-shared-secret --data-file=-
 printf "%s" "$(openssl rand -hex 32)" | gcloud secrets create jwt-secret --data-file=-
 ```
 
-Verify the cron secret (copy value for GitHub secrets):
+Fetch the cron secret value — it also goes into GitHub Actions as `CRON_SHARED_SECRET` (§4):
 
 ```bash
 gcloud secrets versions access latest --secret=cron-shared-secret
@@ -60,11 +64,11 @@ The deploy workflow probes these with `gcloud secrets describe` and only include
      gcloud secrets create google-oauth-client-secret --replication-policy=automatic --data-file=-
    ```
 
-> Error monitoring is handled natively via **GCP Cloud Error Reporting** (see §9). No third-party SaaS DSN required — the API was enabled in §2.
+> Error monitoring is handled natively via **GCP Cloud Error Reporting** (§8). No third-party SaaS DSN required — the API was enabled in §2.
 
 ### 3c. Grant the deploy service account read access
 
-Project-level `roles/secretmanager.secretAccessor` (granted in step 5) covers new secrets automatically. If you see `Permission denied` at deploy time on a specific secret, bind per-secret:
+Project-level `roles/secretmanager.secretAccessor` (granted in §5) covers new secrets automatically. If a deploy still fails with `Permission denied` on a specific secret, bind per-secret:
 
 ```bash
 SA="github-deployer@job-application-agent-493810.iam.gserviceaccount.com"
@@ -82,11 +86,11 @@ Add these in **Settings → Secrets and variables → Actions** (or via `gh secr
 | Secret | Required? | Value |
 |---|---|---|
 | `GCP_PROJECT_ID` | yes | `job-application-agent-493810` |
-| `GCP_WORKLOAD_IDENTITY_PROVIDER` | yes | Output from step 5 below |
+| `GCP_WORKLOAD_IDENTITY_PROVIDER` | yes | Output from §5 |
 | `GCP_SERVICE_ACCOUNT` | yes | `github-deployer@job-application-agent-493810.iam.gserviceaccount.com` |
 | `CRON_SHARED_SECRET` | yes | `gcloud secrets versions access latest --secret=cron-shared-secret` |
-| `CLOUD_RUN_URL` | yes (after step 7) | Cloud Run service URL from step 7 |
-| `SMOKE_BEARER_TOKEN` | only if smoke-prod CI enabled | See step 8 |
+| `CLOUD_RUN_URL` | after first deploy | Cloud Run service URL (§6) |
+| `SMOKE_BEARER_TOKEN` | smoke-prod CI only | Generated JWT (§7b) |
 
 ## 5. Workload Identity Federation (no JSON key)
 
@@ -122,11 +126,7 @@ gcloud iam workload-identity-pools providers describe github-provider \
   --location=global --workload-identity-pool=github-pool --format="value(name)"
 ```
 
-## 6. Google AI Studio API key
-
-Visit <https://aistudio.google.com/apikey>, generate a key, and store it as the `google-api-key` secret (step 3).
-
-## 7. After first deploy
+## 6. After first deploy
 
 Get the Cloud Run service URL and add it to GitHub secrets as `CLOUD_RUN_URL`:
 
@@ -153,11 +153,11 @@ gcloud run jobs execute seed-demo --region us-central1 --wait
 
 **Note:** `PYTHONPATH=/app` makes the `app` package importable. The full path to the venv Python is required because Cloud Run's default `PATH` doesn't include the venv.
 
-## 8. Smoke-prod CI wiring (optional)
+## 7. Smoke-prod CI wiring (optional)
 
-The `smoke-prod` GitHub Actions job (`.github/workflows/ci.yml`) runs `scripts/smoke/golden_path.py` against the deployed Cloud Run URL after every deploy. If you want this to work, three one-time setup steps:
+The `smoke-prod` GitHub Actions job (`.github/workflows/ci.yml`) runs `scripts/smoke/golden_path.py` against the deployed Cloud Run URL after every deploy. Two one-time setup steps, then a validation:
 
-### 8a. Seed the smoke user in the prod DB
+### 7a. Seed the smoke user in the prod DB
 
 ```bash
 cd <repo>
@@ -167,7 +167,7 @@ DATABASE_URL=$(gcloud secrets versions access latest --secret=database-url) \
 
 Idempotent — safe to re-run. Creates `smoke@panibrat.com` with UUID `aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee` and a minimal profile the generation agent can consume.
 
-### 8b. Generate a long-lived JWT and add it to GitHub Actions
+### 7b. Generate a long-lived JWT and add it to GitHub Actions
 
 ```bash
 cd <repo>
@@ -177,11 +177,11 @@ gh secret list --repo <owner>/<repo> | grep SMOKE_BEARER_TOKEN   # verify
 
 The token is signed with `JWT_SECRET` (from Secret Manager) and valid for 30 days. Rotate on a calendar reminder, or extend the lifetime in `scripts/make_smoke_token.py` if 30 days is too short.
 
-### 8c. Validate
+### 7c. Validate
 
-After next push to main, watch the `smoke-prod` job run. Expected outcome: all 10 steps pass (steps 8a–8d and step 9 are XFAIL placeholders for upstream PRs).
+Push to main and watch the `smoke-prod` job run. Expected outcome: all steps pass except the generation-flow sub-steps (`8a`–`8d`) and the submit step (`9`), which are XFAIL until the backend flows they test are fixed.
 
-## 9. Observability via GCP Cloud Error Reporting
+## 8. Observability via GCP Cloud Error Reporting
 
 The app emits structured JSON logs to Cloud Run stdout. Errors get auto-grouped in **GCP Console → Error Reporting** because:
 
@@ -226,92 +226,81 @@ Structured events from `app/api/internal_cron.py::_run_cron` (each record also c
 
 Error Reporting can email or webhook you on new error groups or spike thresholds. Configure per-project in the Error Reporting UI → **Notifications**. For Slack/PagerDuty integration, use a Cloud Logging sink to Pub/Sub and wire a webhook from there.
 
-## 10. Manual actions checklist
+## 9. Manual actions checklist
 
-Not everything is automated — the CI pipeline can provision Cloud Run revisions and run Alembic, but these steps happen outside that loop and are easy to miss.
+CI can build images, run Alembic, and roll Cloud Run revisions. Everything below happens outside that loop.
 
-### One-time, before first deploy
+### First-time provisioning (in order)
 
-| # | Action | Reference |
+1. Neon project + `DATABASE_URL` — §1
+2. `gcloud projects create` + billing + `gcloud services enable ...` — §2
+3. Required secrets in Secret Manager — §3a
+4. Service account + Workload Identity Federation pool/provider — §5
+5. Repo secrets in GitHub (`GCP_*`, `CRON_SHARED_SECRET`) — §4
+6. Push to `main` — first CI run builds image, runs Alembic, deploys
+7. Add `CLOUD_RUN_URL` GitHub secret from the deployed service URL — §6
+8. (Optional) run the demo seed Cloud Run Job — §6
+
+### Optional features
+
+| Feature | Setup | Reference |
 |---|---|---|
-| 1 | Create the Neon project and capture `DATABASE_URL` | §1 |
-| 2 | `gcloud projects create` + billing + `gcloud services enable` (includes `clouderrorreporting.googleapis.com`) | §2 |
-| 3 | Create required secrets in Secret Manager: `google-api-key`, `adzuna-app-id`, `adzuna-api-key`, `database-url`, `cron-shared-secret`, `jwt-secret` | §3a |
-| 4 | Create the `github-deployer` service account + Workload Identity Federation pool/provider | §5 |
-| 5 | Add repo secrets in GitHub (`GCP_PROJECT_ID`, `GCP_WORKLOAD_IDENTITY_PROVIDER`, `GCP_SERVICE_ACCOUNT`, `CRON_SHARED_SECRET`) | §4 |
-| 6 | Grab a Google AI Studio API key and populate `google-api-key` | §6 |
-| 7 | Push to `main` — first CI run builds image, applies Alembic migrations, deploys to Cloud Run | — |
-| 8 | Capture Cloud Run URL and add as `CLOUD_RUN_URL` GitHub secret | §7 |
-| 9 | Run the demo seed job once if you want fixtures in the DB | §7 |
-
-### Optional, enable as needed
-
-| # | Action | When | Reference |
-|---|---|---|---|
-| A | Create Google OAuth client (consent screen + Web app credentials); store client id + secret in Secret Manager | When you want real Google sign-in (vs single-user mode) | §3b |
-| B | After first deploy, add the Cloud Run URL to the Authorized redirect URIs of the OAuth client (`https://api-<hash>-uc.a.run.app/auth/google/callback`) | Immediately after (A) | §3b |
-| C | Seed the smoke user in the prod DB (`scripts/seed_smoke_user.py`) | Before enabling smoke-prod CI | §8a |
-| D | Generate `SMOKE_BEARER_TOKEN` with `make smoke-token` and set it as a GitHub Actions secret | Before enabling smoke-prod CI | §8b |
-| E | Configure Error Reporting notifications (email or Pub/Sub → Slack/PagerDuty) | When you want alerts instead of polling the UI | §9 |
+| Google sign-in (vs single-user mode) | Create OAuth client + store `google-oauth-client-{id,secret}` in Secret Manager; register the Cloud Run callback URL as an Authorized redirect URI | §3b |
+| smoke-prod CI assertions against prod | Seed smoke user in prod DB; generate `SMOKE_BEARER_TOKEN` and set in GHA secrets | §7a, §7b |
+| Email / webhook alerts on errors | Error Reporting → Notifications (or Cloud Logging sink → Pub/Sub for Slack/PagerDuty) | §8 |
 
 ### Ongoing maintenance
 
-| Cadence | Action | Command / reference |
+| Cadence | Action | Notes |
 |---|---|---|
 | Every 30 days | Rotate `SMOKE_BEARER_TOKEN` (JWTs expire) | `make smoke-token \| tail -1 \| gh secret set SMOKE_BEARER_TOKEN` |
-| Quarterly | Rotate `cron-shared-secret` in Secret Manager + update the `CRON_SHARED_SECRET` GitHub Actions secret | `openssl rand -hex 32 \| gcloud secrets versions add cron-shared-secret --data-file=-` then mirror to `gh secret set CRON_SHARED_SECRET` |
-| Quarterly | Rotate `jwt-secret` (**breaks all existing user sessions**; SMOKE_BEARER_TOKEN must be regenerated after this) | `openssl rand -hex 32 \| gcloud secrets versions add jwt-secret --data-file=-`; then regenerate smoke token per above |
-| When Cloud Run URL changes | Update `CLOUD_RUN_URL` GitHub secret and any OAuth Authorized redirect URIs | See §7, §3b |
-| When adding a new secret to Secret Manager | Grant the deploy service account `roles/secretmanager.secretAccessor` on it | See §3c |
-| On new Gemini monthly quota reset | No action — `BudgetExhausted` warnings stop appearing in Error Reporting automatically | — |
+| Quarterly | Rotate `cron-shared-secret`, then mirror to `CRON_SHARED_SECRET` in GHA | `openssl rand -hex 32 \| gcloud secrets versions add cron-shared-secret --data-file=-` |
+| Quarterly | Rotate `jwt-secret` | **Invalidates every active session.** SMOKE_BEARER_TOKEN must be regenerated afterward |
+| On Cloud Run URL change | Update `CLOUD_RUN_URL` (§4) and any OAuth redirect URIs (§3b) | Cloud Run URLs are stable across deploys; this only changes if the service name or region changes |
 
-### Verifying everything is wired
+### Post-provisioning verification
 
-After initial provisioning, a clean run of the pipeline should show:
+Run this after initial setup to confirm everything is wired:
 
 ```bash
-# 1. Main CI is green
-gh run list --workflow=ci.yml --branch=main --limit=1 --json conclusion
+URL=$(gcloud run services describe api --region=us-central1 --format='value(status.url)')
+SECRET=$(gcloud secrets versions access latest --secret=cron-shared-secret)
 
-# 2. All jobs ran (not skipped)
-gh run view --json jobs $(gh run list --workflow=ci.yml --branch=main --limit=1 --json databaseId -q '.[0].databaseId')
+# Latest main CI run is green
+gh run list --workflow=ci.yml --branch=main --limit=1 --json conclusion,status
 
-# 3. Cloud Run URL is reachable
-curl -s "$(gcloud run services describe api --region=us-central1 --format='value(status.url)')/health"
+# /health responds
+curl -s "$URL/health"
 # → {"status":"ok","environment":"production",...}
 
-# 4. Cron endpoint accepts the shared secret
-curl -s -X POST -H "X-Cron-Secret: $(gcloud secrets versions access latest --secret=cron-shared-secret)" \
-  "$(gcloud run services describe api --region=us-central1 --format='value(status.url)')/internal/cron/maintenance"
+# Cron endpoint accepts the shared secret
+curl -s -X POST -H "X-Cron-Secret: $SECRET" "$URL/internal/cron/maintenance"
 # → {"status":"ok","duration_ms":...,...}
-
-# 5. An error appears in Error Reporting within ~1 minute of happening
-# (check after the first real 500: https://console.cloud.google.com/errors)
 ```
+
+After the first real 500 occurs, it should appear in <https://console.cloud.google.com/errors> within ~1 minute.
 
 ## Troubleshooting
 
-### `forbidden from accessing the bucket [*_cloudbuild]` during deploy
-
-Cloud Build needs `roles/storage.admin` on the service account (included in step 5 above). If you provisioned before this was documented, add it manually:
+If the deploy service account is missing an IAM role added in §5 (common when provisioned before a role was added to the doc):
 
 ```bash
-gcloud projects add-iam-policy-binding job-application-agent-493810 \
-  --member="serviceAccount:github-deployer@job-application-agent-493810.iam.gserviceaccount.com" \
-  --role="roles/storage.admin"
+PROJECT="job-application-agent-493810"
+SA="github-deployer@${PROJECT}.iam.gserviceaccount.com"
+# Replace <role> with the missing one from the error, e.g. roles/storage.admin
+gcloud projects add-iam-policy-binding "$PROJECT" \
+  --member="serviceAccount:$SA" --role="<role>"
 ```
 
-### `This tool can only stream logs if you are Viewer/Owner` during deploy
+Common offenders surfaced by Cloud Run / Cloud Build errors:
 
-`gcloud builds submit` needs `roles/logging.viewer` to stream build logs. If you provisioned before this was documented, add it manually:
+| Error fragment | Missing role |
+|---|---|
+| `forbidden from accessing the bucket [*_cloudbuild]` | `roles/storage.admin` |
+| `can only stream logs if you are Viewer/Owner` | `roles/logging.viewer` |
+| `Secret projects/.../secrets/<name>/versions/latest was not found` | Secret doesn't exist yet (§3) or SA lacks `roles/secretmanager.secretAccessor` on it (§3c) |
 
-```bash
-gcloud projects add-iam-policy-binding job-application-agent-493810 \
-  --member="serviceAccount:github-deployer@job-application-agent-493810.iam.gserviceaccount.com" \
-  --role="roles/logging.viewer"
-```
-
-After granting any missing role, re-run the failed GitHub Actions deploy job:
+Re-run the failed CI after granting the role:
 
 ```bash
 gh run rerun <run-id> --failed --repo maksym-panibrat/job-application-agent
