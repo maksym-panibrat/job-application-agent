@@ -57,6 +57,13 @@ async def test_app(asyncpg_url, psycopg_url, monkeypatch):
     monkeypatch.setenv("ADZUNA_APP_ID", "fake-app-id")
     monkeypatch.setenv("ADZUNA_API_KEY", "fake-api-key")
     monkeypatch.setenv("JSEARCH_API_KEY", "fake-jsearch-key")
+    # Disable public sources so e2e tests only see sources explicitly mocked
+    # in the test (adzuna, jsearch). Without this, job_sync_service hits the
+    # real remotive/remoteok/arbeitnow HTTP APIs, polluting assertions.
+    monkeypatch.setenv("REMOTIVE_ENABLED", "false")
+    monkeypatch.setenv("REMOTEOK_ENABLED", "false")
+    monkeypatch.setenv("ARBEITNOW_ENABLED", "false")
+    monkeypatch.setenv("GREENHOUSE_BOARD_ENABLED", "false")
 
     # Reset settings singleton so the env vars above take effect
     import app.config as cfg
