@@ -23,6 +23,8 @@ gcloud artifacts repositories create app --repository-format=docker --location=u
 
 ## 3. Secrets in Secret Manager
 
+### 3a. Required (deploy fails without these)
+
 ```bash
 printf "%s" "YOUR_GOOGLE_AI_STUDIO_KEY" | gcloud secrets create google-api-key --data-file=-
 printf "%s" "YOUR_ADZUNA_APP_ID" | gcloud secrets create adzuna-app-id --data-file=-
@@ -38,17 +40,61 @@ Verify the cron secret (copy value for GitHub secrets):
 gcloud secrets versions access latest --secret=cron-shared-secret
 ```
 
+### 3b. Optional (deploy succeeds without; features stay off until created)
+
+The deploy workflow probes these with `gcloud secrets describe` and only includes them in `--set-secrets` if present. Create whichever you want enabled.
+
+**Google OAuth** — required for real Google sign-in. Without these, the app runs with `AUTH_ENABLED=false` (single-user mode, not suitable for multi-user prod).
+
+1. Go to <https://console.cloud.google.com/apis/credentials> (same project). Configure the OAuth consent screen (one-time: User Type = External, app name = Job Application Agent, scopes = `email openid profile`, test users = your email).
+2. Create credentials → OAuth client ID → Web application.
+3. Authorized redirect URI (after first deploy, replace with your actual Cloud Run URL):
+   ```
+   https://api-<hash>-uc.a.run.app/auth/google/callback
+   ```
+4. Copy the Client ID and Client secret, then:
+   ```bash
+   printf "%s" "PASTE_CLIENT_ID_HERE" | \
+     gcloud secrets create google-oauth-client-id --replication-policy=automatic --data-file=-
+   printf "%s" "PASTE_CLIENT_SECRET_HERE" | \
+     gcloud secrets create google-oauth-client-secret --replication-policy=automatic --data-file=-
+   ```
+
+**Sentry DSN** — error/exception tracking SaaS (<https://sentry.io>). Without this the app relies on Cloud Run logs only. See "Observability without Sentry" below if you don't want Sentry.
+
+1. Sign up at sentry.io, create a project (Platform = Python / FastAPI).
+2. Copy the DSN from **Settings → Client Keys (DSN)** (format: `https://<pubkey>@o<orgId>.ingest.us.sentry.io/<projectId>`).
+3. Store as a GCP secret:
+   ```bash
+   printf "%s" "PASTE_SENTRY_DSN_HERE" | \
+     gcloud secrets create sentry-dsn --replication-policy=automatic --data-file=-
+   ```
+
+### 3c. Grant the deploy service account read access
+
+Project-level `roles/secretmanager.secretAccessor` (granted in step 5) covers new secrets automatically. If you see `Permission denied` at deploy time on a specific secret, bind per-secret:
+
+```bash
+SA="github-deployer@job-application-agent-493810.iam.gserviceaccount.com"
+for s in google-oauth-client-id google-oauth-client-secret sentry-dsn; do
+  gcloud secrets add-iam-policy-binding "$s" \
+    --member="serviceAccount:$SA" \
+    --role="roles/secretmanager.secretAccessor"
+done
+```
+
 ## 4. GitHub repo secrets
 
-Add these in **Settings → Secrets and variables → Actions**:
+Add these in **Settings → Secrets and variables → Actions** (or via `gh secret set <name>`):
 
-| Secret | Value |
-|---|---|
-| `GCP_PROJECT_ID` | `job-application-agent-493810` |
-| `GCP_WORKLOAD_IDENTITY_PROVIDER` | Output from step 5 below |
-| `GCP_SERVICE_ACCOUNT` | `github-deployer@job-application-agent-493810.iam.gserviceaccount.com` |
-| `CRON_SHARED_SECRET` | Output of `gcloud secrets versions access latest --secret=cron-shared-secret` |
-| `CLOUD_RUN_URL` | Add after first deploy (step 7) |
+| Secret | Required? | Value |
+|---|---|---|
+| `GCP_PROJECT_ID` | yes | `job-application-agent-493810` |
+| `GCP_WORKLOAD_IDENTITY_PROVIDER` | yes | Output from step 5 below |
+| `GCP_SERVICE_ACCOUNT` | yes | `github-deployer@job-application-agent-493810.iam.gserviceaccount.com` |
+| `CRON_SHARED_SECRET` | yes | `gcloud secrets versions access latest --secret=cron-shared-secret` |
+| `CLOUD_RUN_URL` | yes (after step 7) | Cloud Run service URL from step 7 |
+| `SMOKE_BEARER_TOKEN` | only if smoke-prod CI enabled | See step 8 |
 
 ## 5. Workload Identity Federation (no JSON key)
 
@@ -114,6 +160,61 @@ gcloud run jobs execute seed-demo --region us-central1 --wait
 ```
 
 **Note:** `PYTHONPATH=/app` makes the `app` package importable. The full path to the venv Python is required because Cloud Run's default `PATH` doesn't include the venv.
+
+## 8. Smoke-prod CI wiring (optional)
+
+The `smoke-prod` GitHub Actions job (`.github/workflows/ci.yml`) runs `scripts/smoke/golden_path.py` against the deployed Cloud Run URL after every deploy. If you want this to work, three one-time setup steps:
+
+### 8a. Seed the smoke user in the prod DB
+
+```bash
+cd <repo>
+DATABASE_URL=$(gcloud secrets versions access latest --secret=database-url) \
+  uv run python scripts/seed_smoke_user.py
+```
+
+Idempotent — safe to re-run. Creates `smoke@panibrat.com` with UUID `aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee` and a minimal profile the generation agent can consume.
+
+### 8b. Generate a long-lived JWT and add it to GitHub Actions
+
+```bash
+cd <repo>
+make smoke-token | tail -1 | gh secret set SMOKE_BEARER_TOKEN --repo <owner>/<repo>
+gh secret list --repo <owner>/<repo> | grep SMOKE_BEARER_TOKEN   # verify
+```
+
+The token is signed with `JWT_SECRET` (from Secret Manager) and valid for 30 days. Rotate on a calendar reminder, or extend the lifetime in `scripts/make_smoke_token.py` if 30 days is too short.
+
+### 8c. Validate
+
+After next push to main, watch the `smoke-prod` job run. Expected outcome: all 10 steps pass (steps 8a–8d and step 9 are XFAIL placeholders for upstream PRs).
+
+## 9. Observability without Sentry
+
+If you skip step 3b's Sentry DSN, structured logs from the FastAPI app go to **Cloud Run logs only**. Diagnose a cron failure like this:
+
+```bash
+# Tail recent app logs
+gcloud run services logs read api --region=us-central1 --limit=200
+
+# Zero in on a specific cron job
+gcloud run services logs read api --region=us-central1 --limit=500 \
+  | grep -E "cron\.(sync|generation_queue|maintenance)\.(failed|budget_exhausted|completed)"
+```
+
+Structured events the un-silenced cron handler emits (`app/api/internal_cron.py`):
+- `cron.<name>.started` — every invocation
+- `cron.<name>.completed` — success (plus the task's result fields)
+- `cron.<name>.budget_exhausted` — Gemini quota hit; warning
+- `cron.<name>.failed` — unhandled exception; error with `exc_info=True` (full stack trace)
+
+**Alternative**: enable GCP Cloud Error Reporting (free, native) — errors with stack traces get auto-grouped in the GCP console. Enable the API once:
+
+```bash
+gcloud services enable clouderrorreporting.googleapis.com
+```
+
+Cloud Run stdout logs are already sampled by Error Reporting when they contain `severity=ERROR` (the `_add_cloud_run_severity` structlog processor in `app/main.py:25` already writes that field).
 
 ## Troubleshooting
 
