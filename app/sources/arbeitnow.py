@@ -101,7 +101,13 @@ class ArbeitnowSource(JobSource):
                 response.raise_for_status()
                 data = response.json()
         except Exception as exc:
-            await log.awarning("arbeitnow.fetch_failed", error=str(exc))
+            await log.aerror(
+                "arbeitnow.fetch_failed",
+                source_name="arbeitnow",
+                error=str(exc),
+                error_type=type(exc).__name__,
+                exc_info=True,
+            )
             return [], None
 
         if not data.get("data"):

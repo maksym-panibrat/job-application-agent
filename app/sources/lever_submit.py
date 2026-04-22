@@ -51,5 +51,11 @@ async def try_submit(
                 "body": resp.text[:500],
             }
     except Exception as exc:
-        await log.awarning("lever_submit.failed", error=str(exc))
+        await log.aerror(
+            "lever_submit.failed",
+            source_name="lever_submit",
+            error=str(exc),
+            error_type=type(exc).__name__,
+            exc_info=True,
+        )
         return {"method": "manual", "apply_url": apply_url, "error": str(exc)}
