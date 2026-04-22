@@ -15,7 +15,13 @@ Both AUTH_ENABLED modes are handled:
 """
 
 import asyncio
+import sys
 import uuid
+from pathlib import Path
+
+# Make the `app` package importable when this file is run as a script
+# (e.g. `uv run python scripts/seed_smoke_user.py`) without needing PYTHONPATH.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
