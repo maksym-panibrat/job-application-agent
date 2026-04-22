@@ -16,7 +16,6 @@ function makeApp(overrides: Partial<Application> = {}): Application {
     match_rationale: 'Strong Python background matches the role requirements.',
     match_strengths: ['Python', 'FastAPI'],
     match_gaps: ['Go experience'],
-    user_interest: null,
     created_at: new Date().toISOString(),
     submitted_at: null,
     submission_method: null,
@@ -61,38 +60,6 @@ describe('MatchCard', () => {
     renderCard(makeApp())
     expect(screen.getByText('Python, FastAPI')).toBeInTheDocument()
     expect(screen.getByText(/Go experience/)).toBeInTheDocument()
-  })
-
-  it('thumbs-up button sends PATCH with interested', async () => {
-    const user = userEvent.setup()
-    let patchedBody: unknown
-    server.use(
-      http.patch('/api/applications/:id/interest', async ({ request }) => {
-        patchedBody = await request.json()
-        return HttpResponse.json(null)
-      })
-    )
-    renderCard(makeApp())
-    await user.click(screen.getByLabelText('Mark as interested'))
-    await waitFor(() => {
-      expect(patchedBody).toEqual({ interest: 'interested' })
-    })
-  })
-
-  it('thumbs-up again toggles interest back to null', async () => {
-    const user = userEvent.setup()
-    const bodies: unknown[] = []
-    server.use(
-      http.patch('/api/applications/:id/interest', async ({ request }) => {
-        bodies.push(await request.json())
-        return HttpResponse.json(null)
-      })
-    )
-    renderCard(makeApp({ user_interest: 'interested' }))
-    await user.click(screen.getByLabelText('Mark as interested'))
-    await waitFor(() => {
-      expect(bodies[bodies.length - 1]).toEqual({ interest: null })
-    })
   })
 
   it('review link points to /matches/app-1', () => {

@@ -37,18 +37,8 @@ export function MatchCard({ app }: { app: Application }) {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['applications'] }),
   })
 
-  const interest = useMutation({
-    mutationFn: (value: 'interested' | 'not_interested' | null) =>
-      api.setInterest(app.id, value),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['applications'] }),
-  })
-
   const job = app.job
   if (!job) return null
-
-  const toggleInterest = (value: 'interested' | 'not_interested') => {
-    interest.mutate(app.user_interest === value ? null : value)
-  }
 
   return (
     <div className="bg-white rounded-lg border border-gray-200 p-5 hover:border-gray-300 transition-colors">
@@ -85,24 +75,6 @@ export function MatchCard({ app }: { app: Application }) {
           >
             Dismiss
           </button>
-          <div className="flex gap-1 mt-1">
-            <button
-              aria-label="Mark as interested"
-              onClick={() => toggleInterest('interested')}
-              disabled={interest.isPending}
-              className={`text-base leading-none disabled:opacity-50 ${app.user_interest === 'interested' ? 'text-green-600' : 'text-gray-300 hover:text-gray-500'}`}
-            >
-              👍
-            </button>
-            <button
-              aria-label="Mark as not interested"
-              onClick={() => toggleInterest('not_interested')}
-              disabled={interest.isPending}
-              className={`text-base leading-none disabled:opacity-50 ${app.user_interest === 'not_interested' ? 'text-red-500' : 'text-gray-300 hover:text-gray-500'}`}
-            >
-              👎
-            </button>
-          </div>
         </div>
       </div>
 

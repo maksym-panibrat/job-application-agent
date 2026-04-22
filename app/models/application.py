@@ -2,7 +2,7 @@ import uuid
 from datetime import UTC, datetime
 
 import sqlalchemy as sa
-from sqlalchemy import Column, String
+from sqlalchemy import Column
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlmodel import Field, SQLModel
 
@@ -20,7 +20,6 @@ class Application(SQLModel, table=True):
     match_rationale: str | None = None
     match_strengths: list[str] = Field(default_factory=list, sa_column=Column(ARRAY(sa.String)))
     match_gaps: list[str] = Field(default_factory=list, sa_column=Column(ARRAY(sa.String)))
-    user_interest: str | None = Field(default=None, sa_column=Column(String, nullable=True))
     submitted_at: datetime | None = Field(
         default=None, sa_column=Column(sa.DateTime(timezone=True), nullable=True)
     )

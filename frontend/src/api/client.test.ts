@@ -40,15 +40,6 @@ describe('api client', () => {
       const calledHeaders = (spy.mock.calls[0][1] as RequestInit)?.headers as Record<string, string>
       expect(calledHeaders['Authorization']).toBe('Bearer my-token')
     })
-
-    it('setInterest sends PATCH with correct body', async () => {
-      const spy = mockFetch(200, null)
-      await api.setInterest('app-123', 'interested')
-      expect(spy.mock.calls[0][0]).toContain('app-123')
-      const init = spy.mock.calls[0][1] as RequestInit
-      expect(init.method).toBe('PATCH')
-      expect(JSON.parse(init.body as string)).toEqual({ interest: 'interested' })
-    })
   })
 
   describe('sendMessage SSE streaming', () => {
