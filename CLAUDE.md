@@ -60,6 +60,14 @@ Matching agent uses `asyncio.Semaphore` + 1.5s sleep + 10s/30s exponential backo
 
 No in-process scheduler. `app/scheduler/tasks.py` is invoked via `POST /internal/cron/{sync,generation-queue,maintenance}` with `X-Cron-Secret`, triggered by `.github/workflows/cron.yml`.
 
+### Generation interrupt/resume contract
+
+`generate_materials()` (`app/services/application_service.py`) drives the generation graph until it pauses at the `review` interrupt, then leaves `Application.generation_status = "awaiting_review"` — **not** `"ready"`. `POST /api/applications/{id}/resume` with `{"decision": "approve"|"regenerate"}` calls `graph.ainvoke(Command(resume=...), config)` to unpark the graph; approve → `ready`, regenerate → another `awaiting_review`. Valid `generation_status` values: `none · pending · generating · awaiting_review · ready · failed`. Single-writer rule: `resume_generation` / `generate_materials` own the status write; `finalize_node` returns state only. The status transition at `/resume` is an atomic conditional UPDATE (`WHERE generation_status='awaiting_review'`) so two concurrent POSTs cannot both dispatch to the same LangGraph thread_id.
+
+### Observability
+
+No Sentry / no external SaaS. Errors flow to GCP Cloud Error Reporting via structlog: `app/main.py::_add_cloud_run_severity` injects `severity=ERROR` + `@type: …ReportedErrorEvent`, and `structlog.processors.format_exc_info` turns `exc_info=True` / `log.aexception` into a readable traceback. `gcloud services enable clouderrorreporting.googleapis.com` is a one-time op per project.
+
 ## Hard app-level limits (not DB constraints)
 
 50 work experiences/profile · 500 matched applications/user · 5 MB resume · 14-day job staleness · 7-day search auto-pause.
