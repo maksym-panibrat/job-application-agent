@@ -26,6 +26,14 @@ from app.config import get_settings
 log = structlog.get_logger()
 
 
+class GenerationOutputError(Exception):
+    """LLM returned an unparseable response.
+
+    Raised when the message has tool_calls but no text content, or when the
+    content is empty / an unknown block shape after normalization.
+    """
+
+
 class GeneratedDoc(TypedDict):
     doc_type: str  # tailored_resume, cover_letter, custom_answers
     content_md: str
@@ -46,23 +54,42 @@ class GenerationState(TypedDict):
     user_decision: dict  # set on resume after interrupt
 
 
-def _extract_text(content) -> str:
-    """Normalize LangChain message content to a plain string.
+def _extract_text(result) -> str:
+    """Extract plain text from a LangChain chat-model result.
 
-    The LLM may return a list of content blocks (e.g. text + tool_use) for
-    some models. Extract and join the text blocks so we always store a clean string.
+    Accepts either a full LangChain message (with ``content`` and optional
+    ``tool_calls`` attributes) or a raw content value (string / list of
+    content blocks).
+
+    Raises GenerationOutputError when the response has tool_calls but no text
+    content (our text-output prompts never request tool_calls), or when the
+    content is empty / unparseable after normalization.
     """
+    content = result.content if hasattr(result, "content") else result
+    tool_calls = getattr(result, "tool_calls", None)
+
+    text = ""
     if isinstance(content, str):
-        return content
-    if isinstance(content, list):
+        text = content
+    elif isinstance(content, list):
         parts = []
         for block in content:
             if isinstance(block, str):
                 parts.append(block)
             elif isinstance(block, dict) and block.get("type") == "text":
                 parts.append(block.get("text", ""))
-        return "\n".join(parts).strip()
-    return str(content)
+        text = "\n".join(parts).strip()
+    else:
+        text = str(content or "")
+
+    text = text.strip()
+    if not text:
+        if tool_calls:
+            raise GenerationOutputError(
+                f"LLM returned tool_calls ({len(tool_calls)}) with no text content"
+            )
+        raise GenerationOutputError("LLM returned empty text content")
+    return text
 
 
 def get_llm():
@@ -159,7 +186,7 @@ def build_graph(checkpointer: AsyncPostgresSaver) -> StateGraph:
             "documents": [
                 {
                     "doc_type": "tailored_resume",
-                    "content_md": _extract_text(result.content),
+                    "content_md": _extract_text(result),
                     "generation_model": model_name,
                     "structured_content": None,
                 }
@@ -178,7 +205,7 @@ def build_graph(checkpointer: AsyncPostgresSaver) -> StateGraph:
             "documents": [
                 {
                     "doc_type": "cover_letter",
-                    "content_md": _extract_text(result.content),
+                    "content_md": _extract_text(result),
                     "generation_model": model_name,
                     "structured_content": None,
                 }
@@ -203,7 +230,7 @@ def build_graph(checkpointer: AsyncPostgresSaver) -> StateGraph:
             questions=formatted,
         )
         result = await safe_ainvoke(llm, [HumanMessage(content=prompt)])
-        content_md = _extract_text(result.content)
+        content_md = _extract_text(result)
 
         # Build structured_content: {question_label: answer_text}
         # Parse the Markdown output for "A: ..." lines following each question block.

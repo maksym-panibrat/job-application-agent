@@ -15,18 +15,28 @@ log = structlog.get_logger()
 BOARDS_API = "https://boards-api.greenhouse.io/v1/boards"
 
 
+class GreenhouseUnavailable(Exception):
+    """Greenhouse boards API returned an error or was unreachable."""
+
+
 async def get_job_questions(board_token: str, job_id: str) -> list[dict]:
     """
     Fetch custom questions for a Greenhouse job posting.
     Returns list of dicts with keys: label, type, required.
+
+    Raises GreenhouseUnavailable on HTTP non-200 responses or network errors.
+    Callers can distinguish this from the "no custom questions" case
+    (an empty list from a 200 response with no questions).
     """
     url = f"{BOARDS_API}/{board_token}/jobs/{job_id}"
     try:
         async with AsyncClient(timeout=15) as client:
             resp = await client.get(url, params={"questions": "true"})
             if resp.status_code != 200:
-                return []
+                raise GreenhouseUnavailable(f"HTTP {resp.status_code}")
             data = resp.json()
+    except GreenhouseUnavailable:
+        raise
     except Exception as exc:
         await log.aerror(
             "greenhouse.questions_failed",
@@ -37,7 +47,7 @@ async def get_job_questions(board_token: str, job_id: str) -> list[dict]:
             error_type=type(exc).__name__,
             exc_info=True,
         )
-        return []
+        raise GreenhouseUnavailable(str(exc)) from exc
 
     questions = []
     for q in data.get("questions", []):
@@ -56,7 +66,11 @@ async def get_job_questions(board_token: str, job_id: str) -> list[dict]:
 async def get_job_questions_by_url(apply_url: str) -> list[dict]:
     """
     Convenience wrapper: extract board token and job ID from a Greenhouse apply URL,
-    then delegate to get_job_questions. Returns [] on any parse failure.
+    then delegate to get_job_questions.
+
+    Returns [] when the URL is not a parseable Greenhouse URL (missing board
+    token or job id) — those are parse failures, not availability issues.
+    Propagates GreenhouseUnavailable from the underlying network call.
     """
     import re
 

@@ -108,12 +108,21 @@ async def generate_materials(
 
             custom_questions: list = []
             if job.ats_type == "greenhouse" and job.supports_api_apply and job.apply_url:
-                try:
-                    from app.sources.greenhouse import get_job_questions_by_url
+                from app.sources.greenhouse import (
+                    GreenhouseUnavailable,
+                    get_job_questions_by_url,
+                )
 
+                try:
                     custom_questions = await get_job_questions_by_url(job.apply_url)
-                except Exception:
-                    pass  # fall back to empty — graph still generates resume + cover letter
+                except GreenhouseUnavailable as exc:
+                    await log.awarning(
+                        "generation.greenhouse_questions_unavailable",
+                        application_id=str(application_id),
+                        apply_url=job.apply_url,
+                        error=str(exc),
+                    )
+                    custom_questions = []
 
             initial_state = {
                 "application_id": str(application_id),
@@ -208,7 +217,7 @@ async def _generate_direct(
     documents.append(
         {
             "doc_type": "tailored_resume",
-            "content_md": _extract_text(resume_result.content),
+            "content_md": _extract_text(resume_result),
             "generation_model": model_name,
         }
     )
@@ -224,7 +233,7 @@ async def _generate_direct(
     documents.append(
         {
             "doc_type": "cover_letter",
-            "content_md": _extract_text(cl_result.content),
+            "content_md": _extract_text(cl_result),
             "generation_model": model_name,
         }
     )
