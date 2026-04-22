@@ -188,19 +188,37 @@ function submissionMethodLabel(method: string | null): string {
   }[method] ?? `Submitted (${method})`
 }
 
+// Backend's /api/applications/{id}/status/stream gives up at ~300s
+// (60 iterations × 5s sleep in app/api/applications.py::stream_generation_status).
+// Frontend poll timeout is backend + 30s safety margin so we don't stop before
+// the server does. If you bump one, bump the other in lockstep.
+const GENERATION_POLL_TIMEOUT_MS = 330_000
+
 export default function ApplicationReview() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const qc = useQueryClient()
   const [activeTab, setActiveTab] = useState(0)
   const [customAnswers, setCustomAnswers] = useState<Record<string, string>>({})
+  const pollStartRef = useRef<number | null>(null)
+  const [pollTimedOut, setPollTimedOut] = useState(false)
 
   const { data: app, isLoading } = useQuery({
     queryKey: ['application', id],
     queryFn: () => api.getApplication(id!),
     refetchInterval: (query) => {
       const status = query?.state?.data?.generation_status
-      return (status === 'generating' || status === 'pending') ? 3000 : false
+      const isPolling = status === 'generating' || status === 'pending'
+      if (!isPolling) {
+        pollStartRef.current = null
+        return false
+      }
+      if (pollStartRef.current === null) pollStartRef.current = Date.now()
+      if (Date.now() - pollStartRef.current > GENERATION_POLL_TIMEOUT_MS) {
+        setPollTimedOut(true)
+        return false
+      }
+      return 3000
     },
   })
 
@@ -326,9 +344,21 @@ export default function ApplicationReview() {
       )}
 
       {/* Generation status */}
-      {(isGenerating || app.generation_status === 'pending') && (
+      {(isGenerating || app.generation_status === 'pending') && !pollTimedOut && (
         <div className="mb-4 p-3 bg-blue-50 text-blue-700 text-sm rounded-md animate-pulse">
           Generating tailored documents...
+        </div>
+      )}
+      {pollTimedOut && isGenerating && (
+        <div className="mb-4 p-3 bg-amber-50 text-amber-700 text-sm rounded-md flex items-center justify-between">
+          <span>Generation is taking longer than expected. The server may still be working — refresh to check, or retry.</span>
+          <button
+            onClick={() => { setPollTimedOut(false); regen.mutate() }}
+            disabled={regen.isPending || app.generation_attempts >= 3}
+            className="text-sm font-medium underline disabled:opacity-50"
+          >
+            Retry
+          </button>
         </div>
       )}
       {approve.isSuccess && app.generation_status === 'none' && (
