@@ -149,13 +149,15 @@ async def test_generation_resume_after_approval(db_session):
     """
     The correct two-step flow:
     1. generate_materials() pauses at the interrupt -> status becomes "awaiting_review"
-    2. Resume with Command(resume={"approved": True}) -> graph reaches END,
-       status becomes "ready"
+    2. resume_generation() with {"approved": True} drives the graph to END and
+       flips generation_status to "ready".
 
-    CURRENTLY FAILS at step 1: generate_materials() jumps straight to "ready",
-    so the pre-condition assertion below triggers before the resume step is reached.
+    The DB write is owned by the service layer (``resume_generation``), not
+    by the graph's ``finalize_node`` — so this test drives the resume via
+    ``resume_generation`` rather than a raw ``graph.ainvoke``.
     """
     from app.agents.generation_agent import build_graph
+    from app.services.application_service import resume_generation
 
     app_row, _, _ = await _seed_application(db_session)
     checkpointer = _memory_checkpointer()
@@ -166,16 +168,17 @@ async def test_generation_resume_after_approval(db_session):
     await generate_materials(app_row.id, db_session, checkpointer=checkpointer)
     await db_session.refresh(app_row)
 
-    # BUG: currently "ready"; this assertion is what makes the test xfail today.
     assert app_row.generation_status == "awaiting_review", (
         f"Pre-condition: expected 'awaiting_review' after first ainvoke, "
         f"got '{app_row.generation_status}'"
     )
 
-    # Step 2: resume with approval -- only reached once step 1 is fixed.
-    graph = build_graph(checkpointer)
-    await graph.ainvoke(Command(resume={"regenerate": False, "approved": True}), config)
+    # Step 2: resume with approval through the service (the only supported
+    # driver of the graph for the resume path).
+    await resume_generation(app_row.id, {"approved": True}, db_session, checkpointer=checkpointer)
 
+    # Sanity-check the graph state too, now that the service has run it.
+    graph = build_graph(checkpointer)
     state = await graph.aget_state(config)
     assert state.next == (), f"Expected graph at END after resume, got next={state.next}"
 

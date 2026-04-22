@@ -218,10 +218,19 @@ async def resume_generation(
         )
 
     t0 = time.perf_counter()
+    # Tag the decision as a scalar for observability — never log the raw
+    # dict. A future caller could route arbitrary keys through ``decision``;
+    # a tag keeps structlog free of PII / unbounded payloads.
+    if decision.get("approved"):
+        decision_type = "approve"
+    elif decision.get("regenerate"):
+        decision_type = "regenerate"
+    else:
+        decision_type = "unknown"
     await log.ainfo(
         "generation.resumed",
         application_id=str(application_id),
-        decision=decision,
+        decision_type=decision_type,
     )
 
     app = await session.get(Application, application_id)
@@ -248,22 +257,36 @@ async def resume_generation(
             error=str(exc),
             duration_ms=int((time.perf_counter() - t0) * 1000),
         )
-        app.generation_status = "failed"
-        app.updated_at = datetime.now(UTC)
-        session.add(app)
-        await session.commit()
+        # Re-read fresh — the original snapshot may be stale if the graph
+        # mutated the row from another session (e.g. the API-layer atomic
+        # UPDATE that flipped 'awaiting_review' -> 'generating' before
+        # scheduling this task).
+        fresh = await session.get(Application, application_id)
+        if fresh is not None:
+            fresh.generation_status = "failed"
+            fresh.updated_at = datetime.now(UTC)
+            session.add(fresh)
+            await session.commit()
         return
 
-    app.generation_status = next_status
-    app.updated_at = datetime.now(UTC)
-    session.add(app)
+    # Re-read to pick up any out-of-session writes (the API layer's atomic
+    # UPDATE bumped generation_attempts and flipped status to 'generating'
+    # between scheduling this task and us running; the snapshot on ``app``
+    # above predates that).
+    fresh = await session.get(Application, application_id)
+    if fresh is None:
+        await log.awarning("resume_generation.row_vanished", application_id=str(application_id))
+        return
+    fresh.generation_status = next_status
+    fresh.updated_at = datetime.now(UTC)
+    session.add(fresh)
     await session.commit()
 
     outcome = "approved" if next_status == "ready" else "regenerated"
     await log.ainfo(
         "generation.resume_completed",
         application_id=str(application_id),
-        status=app.generation_status,
+        status=fresh.generation_status,
         outcome=outcome,
         graph_next=list(state.next),
         duration_ms=int((time.perf_counter() - t0) * 1000),

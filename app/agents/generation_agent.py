@@ -301,31 +301,15 @@ def build_graph(checkpointer: AsyncPostgresSaver) -> StateGraph:
             return "load_context"
         return "finalize"
 
-    async def finalize_node(state: GenerationState) -> dict:
-        """Mark the Application row as ready after the user approves.
+    def finalize_node(state: GenerationState) -> dict:
+        """Terminal node — graph END follows.
 
-        We write directly from the graph so callers that drive the graph via
-        ``Command(resume=...)`` without going through
-        ``application_service.resume_generation`` still see the DB row
-        transition to "ready" (see the interrupt/resume contract tests).
+        Only mutates the graph's in-memory state. The DB ``generation_status``
+        is owned by the service layer (``generate_materials`` and
+        ``resume_generation`` write it exactly once, after ``graph.ainvoke``
+        returns). Writing here too would race with those callers and re-read
+        a stale ``app`` snapshot afterwards.
         """
-        from datetime import UTC, datetime
-
-        from app.database import get_session_factory
-        from app.models.application import Application
-
-        application_id_str = state.get("application_id")
-        if application_id_str:
-            import uuid as _uuid
-
-            factory = get_session_factory()
-            async with factory() as session:
-                app_row = await session.get(Application, _uuid.UUID(application_id_str))
-                if app_row is not None:
-                    app_row.generation_status = "ready"
-                    app_row.updated_at = datetime.now(UTC)
-                    session.add(app_row)
-                    await session.commit()
         return {"generation_status": "ready"}
 
     builder = StateGraph(GenerationState)
