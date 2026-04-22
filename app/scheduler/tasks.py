@@ -44,12 +44,6 @@ async def run_job_sync() -> dict:
                 await match_service.score_and_match(profile, session)
         except Exception as exc:
             await log.aexception("scheduler.sync_error", profile_id=str(profile.id), error=str(exc))
-            try:
-                import sentry_sdk
-
-                sentry_sdk.capture_exception(exc)
-            except Exception:
-                pass
 
     return {
         "profiles_synced": profiles_synced,

@@ -2,7 +2,6 @@ import logging
 import os
 from contextlib import asynccontextmanager
 
-import sentry_sdk
 import structlog
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -21,11 +20,23 @@ from app.api.users import router as users_router
 from app.config import get_settings
 from app.database import init_db
 
+# Marker that tells GCP Cloud Error Reporting to ingest a Cloud Run log entry as a
+# first-class error event. Combined with severity=ERROR + a Python traceback in the
+# log payload, this gets errors auto-grouped in the Error Reporting UI without any
+# third-party SDK. https://cloud.google.com/error-reporting/docs/formatting-error-messages
+_REPORTED_ERROR_TYPE = (
+    "type.googleapis.com/google.devtools.clouderrorreporting.v1beta1.ReportedErrorEvent"
+)
+
 
 def _add_cloud_run_severity(logger, method, event_dict):
     # Cloud Run reads "severity" (uppercase) for log severity badges.
     # structlog's add_log_level writes "level" (lowercase) — copy it here.
-    event_dict["severity"] = event_dict.get("level", "info").upper()
+    severity = event_dict.get("level", "info").upper()
+    event_dict["severity"] = severity
+    # Tag ERROR/CRITICAL records so Cloud Error Reporting picks them up as events.
+    if severity in ("ERROR", "CRITICAL"):
+        event_dict["@type"] = _REPORTED_ERROR_TYPE
     return event_dict
 
 
@@ -35,6 +46,10 @@ def configure_logging(settings) -> None:
         structlog.contextvars.merge_contextvars,
         structlog.processors.add_log_level,
         structlog.processors.TimeStamper(fmt="iso"),
+        # Turn exc_info tuples (from log.aexception / log.aerror(..., exc_info=True))
+        # into a multi-line traceback string under the "exception" key so GCP's
+        # error-reporting heuristics can parse it.
+        structlog.processors.format_exc_info,
     ]
     if not is_dev:
         processors.append(_add_cloud_run_severity)
@@ -47,27 +62,6 @@ def configure_logging(settings) -> None:
             getattr(logging, settings.log_level.upper())
         ),
     )
-
-
-_SENSITIVE_HEADERS = {"authorization", "cookie", "x-cron-secret"}
-
-
-def _scrub_sensitive_data(event, hint):
-    """Strip sensitive headers and cookies from Sentry events before transmission."""
-    request = event.get("request")
-    if not request:
-        return event
-    headers = request.get("headers")
-    if headers:
-        request["headers"] = {
-            k: v for k, v in headers.items() if k.lower() not in _SENSITIVE_HEADERS
-        }
-    cookies = request.get("cookies")
-    if cookies:
-        request["cookies"] = {
-            k: v for k, v in cookies.items() if k.lower() not in _SENSITIVE_HEADERS
-        }
-    return event
 
 
 @asynccontextmanager
@@ -83,28 +77,6 @@ async def lifespan(app: FastAPI):
         os.environ["LANGSMITH_API_KEY"] = settings.langsmith_api_key.get_secret_value()
         os.environ["LANGSMITH_PROJECT"] = settings.langsmith_project
         await log.ainfo("langsmith.enabled", project=settings.langsmith_project)
-
-    # Init Sentry — log confirmation so operators can verify it's active in production
-    if settings.sentry_dsn:
-        try:
-            dsn_val = settings.sentry_dsn.get_secret_value()
-            sentry_sdk.init(
-                dsn=dsn_val,
-                traces_sample_rate=0.1,
-                environment=settings.environment,
-                release=settings.sentry_release,
-                send_default_pii=False,
-                before_send=_scrub_sensitive_data,
-            )
-            await log.ainfo(
-                "sentry.enabled",
-                dsn_suffix=dsn_val[-4:],
-                release=settings.sentry_release,
-            )
-        except Exception as exc:
-            await log.awarning("sentry.init_failed", error=str(exc))
-    else:
-        await log.ainfo("sentry.disabled", reason="no_dsn_configured")
 
     await log.ainfo("app.startup", environment=settings.environment)
 

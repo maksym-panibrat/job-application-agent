@@ -35,9 +35,6 @@ Step mapping (matches stabilisation plan):
     Step 5  GET /api/applications          → 200 list (may be empty)
     Step 6  POST /internal/cron/sync       → 200 {"status": "ok"}  (X-Cron-Secret gated;
                                              may be slow)
-    Step 6b POST /internal/cron/sentry-ping
-                                           → 200 {"sent": bool, "event_id": ..., "release": ...}
-                                             Verifies Sentry DSN + release-tag wiring.
     Step 7  POST /api/chat/messages        → 200 SSE stream with assistant response
                                              (proves Gemini pipeline wired to prod)
     Step 8a POST /api/applications/{id}/regenerate
@@ -376,73 +373,6 @@ async def step6_cron_sync(
         "status": body.get("status"),
         "duration_ms": body.get("duration_ms"),
         "resumes_at": body.get("resumes_at"),
-    }
-
-
-async def step_sentry_ping(
-    client: httpx.AsyncClient,
-    base_url: str,
-    cron_secret: str,
-    verbose: bool,
-) -> StepResult:
-    """POST /internal/cron/sentry-ping → 200 {"sent": true, "event_id": ..., "release": ...}.
-
-    Verifies Sentry DSN + release-tag wiring end-to-end. If Sentry isn't configured in
-    the deployment, returns {"sent": false, "reason": "no_dsn_configured"} — still a PASS
-    because the endpoint worked; the diagnostic is surfaced for operator follow-up.
-    """
-    url = f"{base_url}/internal/cron/sentry-ping"
-    label = "step_sentry_ping"
-    headers = {"X-Cron-Secret": cron_secret}
-    try:
-        r = await client.post(url, headers=headers, timeout=DEFAULT_TIMEOUT_S)
-    except httpx.RequestError as exc:
-        return False, {"step": "6b", "error": f"Request failed: {exc}"}
-
-    body = _try_json(r)
-    if verbose:
-        _verbose_log(label, "POST", url, r.status_code, body)
-
-    if r.status_code == 403:
-        return False, {
-            "step": "6b",
-            "error": "403 — cron secret rejected by sentry-ping endpoint",
-            "body": body,
-        }
-
-    if r.status_code == 404:
-        return False, {
-            "step": "6b",
-            "error": (
-                "404 — /internal/cron/sentry-ping not found. "
-                "Deployment may be on an older revision; wait for rollout."
-            ),
-            "body": body,
-        }
-
-    if r.status_code != 200:
-        return False, {
-            "step": "6b",
-            "error": f"Expected 200, got {r.status_code}",
-            "body": body,
-        }
-
-    if not isinstance(body, dict):
-        return False, {"step": "6b", "error": "Expected JSON object", "body": body}
-
-    # If Sentry isn't configured, surface it as a note but don't fail — that's a deployment
-    # config question, not a smoke-assertion failure.
-    if body.get("sent") is False:
-        return True, {
-            "step": "6b",
-            "note": f"Sentry disabled in deployment: {body.get('reason')}",
-            "body": body,
-        }
-
-    return True, {
-        "step": "6b",
-        "sentry_event_id": body.get("event_id"),
-        "release": body.get("release"),
     }
 
 
@@ -1018,25 +948,6 @@ async def run(base_url: str, token: str, cron_secret: str, verbose: bool) -> int
         else:
             print(f"  FAIL — {details6.get('error', 'unknown')}")
             failures.append({"label": label6, **details6})
-
-        # --- Step 6b: sentry-ping (release-tag + DSN wiring check) ---
-        label6b = "6b POST /internal/cron/sentry-ping"
-        print(f"  running step {label6b} ...", end="", flush=True)
-        try:
-            ok6b, details6b = await step_sentry_ping(client, base_url, cron_secret, verbose)
-        except Exception as exc:
-            ok6b, details6b = False, {"error": f"Unhandled exception: {exc}"}
-
-        if ok6b:
-            note = details6b.get("note")
-            if note:
-                print(f"  PASS ({note})")
-            else:
-                print(f"  PASS (event_id={details6b.get('sentry_event_id')})")
-            passed += 1
-        else:
-            print(f"  FAIL — {details6b.get('error', 'unknown')}")
-            failures.append({"label": label6b, **details6b})
 
         # --- Step 7: Gemini chat reachability ---
         label7 = "7  Gemini chat (LLM pipeline)"
