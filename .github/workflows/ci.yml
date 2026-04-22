@@ -179,13 +179,55 @@ jobs:
       - name: Set up gcloud
         uses: google-github-actions/setup-gcloud@v2
 
+      - name: Build --set-secrets from secrets that actually exist
+        id: secrets
+        run: |
+          # Required secrets — deploy fails loud if missing (app can't start without these).
+          REQUIRED=(
+            "GOOGLE_API_KEY=google-api-key"
+            "ADZUNA_APP_ID=adzuna-app-id"
+            "ADZUNA_API_KEY=adzuna-api-key"
+            "DATABASE_URL=database-url"
+            "CRON_SHARED_SECRET=cron-shared-secret"
+            "JWT_SECRET=jwt-secret"
+          )
+          # Optional secrets — included only when present in Secret Manager.
+          # Keeps deploys from hard-failing when OAuth / Sentry aren't provisioned yet;
+          # the app has graceful-off behavior for each.
+          OPTIONAL=(
+            "GOOGLE_OAUTH_CLIENT_ID=google-oauth-client-id"
+            "GOOGLE_OAUTH_CLIENT_SECRET=google-oauth-client-secret"
+            "SENTRY_DSN=sentry-dsn"
+          )
+          PAIRS=()
+          for entry in "${REQUIRED[@]}"; do
+            PAIRS+=("${entry}:latest")
+          done
+          for entry in "${OPTIONAL[@]}"; do
+            secret_name="${entry#*=}"
+            if gcloud secrets describe "$secret_name" --quiet >/dev/null 2>&1; then
+              PAIRS+=("${entry}:latest")
+              echo "included optional secret: $secret_name"
+            else
+              echo "skipped optional secret (not in Secret Manager): $secret_name"
+            fi
+          done
+          joined=$(IFS=','; echo "${PAIRS[*]}")
+          echo "secrets=$joined" >> "$GITHUB_OUTPUT"
+          # AUTH_ENABLED needs to reflect OAuth availability — off when its secrets aren't present.
+          if [[ "$joined" == *"GOOGLE_OAUTH_CLIENT_ID"* ]]; then
+            echo "auth_enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "auth_enabled=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Deploy to Cloud Run
         run: |
           gcloud run deploy api \
             --image us-central1-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/app/api:${{ github.sha }} \
             --region us-central1 \
-            --set-secrets="GOOGLE_API_KEY=google-api-key:latest,ADZUNA_APP_ID=adzuna-app-id:latest,ADZUNA_API_KEY=adzuna-api-key:latest,DATABASE_URL=database-url:latest,CRON_SHARED_SECRET=cron-shared-secret:latest,JWT_SECRET=jwt-secret:latest,GOOGLE_OAUTH_CLIENT_ID=google-oauth-client-id:latest,GOOGLE_OAUTH_CLIENT_SECRET=google-oauth-client-secret:latest,SENTRY_DSN=sentry-dsn:latest" \
-            --set-env-vars="ENVIRONMENT=production,AUTH_ENABLED=true,SENTRY_RELEASE=${{ github.sha }}" \
+            --set-secrets="${{ steps.secrets.outputs.secrets }}" \
+            --set-env-vars="ENVIRONMENT=production,AUTH_ENABLED=${{ steps.secrets.outputs.auth_enabled }},SENTRY_RELEASE=${{ github.sha }}" \
             --service-account="${{ secrets.GCP_SERVICE_ACCOUNT }}" \
             --min-instances=0 \
             --max-instances=1 \
