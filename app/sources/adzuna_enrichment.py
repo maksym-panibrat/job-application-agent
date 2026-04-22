@@ -42,7 +42,14 @@ async def fetch_full_description(
             html = response.text
             resolved_url = str(response.url)
     except Exception as exc:
-        await log.awarning("adzuna.enrichment.failed", url=redirect_url, error=str(exc))
+        await log.aerror(
+            "adzuna.enrichment.failed",
+            source_name="adzuna_enrichment",
+            url=redirect_url,
+            error=str(exc),
+            error_type=type(exc).__name__,
+            exc_info=True,
+        )
         return None, None, None
 
     is_adzuna_page = "adzuna.com" in resolved_url.lower()
@@ -72,8 +79,14 @@ def _extract_body(html: str, *, use_adzuna_selector: bool = True) -> str | None:
             section = soup.select_one("section.adp-body")
             if section:
                 return section.get_text(separator="\n", strip=True)
-        except Exception:
-            pass
+        except Exception as exc:
+            log.error(
+                "adzuna.enrichment.bs4_body_failed",
+                source_name="adzuna_enrichment",
+                error=str(exc),
+                error_type=type(exc).__name__,
+                exc_info=True,
+            )
 
     return None
 
@@ -96,5 +109,12 @@ def _extract_card_info(html: str) -> dict | None:
             return None
 
         return {"salary": salary or None, "contract_type": contract_type or None}
-    except Exception:
+    except Exception as exc:
+        log.error(
+            "adzuna.enrichment.card_info_failed",
+            source_name="adzuna_enrichment",
+            error=str(exc),
+            error_type=type(exc).__name__,
+            exc_info=True,
+        )
         return None

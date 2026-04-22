@@ -133,7 +133,14 @@ class GreenhouseBoardSource(JobSource):
                 response.raise_for_status()
                 data = response.json()
         except Exception as exc:
-            await log.awarning("greenhouse_board.fetch_failed", slug=slug, error=str(exc))
+            await log.aerror(
+                "greenhouse_board.fetch_failed",
+                source_name="greenhouse_board",
+                slug=slug,
+                error=str(exc),
+                error_type=type(exc).__name__,
+                exc_info=True,
+            )
             return []
 
         if session is not None:
@@ -164,6 +171,13 @@ class GreenhouseBoardSource(JobSource):
                 jobs = await self._fetch_slug(slug, settings, session)
                 all_jobs.extend(jobs)
             except Exception as exc:
-                await log.awarning("greenhouse_board.fetch_failed", slug=slug, error=str(exc))
+                await log.aerror(
+                    "greenhouse_board.fetch_failed",
+                    source_name="greenhouse_board",
+                    slug=slug,
+                    error=str(exc),
+                    error_type=type(exc).__name__,
+                    exc_info=True,
+                )
 
         return all_jobs, None

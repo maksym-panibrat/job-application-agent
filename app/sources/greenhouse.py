@@ -27,7 +27,16 @@ async def get_job_questions(board_token: str, job_id: str) -> list[dict]:
             if resp.status_code != 200:
                 return []
             data = resp.json()
-    except Exception:
+    except Exception as exc:
+        await log.aerror(
+            "greenhouse.questions_failed",
+            source_name="greenhouse",
+            board_token=board_token,
+            job_id=job_id,
+            error=str(exc),
+            error_type=type(exc).__name__,
+            exc_info=True,
+        )
         return []
 
     questions = []
@@ -150,6 +159,15 @@ async def try_submit(
             custom_answers=custom_answers,
         )
     except Exception as exc:
+        await log.aerror(
+            "greenhouse.submit_failed",
+            source_name="greenhouse",
+            board_token=board_token,
+            job_id=job_id,
+            error=str(exc),
+            error_type=type(exc).__name__,
+            exc_info=True,
+        )
         return {"success": False, "method": "greenhouse_api", "error": str(exc)}
     result["method"] = "greenhouse_api"
     return result

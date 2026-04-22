@@ -103,7 +103,13 @@ class RemotiveSource(JobSource):
                 response.raise_for_status()
                 data = response.json()
         except Exception as exc:
-            await log.awarning("remotive.fetch_failed", error=str(exc))
+            await log.aerror(
+                "remotive.fetch_failed",
+                source_name="remotive",
+                error=str(exc),
+                error_type=type(exc).__name__,
+                exc_info=True,
+            )
             return [], None
 
         if session is not None:
