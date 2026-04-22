@@ -226,6 +226,69 @@ Structured events from `app/api/internal_cron.py::_run_cron` (each record also c
 
 Error Reporting can email or webhook you on new error groups or spike thresholds. Configure per-project in the Error Reporting UI → **Notifications**. For Slack/PagerDuty integration, use a Cloud Logging sink to Pub/Sub and wire a webhook from there.
 
+## 10. Manual actions checklist
+
+Not everything is automated — the CI pipeline can provision Cloud Run revisions and run Alembic, but these steps happen outside that loop and are easy to miss.
+
+### One-time, before first deploy
+
+| # | Action | Reference |
+|---|---|---|
+| 1 | Create the Neon project and capture `DATABASE_URL` | §1 |
+| 2 | `gcloud projects create` + billing + `gcloud services enable` (includes `clouderrorreporting.googleapis.com`) | §2 |
+| 3 | Create required secrets in Secret Manager: `google-api-key`, `adzuna-app-id`, `adzuna-api-key`, `database-url`, `cron-shared-secret`, `jwt-secret` | §3a |
+| 4 | Create the `github-deployer` service account + Workload Identity Federation pool/provider | §5 |
+| 5 | Add repo secrets in GitHub (`GCP_PROJECT_ID`, `GCP_WORKLOAD_IDENTITY_PROVIDER`, `GCP_SERVICE_ACCOUNT`, `CRON_SHARED_SECRET`) | §4 |
+| 6 | Grab a Google AI Studio API key and populate `google-api-key` | §6 |
+| 7 | Push to `main` — first CI run builds image, applies Alembic migrations, deploys to Cloud Run | — |
+| 8 | Capture Cloud Run URL and add as `CLOUD_RUN_URL` GitHub secret | §7 |
+| 9 | Run the demo seed job once if you want fixtures in the DB | §7 |
+
+### Optional, enable as needed
+
+| # | Action | When | Reference |
+|---|---|---|---|
+| A | Create Google OAuth client (consent screen + Web app credentials); store client id + secret in Secret Manager | When you want real Google sign-in (vs single-user mode) | §3b |
+| B | After first deploy, add the Cloud Run URL to the Authorized redirect URIs of the OAuth client (`https://api-<hash>-uc.a.run.app/auth/google/callback`) | Immediately after (A) | §3b |
+| C | Seed the smoke user in the prod DB (`scripts/seed_smoke_user.py`) | Before enabling smoke-prod CI | §8a |
+| D | Generate `SMOKE_BEARER_TOKEN` with `make smoke-token` and set it as a GitHub Actions secret | Before enabling smoke-prod CI | §8b |
+| E | Configure Error Reporting notifications (email or Pub/Sub → Slack/PagerDuty) | When you want alerts instead of polling the UI | §9 |
+
+### Ongoing maintenance
+
+| Cadence | Action | Command / reference |
+|---|---|---|
+| Every 30 days | Rotate `SMOKE_BEARER_TOKEN` (JWTs expire) | `make smoke-token \| tail -1 \| gh secret set SMOKE_BEARER_TOKEN` |
+| Quarterly | Rotate `cron-shared-secret` in Secret Manager + update the `CRON_SHARED_SECRET` GitHub Actions secret | `openssl rand -hex 32 \| gcloud secrets versions add cron-shared-secret --data-file=-` then mirror to `gh secret set CRON_SHARED_SECRET` |
+| Quarterly | Rotate `jwt-secret` (**breaks all existing user sessions**; SMOKE_BEARER_TOKEN must be regenerated after this) | `openssl rand -hex 32 \| gcloud secrets versions add jwt-secret --data-file=-`; then regenerate smoke token per above |
+| When Cloud Run URL changes | Update `CLOUD_RUN_URL` GitHub secret and any OAuth Authorized redirect URIs | See §7, §3b |
+| When adding a new secret to Secret Manager | Grant the deploy service account `roles/secretmanager.secretAccessor` on it | See §3c |
+| On new Gemini monthly quota reset | No action — `BudgetExhausted` warnings stop appearing in Error Reporting automatically | — |
+
+### Verifying everything is wired
+
+After initial provisioning, a clean run of the pipeline should show:
+
+```bash
+# 1. Main CI is green
+gh run list --workflow=ci.yml --branch=main --limit=1 --json conclusion
+
+# 2. All jobs ran (not skipped)
+gh run view --json jobs $(gh run list --workflow=ci.yml --branch=main --limit=1 --json databaseId -q '.[0].databaseId')
+
+# 3. Cloud Run URL is reachable
+curl -s "$(gcloud run services describe api --region=us-central1 --format='value(status.url)')/health"
+# → {"status":"ok","environment":"production",...}
+
+# 4. Cron endpoint accepts the shared secret
+curl -s -X POST -H "X-Cron-Secret: $(gcloud secrets versions access latest --secret=cron-shared-secret)" \
+  "$(gcloud run services describe api --region=us-central1 --format='value(status.url)')/internal/cron/maintenance"
+# → {"status":"ok","duration_ms":...,...}
+
+# 5. An error appears in Error Reporting within ~1 minute of happening
+# (check after the first real 500: https://console.cloud.google.com/errors)
+```
+
 ## Troubleshooting
 
 ### `forbidden from accessing the bucket [*_cloudbuild]` during deploy
