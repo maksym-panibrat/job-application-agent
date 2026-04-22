@@ -2,9 +2,14 @@
 
 import asyncio
 import json
+import sys
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
+
+# Make the `app` package importable when this file is run as a script
+# without needing PYTHONPATH.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.config import get_settings
 from app.database import get_session_factory
@@ -60,7 +65,7 @@ async def main() -> None:
                     val = exp.get(field)
                     if isinstance(val, str):
                         dt = datetime.fromisoformat(val)
-                        exp[field] = dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+                        exp[field] = dt if dt.tzinfo else dt.replace(tzinfo=UTC)
                 parsed_exps.append(exp)
             await replace_all_work_experiences(profile.id, parsed_exps, session)
 

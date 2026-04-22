@@ -16,6 +16,11 @@ Usage (usually via Makefile):
 
 import datetime
 import sys
+from pathlib import Path
+
+# Make the `app` package importable when this file is run as a script
+# (e.g. via `make smoke-token`) without needing PYTHONPATH.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 try:
     import jwt
