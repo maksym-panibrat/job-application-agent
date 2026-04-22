@@ -49,8 +49,9 @@ Step mapping (matches stabilisation plan):
                                            → endpoint exists, token accepted (XFAIL — PR 7)
     Step 10 Cleanup: reset profile full_name to 'Smoke Test' (idempotent teardown)
 
-Note on Step 6: job sync calls external APIs (Adzuna, Remotive, etc.) and may take 10–30 s in
-production.  The script uses a 90 s timeout for that step only.
+Note on Step 6: job sync calls external APIs (Adzuna, Remotive, etc.) and may take 60–180 s in
+production (observed 2026-04-22: server completed in ~150 s while client timed out at 90 s).
+The script uses a 240 s timeout for that step only.
 
 Note on Steps 8a–8d: all four sub-steps are marked XFAIL until PR 8/9 land.  Individual
 sub-step failures are diagnosable from the JSON details in the output.
@@ -74,7 +75,7 @@ import httpx
 # ---------------------------------------------------------------------------
 
 DEFAULT_BASE_URL = "https://api-<revision>-uc.a.run.app"  # placeholder; override via env
-SYNC_TIMEOUT_S = 90
+SYNC_TIMEOUT_S = 240
 CHAT_TIMEOUT_S = 60
 DEFAULT_TIMEOUT_S = 20
 GENERATION_POLL_INTERVAL_S = 3

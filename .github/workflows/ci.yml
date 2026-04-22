@@ -204,11 +204,15 @@ jobs:
           done
           for entry in "${OPTIONAL[@]}"; do
             secret_name="${entry#*=}"
-            if gcloud secrets describe "$secret_name" --quiet >/dev/null 2>&1; then
+            # Capture stderr so we can distinguish "NotFound" (secret absent)
+            # from "PermissionDenied" (IAM miss on the CI service account).
+            # The old silent-skip hid both behind the same message.
+            if err=$(gcloud secrets describe "$secret_name" --quiet 2>&1 >/dev/null); then
               PAIRS+=("${entry}:latest")
               echo "included optional secret: $secret_name"
             else
-              echo "skipped optional secret (not in Secret Manager): $secret_name"
+              echo "skipped optional secret: $secret_name"
+              echo "  gcloud stderr: ${err:0:500}"
             fi
           done
           joined=$(IFS=','; echo "${PAIRS[*]}")
