@@ -7,7 +7,7 @@ Guidance for Claude Code working in this repo. Keep only non-obvious behaviors; 
 ```bash
 docker compose up -d db
 uv sync --dev
-uv run alembic upgrade head
+make migrate ARGS="upgrade head"                # wraps alembic; refuses non-local DATABASE_URL without I_KNOW_ITS_PROD=1
 uv run uvicorn app.main:app --reload --port 8000
 cd frontend && npm install && npm run dev   # :5173, proxies /api + /health to :8000
 ```
@@ -15,6 +15,8 @@ cd frontend && npm install && npm run dev   # :5173, proxies /api + /health to :
 No tracked `.env.example`. Required env: `DATABASE_URL`, `GOOGLE_API_KEY`. Full list: `app/config.py::Settings`.
 
 `AUTH_ENABLED=false` (default) treats every request as a single hardcoded user (`app/api/deps.py::SINGLE_USER_ID`).
+
+**Migrations**: always use `make migrate ARGS="..."` (or `uv run python scripts/alembic_safe.py ...`), never plain `alembic`. The wrapper blocks write commands (`upgrade` / `downgrade` / `stamp` / `merge` / `revision --autogenerate`) against non-local hosts unless `I_KNOW_ITS_PROD=1` is set. Prod migrations belong to the `migrate` CI job (`.github/workflows/ci.yml`), not a dev laptop — running `alembic upgrade head` against Neon locally is the exact outage mode of commit 28e5ce5 (schema ahead of deployed code → every `select(Application)` 500s).
 
 ## Tests
 

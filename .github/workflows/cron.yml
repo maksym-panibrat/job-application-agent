@@ -61,3 +61,41 @@ jobs:
           echo "HTTP $code"
           echo "$body"
           [ "$code" -lt 400 ] || exit 1
+
+  # When any scheduled cron job fails, open (or bump) a single tracking issue
+  # so recurring failures don't sit unnoticed in the Actions tab. GitHub's
+  # default workflow-failure email is easy to miss; a pinned issue is not.
+  #
+  # Why this matters: on 2026-04-22 the generation-queue cron failed every
+  # 10 minutes for ~3 hours (prod schema drift, commit 28e5ce5) before the
+  # operator noticed. This step makes that lag minutes, not hours.
+  alert-on-failure:
+    needs: [sync, generation-queue, maintenance]
+    if: always() && (needs.sync.result == 'failure' || needs.generation-queue.result == 'failure' || needs.maintenance.result == 'failure')
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - name: Open or bump "cron failing" issue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          FAILED_JOBS: "sync=${{ needs.sync.result }} generation-queue=${{ needs.generation-queue.result }} maintenance=${{ needs.maintenance.result }}"
+        run: |
+          set -euo pipefail
+          title="[cron] scheduled job failing"
+          # gh issue list --search respects the exact title via "in:title"
+          existing=$(gh issue list --repo "$REPO" --state open --search "$title in:title" --json number --jq '.[0].number' || echo "")
+          body="Cron run failed: $RUN_URL
+          Job results: $FAILED_JOBS
+
+          First step in triage: check prod logs for 5xx from /internal/cron/* endpoints and reconcile prod schema vs deployed code (see commit 28e5ce5 for the canonical drift case)."
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --repo "$REPO" --body "$body"
+          else
+            gh issue create --repo "$REPO" --title "$title" \
+              --label "incident,cron" \
+              --body "$body" || \
+            gh issue create --repo "$REPO" --title "$title" --body "$body"
+          fi
