@@ -78,7 +78,7 @@ async def test_try_submit_lever_422_returns_failure():
 
 
 @pytest.mark.asyncio
-async def test_try_submit_lever_network_error_falls_back_to_manual():
+async def test_try_submit_lever_network_error_returns_unreachable():
     with respx.mock:
         respx.post(LEVER_API).mock(side_effect=httpx.ConnectError("connection refused"))
         result = await try_submit(
@@ -91,5 +91,7 @@ async def test_try_submit_lever_network_error_falls_back_to_manual():
             api_key="test-api-key",
         )
 
-    assert result["method"] == "manual"
+    assert result["method"] == "lever_api"
+    assert result["success"] is False
+    assert result["status_code"] is None
     assert "error" in result

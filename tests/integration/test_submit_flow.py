@@ -169,3 +169,223 @@ async def test_submit_greenhouse_api_success(client, db_session):
     assert app_row.status == "applied"
     assert app_row.submission_method == "greenhouse_api"
     assert app_row.submitted_at is not None
+
+
+@pytest.mark.asyncio
+async def test_submit_greenhouse_422_returns_http_400(client, db_session):
+    """Greenhouse 422 → endpoint returns HTTP 400 with failure_reason."""
+    apply_url = "https://boards.greenhouse.io/exampleco/jobs/12345"
+    app_row, _, _ = await _seed_submit_application(
+        db_session,
+        ats_type="greenhouse",
+        supports_api_apply=True,
+        apply_url=apply_url,
+    )
+
+    mock_result = {
+        "method": "greenhouse_api",
+        "success": False,
+        "status_code": 422,
+        "error": "HTTP 422: Unprocessable Entity",
+    }
+    with patch(
+        "app.sources.greenhouse.try_submit",
+        new=AsyncMock(return_value=mock_result),
+    ):
+        resp = await client.post(f"/api/applications/{app_row.id}/submit")
+
+    assert resp.status_code == 400
+    data = resp.json()
+    assert data["success"] is False
+    assert "failure_reason" in data
+    assert "422" in data["failure_reason"]
+
+
+@pytest.mark.asyncio
+async def test_submit_greenhouse_503_returns_http_502(client, db_session):
+    """Greenhouse 503 → endpoint returns HTTP 502 with failure_reason."""
+    apply_url = "https://boards.greenhouse.io/exampleco/jobs/12345"
+    app_row, _, _ = await _seed_submit_application(
+        db_session,
+        ats_type="greenhouse",
+        supports_api_apply=True,
+        apply_url=apply_url,
+    )
+
+    mock_result = {
+        "method": "greenhouse_api",
+        "success": False,
+        "status_code": 503,
+        "error": "HTTP 503: Service Unavailable",
+    }
+    with patch(
+        "app.sources.greenhouse.try_submit",
+        new=AsyncMock(return_value=mock_result),
+    ):
+        resp = await client.post(f"/api/applications/{app_row.id}/submit")
+
+    assert resp.status_code == 502
+    data = resp.json()
+    assert data["success"] is False
+    assert "failure_reason" in data
+
+
+@pytest.mark.asyncio
+async def test_submit_greenhouse_unreachable_returns_http_502(client, db_session):
+    """Greenhouse network error (status_code=None) → HTTP 502 + failure_reason=ats_unreachable."""
+    apply_url = "https://boards.greenhouse.io/exampleco/jobs/12345"
+    app_row, _, _ = await _seed_submit_application(
+        db_session,
+        ats_type="greenhouse",
+        supports_api_apply=True,
+        apply_url=apply_url,
+    )
+
+    mock_result = {
+        "method": "greenhouse_api",
+        "success": False,
+        "status_code": None,
+        "error": "timed out",
+    }
+    with patch(
+        "app.sources.greenhouse.try_submit",
+        new=AsyncMock(return_value=mock_result),
+    ):
+        resp = await client.post(f"/api/applications/{app_row.id}/submit")
+
+    assert resp.status_code == 502
+    data = resp.json()
+    assert data["failure_reason"] == "ats_unreachable"
+
+
+@pytest.mark.asyncio
+async def test_submit_lever_500_returns_http_502(client, db_session):
+    """Lever 500 → endpoint returns HTTP 502."""
+    apply_url = "https://jobs.lever.co/acme/abc-1234"
+    app_row, _, _ = await _seed_submit_application(
+        db_session,
+        ats_type="lever",
+        apply_url=apply_url,
+    )
+
+    mock_result = {
+        "method": "lever_api",
+        "success": False,
+        "status_code": 500,
+        "body": "Internal Server Error",
+    }
+    with patch(
+        "app.sources.lever_submit.try_submit",
+        new=AsyncMock(return_value=mock_result),
+    ):
+        resp = await client.post(f"/api/applications/{app_row.id}/submit")
+
+    assert resp.status_code == 502
+    data = resp.json()
+    assert "failure_reason" in data
+
+
+@pytest.mark.asyncio
+async def test_submit_dry_run_smoke_user_short_circuits(client, db_session):
+    """X-Smoke-DryRun: true from smoke user → HTTP 200, method=dry_run, no ATS call."""
+    import uuid as uuid_mod
+
+    from app.api.applications import SMOKE_USER_ID
+
+    apply_url = "https://boards.greenhouse.io/exampleco/jobs/99999"
+
+    # Override the authenticated user to be the smoke user
+    user = User(
+        id=SMOKE_USER_ID,
+        email="smoke@local",
+        is_active=True,
+        is_verified=True,
+        is_superuser=True,
+        hashed_password="",
+    )
+    db_session.add(user)
+    await db_session.commit()
+
+    profile = UserProfile(
+        user_id=SMOKE_USER_ID,
+        full_name="Smoke User",
+        first_name="Smoke",
+        last_name="User",
+        email="smoke@example.com",
+        base_resume_md="# Smoke",
+        target_roles=["Engineer"],
+    )
+    db_session.add(profile)
+    await db_session.commit()
+    await db_session.refresh(profile)
+
+    job = Job(
+        source="test",
+        external_id=str(uuid_mod.uuid4()),
+        title="Smoke Role",
+        company_name="Smoke Corp",
+        apply_url=apply_url,
+        ats_type="greenhouse",
+        supports_api_apply=True,
+        description_md="Smoke test role.",
+    )
+    db_session.add(job)
+    await db_session.commit()
+    await db_session.refresh(job)
+
+    app_row = Application(job_id=job.id, profile_id=profile.id)
+    db_session.add(app_row)
+    await db_session.commit()
+    await db_session.refresh(app_row)
+
+    # Override the dep so this request is authenticated as the smoke user
+    from app.api.deps import get_current_profile
+    from app.main import app as fastapi_app
+
+    fastapi_app.dependency_overrides[get_current_profile] = lambda: profile
+
+    ats_mock = AsyncMock()
+    with patch("app.sources.greenhouse.try_submit", new=ats_mock):
+        resp = await client.post(
+            f"/api/applications/{app_row.id}/submit",
+            headers={"X-Smoke-DryRun": "true"},
+        )
+
+    del fastapi_app.dependency_overrides[get_current_profile]
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["method"] == "dry_run"
+    assert data["would_submit"] is True
+    assert data["ats_type"] == "greenhouse"
+    ats_mock.assert_not_called()
+
+    await db_session.refresh(app_row)
+    assert app_row.submission_method == "dry_run"
+    assert app_row.submitted_at is not None
+
+
+@pytest.mark.asyncio
+async def test_submit_dry_run_non_smoke_user_ignored(client, db_session):
+    """X-Smoke-DryRun: true from a normal user → header silently ignored, ATS called normally."""
+    apply_url = "https://boards.greenhouse.io/exampleco/jobs/77777"
+    app_row, _, _ = await _seed_submit_application(
+        db_session,
+        ats_type="greenhouse",
+        supports_api_apply=True,
+        apply_url=apply_url,
+    )
+
+    mock_result = {"method": "greenhouse_api", "success": True, "status_code": 200}
+    ats_mock = AsyncMock(return_value=mock_result)
+    with patch("app.sources.greenhouse.try_submit", new=ats_mock):
+        resp = await client.post(
+            f"/api/applications/{app_row.id}/submit",
+            headers={"X-Smoke-DryRun": "true"},
+        )
+
+    assert resp.status_code == 200
+    data = resp.json()
+    # Normal user never gets dry_run — ATS was called
+    assert data["method"] == "greenhouse_api"
+    ats_mock.assert_called_once()
