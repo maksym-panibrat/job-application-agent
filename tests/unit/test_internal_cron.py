@@ -11,6 +11,7 @@ from app.config import Settings
 def make_app(
     secret: str = "test-secret",
     raise_server_exceptions: bool = True,
+    checkpointer: object | None = object(),
 ):
     from app.api.internal_cron import get_cron_settings, router
 
@@ -23,6 +24,11 @@ def make_app(
         google_api_key="fake",
     )
     test_app.dependency_overrides[get_cron_settings] = lambda: override_settings
+    # Emulate lifespan: the /generation-queue endpoint resolves the checkpointer
+    # from app.state.checkpointer and 503s if absent. Tests pass a sentinel
+    # object by default; pass checkpointer=None to exercise the guard.
+    if checkpointer is not None:
+        test_app.state.checkpointer = checkpointer
     return TestClient(test_app, raise_server_exceptions=raise_server_exceptions)
 
 
@@ -117,6 +123,24 @@ def test_generation_queue_budget_exhausted_returns_structured_response():
     body = resp.json()
     assert body["status"] == "budget_exhausted"
     assert body["resumes_at"] == resumes_at.isoformat()
+
+
+def test_generation_queue_missing_checkpointer_returns_503():
+    # If the FastAPI lifespan never set app.state.checkpointer, the cron endpoint
+    # 503s loudly instead of calling run_generation_queue (which would hit the
+    # RuntimeError in generate_materials).
+    client = make_app(secret="real-secret", checkpointer=None)
+    with patch(
+        "app.api.internal_cron.run_generation_queue",
+        new=AsyncMock(return_value={"attempted": 0, "succeeded": 0, "failed": 0}),
+    ) as mock:
+        resp = client.post(
+            "/internal/cron/generation-queue",
+            headers={"X-Cron-Secret": "real-secret"},
+        )
+    assert resp.status_code == 503
+    assert resp.json()["detail"] == "checkpointer not initialized"
+    mock.assert_not_called()
 
 
 def test_sync_unexpected_exception_returns_500():

@@ -7,9 +7,10 @@ Tests 1-3 are xfail: generate_materials() currently transitions straight to
 "awaiting_review".  The correct lifecycle is:
   pending -> generating -> awaiting_review (interrupt) -> ready (after resume)
 
-Test 4 is NOT xfail: it asserts the existing _generate_direct fallback
-(checkpointer=None) and acts as a regression gate for the follow-up PR that
-removes that path.
+Test 4 is NOT xfail: it asserts that generate_materials() raises
+RuntimeError when called without a checkpointer.  The _generate_direct
+fallback was removed in PR 9a of the stabilization plan (this file's
+companion change) so the LangGraph path is now mandatory.
 """
 
 import uuid
@@ -281,40 +282,45 @@ async def test_generation_regenerate_loops_back_to_load_context(db_session):
 
 
 # ---------------------------------------------------------------------------
-# Test 4 -- NOT xfail: checkpointer=None falls through to _generate_direct
+# Test 4 -- NOT xfail: checkpointer=None raises RuntimeError
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_generation_without_checkpointer_falls_through_to_direct(db_session):
+async def test_generation_without_checkpointer_raises(db_session):
     """
-    When checkpointer=None, generate_materials() skips the LangGraph path and
-    calls _generate_direct(), which completes in a single pass with no interrupt.
+    generate_materials() requires a LangGraph checkpointer. The silent
+    _generate_direct fallback was removed in PR 9a of the stabilization
+    plan, so calling with checkpointer=None now raises RuntimeError
+    before any status mutation happens.
 
-    Expected outcome (current behavior):
-    - generation_status = "ready"
-    - At least two GeneratedDocument rows (tailored_resume + cover_letter)
-
-    This test is a REGRESSION GATE for the PR 9 refactor that will delete
-    _generate_direct.  If that PR removes the fallback entirely it must also
-    update or delete this test; if it replaces the fallback with a graph-based
-    path it must ensure the same assertions still hold.
+    Expected outcome:
+    - RuntimeError raised with message matching "checkpointer required"
+    - generation_status remains at its seeded default ("pending" for a
+      freshly-created Application row; the early-exit guard runs before
+      the "generating" transition)
     """
     app_row, _, _ = await _seed_application(db_session)
+    # Seed an explicit "pending" value so we can assert it is untouched.
+    app_row.generation_status = "pending"
+    db_session.add(app_row)
+    await db_session.commit()
 
-    await generate_materials(app_row.id, db_session, checkpointer=None)
+    with pytest.raises(RuntimeError, match="checkpointer required"):
+        await generate_materials(app_row.id, db_session, checkpointer=None)
 
     await db_session.refresh(app_row)
-    assert app_row.generation_status == "ready", (
-        f"Expected 'ready' from _generate_direct path, got '{app_row.generation_status}'"
+    assert app_row.generation_status == "pending", (
+        f"Status should remain 'pending' when the checkpointer guard fires, "
+        f"got '{app_row.generation_status}'"
     )
-    assert app_row.generation_attempts == 1
+    assert app_row.generation_attempts == 0, (
+        "generation_attempts should not be incremented before the guard"
+    )
 
+    # No GeneratedDocument rows should have been written
     result = await db_session.execute(
         select(GeneratedDocument).where(GeneratedDocument.application_id == app_row.id)
     )
     docs = result.scalars().all()
-    assert len(docs) >= 2, f"Expected at least 2 docs from direct path, got {len(docs)}"
-    doc_types = {d.doc_type for d in docs}
-    assert "tailored_resume" in doc_types
-    assert "cover_letter" in doc_types
+    assert docs == [], f"Expected no documents, got {len(docs)}"
