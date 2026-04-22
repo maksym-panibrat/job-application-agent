@@ -263,6 +263,20 @@ export default function ApplicationReview() {
     },
   })
 
+  // In "awaiting_review" the graph is paused at an interrupt and the user must
+  // approve or request regeneration. Approve drives the graph to END -> "ready"
+  // (docs stay as-is); regenerate loops back through load_context and produces
+  // fresh docs, pausing at the next review interrupt.
+  const resumeApprove = useMutation({
+    mutationFn: () => api.resumeApplication(id!, 'approve'),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['application', id] }),
+  })
+  const resumeRegenerate = useMutation({
+    mutationFn: () => api.resumeApplication(id!, 'regenerate'),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['application', id] }),
+  })
+
+  // Full-reset regeneration used when the graph failed (no live checkpoint to resume).
   const regen = useMutation({
     mutationFn: () => api.regenerate(id!),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['application', id] }),
@@ -275,9 +289,14 @@ export default function ApplicationReview() {
   const job = app.job
   const docs = app.documents ?? []
   const isGenerating = app.generation_status === 'generating' || app.generation_status === 'pending'
+  const isAwaitingReview = app.generation_status === 'awaiting_review'
   const isFailed = app.generation_status === 'failed'
   const hasCustomQuestions = Object.keys(customAnswers).length > 0
   const hasUnansweredCustomQuestions = hasCustomQuestions && Object.values(customAnswers).some((a) => !a)
+  // The regenerate path (either the awaiting-review resume or the hard reset) is
+  // gated by the 3-attempt cap enforced server-side.
+  const canRegenerate = app.generation_attempts < 3
+  const regeneratePending = resumeRegenerate.isPending || regen.isPending
 
   return (
     <div className="max-w-4xl mx-auto">
@@ -314,13 +333,23 @@ export default function ApplicationReview() {
             <div className="flex flex-col items-end gap-1">
               <button
                 onClick={() => submit.mutate()}
-                disabled={submit.isPending || isGenerating || !docs.length || hasUnansweredCustomQuestions || submit.data?.method === 'needs_review'}
+                disabled={
+                  submit.isPending ||
+                  isGenerating ||
+                  isAwaitingReview ||
+                  !docs.length ||
+                  hasUnansweredCustomQuestions ||
+                  submit.data?.method === 'needs_review'
+                }
                 className="px-3 py-1.5 text-sm font-medium bg-green-600 text-white rounded-md hover:bg-green-700 disabled:opacity-50"
               >
                 {submit.isPending ? 'Submitting...' : 'Apply'}
               </button>
               {hasUnansweredCustomQuestions && (
                 <span className="text-xs text-amber-600">Answer all custom questions before applying</span>
+              )}
+              {isAwaitingReview && (
+                <span className="text-xs text-gray-500">Approve documents before applying</span>
               )}
             </div>
           </div>
@@ -371,11 +400,32 @@ export default function ApplicationReview() {
           <span>Document generation failed</span>
           <button
             onClick={() => regen.mutate()}
-            disabled={regen.isPending || app.generation_attempts >= 3}
+            disabled={regen.isPending || !canRegenerate}
             className="text-sm font-medium underline disabled:opacity-50"
           >
             Retry
           </button>
+        </div>
+      )}
+      {isAwaitingReview && (
+        <div className="mb-4 p-3 bg-indigo-50 text-indigo-800 text-sm rounded-md flex items-center justify-between gap-3">
+          <span>Documents generated — review and approve, or regenerate.</span>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => resumeRegenerate.mutate()}
+              disabled={regeneratePending || !canRegenerate}
+              className="px-3 py-1 text-xs font-medium bg-white border border-indigo-300 text-indigo-700 rounded hover:bg-indigo-100 disabled:opacity-50"
+            >
+              {resumeRegenerate.isPending ? 'Regenerating...' : 'Regenerate'}
+            </button>
+            <button
+              onClick={() => resumeApprove.mutate()}
+              disabled={resumeApprove.isPending}
+              className="px-3 py-1 text-xs font-medium bg-indigo-600 text-white rounded hover:bg-indigo-700 disabled:opacity-50"
+            >
+              {resumeApprove.isPending ? 'Approving...' : 'Approve documents'}
+            </button>
+          </div>
         </div>
       )}
 

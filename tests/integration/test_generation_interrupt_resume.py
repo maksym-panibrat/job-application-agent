@@ -2,15 +2,14 @@
 Integration tests for the LangGraph interrupt/resume contract in
 app.agents.generation_agent.build_graph.
 
-Tests 1-3 are xfail: generate_materials() currently transitions straight to
-"ready" after graph.ainvoke() returns at the interrupt -- it never writes
-"awaiting_review".  The correct lifecycle is:
+These tests lock in the lifecycle:
   pending -> generating -> awaiting_review (interrupt) -> ready (after resume)
 
-Test 4 is NOT xfail: it asserts that generate_materials() raises
-RuntimeError when called without a checkpointer.  The _generate_direct
-fallback was removed in PR 9a of the stabilization plan (this file's
-companion change) so the LangGraph path is now mandatory.
+- Tests 1-3 (flipped green in PR 9b) cover the interrupt pause, the approval
+  resume, and the regenerate-loop resume.
+- Test 4 asserts that generate_materials() raises RuntimeError when called
+  without a checkpointer (the _generate_direct fallback was removed in PR 9a
+  of the stabilization plan, so the LangGraph path is mandatory).
 """
 
 import uuid
@@ -81,19 +80,11 @@ def _memory_checkpointer() -> MemorySaver:
 
 
 # ---------------------------------------------------------------------------
-# Test 1 -- xfail: interrupt should leave status as "awaiting_review"
+# Test 1 -- interrupt should leave status as "awaiting_review"
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-@pytest.mark.xfail(
-    reason=(
-        "generate_materials() sets generation_status='ready' immediately after "
-        "graph.ainvoke() returns at the interrupt; it should set 'awaiting_review' "
-        "instead and leave the graph paused. See stabilization plan PR 9 follow-up."
-    ),
-    strict=True,
-)
 async def test_generation_interrupt_pauses_at_review(db_session):
     """
     After the first graph.ainvoke() call the graph should be paused at the
@@ -149,20 +140,11 @@ async def test_generation_interrupt_pauses_at_review(db_session):
 
 
 # ---------------------------------------------------------------------------
-# Test 2 -- xfail: resume with approval should transition to "ready"
+# Test 2 -- resume with approval should transition to "ready"
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-@pytest.mark.xfail(
-    reason=(
-        "generate_materials() sets generation_status='ready' immediately after "
-        "graph.ainvoke() returns at the interrupt, so the pre-resume status is "
-        "never 'awaiting_review' and there is no meaningful checkpoint to resume "
-        "from. See stabilization plan PR 9 follow-up."
-    ),
-    strict=True,
-)
 async def test_generation_resume_after_approval(db_session):
     """
     The correct two-step flow:
@@ -204,19 +186,11 @@ async def test_generation_resume_after_approval(db_session):
 
 
 # ---------------------------------------------------------------------------
-# Test 3 -- xfail: regenerate decision loops back through load_context
+# Test 3 -- regenerate decision loops back through load_context
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-@pytest.mark.xfail(
-    reason=(
-        "Same root cause as test 2: generate_materials() collapses the interrupt "
-        "so the pre-resume status is never 'awaiting_review', and the regenerate "
-        "loop cannot be exercised.  See stabilization plan PR 9 follow-up."
-    ),
-    strict=True,
-)
 async def test_generation_regenerate_loops_back_to_load_context(db_session):
     """
     The correct regenerate flow:
@@ -282,7 +256,7 @@ async def test_generation_regenerate_loops_back_to_load_context(db_session):
 
 
 # ---------------------------------------------------------------------------
-# Test 4 -- NOT xfail: checkpointer=None raises RuntimeError
+# Test 4 -- checkpointer=None raises RuntimeError (no xfail; unchanged in PR 9b)
 # ---------------------------------------------------------------------------
 
 

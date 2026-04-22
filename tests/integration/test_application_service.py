@@ -113,6 +113,9 @@ async def test_generate_materials_graph_path_with_fake_llm(db_session):
     generate_materials() exercises the LangGraph path (the only path since
     PR 9a removed _generate_direct). ENVIRONMENT=test activates the
     FakeListChatModel shim in get_llm(), so no real API calls are made.
+
+    The first ainvoke() pauses at the review interrupt, so the correct
+    post-call status is "awaiting_review" with docs already persisted.
     """
     _, profile, _, application = await _seed_db(db_session)
 
@@ -120,7 +123,8 @@ async def test_generate_materials_graph_path_with_fake_llm(db_session):
     await generate_materials(application.id, db_session, checkpointer=checkpointer)
 
     await db_session.refresh(application)
-    assert application.generation_status == "ready"
+    # Graph pauses at the review interrupt; status should reflect that.
+    assert application.generation_status == "awaiting_review"
 
     result = await db_session.execute(
         select(GeneratedDocument).where(GeneratedDocument.application_id == application.id)

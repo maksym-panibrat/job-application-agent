@@ -32,6 +32,16 @@ async def _generate_in_background(app_id: uuid.UUID, checkpointer) -> None:
         await generate_materials(app_id, session, checkpointer=checkpointer)
 
 
+async def _resume_in_background(app_id: uuid.UUID, decision: dict, checkpointer) -> None:
+    """Background task: resume a paused generation graph with its own DB session."""
+    from app.database import get_session_factory
+    from app.services.application_service import resume_generation
+
+    factory = get_session_factory()
+    async with factory() as session:
+        await resume_generation(app_id, decision, session, checkpointer=checkpointer)
+
+
 @router.get("")
 async def list_applications(
     status: str | None = None,
@@ -259,7 +269,10 @@ async def stream_generation_status(
                 a = await s.get(Application, uuid.UUID(app_id))
                 status = a.generation_status if a else "failed"
             yield f"data: {json.dumps({'generation_status': status})}\n\n"
-            if status in ("ready", "failed"):
+            # Terminal states: the graph is either done ("ready"/"failed") or
+            # paused at the review interrupt ("awaiting_review"). In all cases
+            # there is nothing more to poll for — the UI drives the next step.
+            if status in ("ready", "failed", "awaiting_review"):
                 return
             await asyncio.sleep(5)
         yield f"data: {json.dumps({'generation_status': 'timeout'})}\n\n"
@@ -294,6 +307,81 @@ async def regenerate_application(
     background_tasks.add_task(_generate_in_background, uuid.UUID(app_id), checkpointer)
 
     return {"id": str(app.id), "generation_status": "pending"}
+
+
+_RESUME_DECISION_MAP: dict[str, dict] = {
+    "approve": {"approved": True},
+    "regenerate": {"regenerate": True},
+}
+
+
+@router.post("/{app_id}/resume")
+async def resume_application(
+    app_id: str,
+    data: dict,
+    request: Request,
+    background_tasks: BackgroundTasks,
+    profile: UserProfile = Depends(get_current_profile),
+    session: AsyncSession = Depends(get_db),
+):
+    """Resume a paused generation graph with the user's review decision.
+
+    Body: ``{"decision": "approve"}`` or ``{"decision": "regenerate"}``.
+
+    Only valid when generation_status == 'awaiting_review'. The graph is
+    resumed in a background task so this endpoint returns quickly; the UI
+    polls the status stream to see the transition to 'ready' or the next
+    'awaiting_review'.
+    """
+    from datetime import datetime
+
+    decision = data.get("decision")
+    if decision not in _RESUME_DECISION_MAP:
+        raise HTTPException(
+            status_code=422,
+            detail="decision must be 'approve' or 'regenerate'",
+        )
+
+    app = await session.get(Application, uuid.UUID(app_id))
+    if not app or app.profile_id != profile.id:
+        raise HTTPException(status_code=404, detail="Application not found")
+
+    if app.generation_status != "awaiting_review":
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Application is not awaiting review (current generation_status="
+                f"'{app.generation_status}'); resume is only valid after the graph pauses."
+            ),
+        )
+
+    # Regenerate path re-enters load_context and will bump generation_attempts
+    # when the graph loops — but the model-level check in generate_materials is
+    # bypassed during resume, so enforce it here too.
+    if decision == "regenerate" and app.generation_attempts >= 3:
+        raise HTTPException(status_code=429, detail="Max generation attempts (3) reached")
+
+    checkpointer = getattr(request.app.state, "checkpointer", None)
+    if checkpointer is None:
+        raise HTTPException(status_code=503, detail="checkpointer not initialized")
+
+    # Flip to "generating" before scheduling so the UI sees the transition
+    # immediately (the status-stream poll is what watches for the next state).
+    app.generation_status = "generating"
+    app.updated_at = datetime.now(UTC)
+    session.add(app)
+    await session.commit()
+
+    command_payload = _RESUME_DECISION_MAP[decision]
+    background_tasks.add_task(
+        _resume_in_background, uuid.UUID(app_id), command_payload, checkpointer
+    )
+
+    return {
+        "id": str(app.id),
+        "generation_status": "generating",
+        "decision": decision,
+    }
 
 
 SMOKE_USER_ID = uuid.UUID("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")

@@ -3,6 +3,11 @@ Application service — generate_materials() background pipeline.
 
 Called by match_service when a job scores above threshold.
 Drives the generation agent and saves resulting documents to DB.
+
+Lifecycle:
+    pending -> generating -> awaiting_review (interrupt) -> ready (after approve)
+                                           \
+                                            -> regenerate -> generating -> awaiting_review ...
 """
 
 import time
@@ -10,6 +15,7 @@ import uuid
 from datetime import UTC, datetime
 
 import structlog
+from langgraph.types import Command
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
@@ -57,6 +63,16 @@ async def save_documents(
     return saved
 
 
+def _status_from_graph_next(next_nodes: tuple) -> str:
+    """Map LangGraph state.next to an application generation_status.
+
+    - Empty tuple = graph reached END -> "ready".
+    - Non-empty = graph paused at an interrupt (before the 'review' node in
+      our generation graph) -> "awaiting_review".
+    """
+    return "ready" if next_nodes == () else "awaiting_review"
+
+
 async def generate_materials(
     application_id: uuid.UUID,
     session: AsyncSession,
@@ -69,6 +85,10 @@ async def generate_materials(
     A LangGraph checkpointer is required — there is no direct-generation
     fallback. Callers should resolve the checkpointer from
     ``request.app.state.checkpointer`` (initialized in the FastAPI lifespan).
+
+    After graph.ainvoke() returns, inspect the graph state: if paused at the
+    review interrupt, set ``awaiting_review``; if the graph reached END, set
+    ``ready``.
     """
     if checkpointer is None:
         raise RuntimeError(
@@ -145,7 +165,10 @@ async def generate_materials(
 
         # Run until interrupt (before review node)
         await graph.ainvoke(initial_state, config)
-        # Graph is now paused at review interrupt — docs saved by save_documents_node
+        # Inspect where the graph landed — either paused at 'review' (docs saved
+        # by save_documents_node, awaiting user decision) or at END.
+        state = await graph.aget_state(config)
+        next_status = _status_from_graph_next(state.next)
 
     except Exception as exc:
         await log.aexception(
@@ -160,8 +183,7 @@ async def generate_materials(
         await session.commit()
         return
 
-    # Mark ready (only if documents were saved by the graph or direct path)
-    app.generation_status = "ready"
+    app.generation_status = next_status
     app.updated_at = datetime.now(UTC)
     session.add(app)
     await session.commit()
@@ -169,5 +191,80 @@ async def generate_materials(
         "generation.completed",
         application_id=str(application_id),
         status=app.generation_status,
+        graph_next=list(state.next),
+        duration_ms=int((time.perf_counter() - t0) * 1000),
+    )
+
+
+async def resume_generation(
+    application_id: uuid.UUID,
+    decision: dict,
+    session: AsyncSession,
+    checkpointer=None,
+) -> None:
+    """
+    Resume a paused generation graph with the user's review decision.
+
+    ``decision`` is the payload passed to ``Command(resume=...)``:
+      - ``{"approved": True}``  -> graph proceeds to finalize, ends -> "ready"
+      - ``{"regenerate": True}`` -> graph loops back to load_context, generates
+        new docs, and pauses at the next review interrupt -> "awaiting_review"
+
+    After the resume invoke, the new status is derived from ``state.next``.
+    """
+    if checkpointer is None:
+        raise RuntimeError(
+            "checkpointer required — resume_generation cannot run without a LangGraph checkpointer"
+        )
+
+    t0 = time.perf_counter()
+    await log.ainfo(
+        "generation.resumed",
+        application_id=str(application_id),
+        decision=decision,
+    )
+
+    app = await session.get(Application, application_id)
+    if not app:
+        await log.awarning("resume_generation.not_found", application_id=str(application_id))
+        return
+
+    try:
+        from app.agents.generation_agent import build_graph
+
+        graph = build_graph(checkpointer)
+        thread_id = f"gen-{application_id}"
+        config = {"configurable": {"thread_id": thread_id}}
+
+        await graph.ainvoke(Command(resume=decision), config)
+
+        state = await graph.aget_state(config)
+        next_status = _status_from_graph_next(state.next)
+
+    except Exception as exc:
+        await log.aexception(
+            "generation.resume_failed",
+            application_id=str(application_id),
+            error=str(exc),
+            duration_ms=int((time.perf_counter() - t0) * 1000),
+        )
+        app.generation_status = "failed"
+        app.updated_at = datetime.now(UTC)
+        session.add(app)
+        await session.commit()
+        return
+
+    app.generation_status = next_status
+    app.updated_at = datetime.now(UTC)
+    session.add(app)
+    await session.commit()
+
+    outcome = "approved" if next_status == "ready" else "regenerated"
+    await log.ainfo(
+        "generation.resume_completed",
+        application_id=str(application_id),
+        status=app.generation_status,
+        outcome=outcome,
+        graph_next=list(state.next),
         duration_ms=int((time.perf_counter() - t0) * 1000),
     )

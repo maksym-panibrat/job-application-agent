@@ -301,7 +301,31 @@ def build_graph(checkpointer: AsyncPostgresSaver) -> StateGraph:
             return "load_context"
         return "finalize"
 
-    def finalize_node(state: GenerationState) -> dict:
+    async def finalize_node(state: GenerationState) -> dict:
+        """Mark the Application row as ready after the user approves.
+
+        We write directly from the graph so callers that drive the graph via
+        ``Command(resume=...)`` without going through
+        ``application_service.resume_generation`` still see the DB row
+        transition to "ready" (see the interrupt/resume contract tests).
+        """
+        from datetime import UTC, datetime
+
+        from app.database import get_session_factory
+        from app.models.application import Application
+
+        application_id_str = state.get("application_id")
+        if application_id_str:
+            import uuid as _uuid
+
+            factory = get_session_factory()
+            async with factory() as session:
+                app_row = await session.get(Application, _uuid.UUID(application_id_str))
+                if app_row is not None:
+                    app_row.generation_status = "ready"
+                    app_row.updated_at = datetime.now(UTC)
+                    session.add(app_row)
+                    await session.commit()
         return {"generation_status": "ready"}
 
     builder = StateGraph(GenerationState)
