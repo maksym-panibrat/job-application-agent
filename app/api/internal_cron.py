@@ -80,7 +80,9 @@ async def _run_cron(name: str, task: Callable[[], Awaitable[dict]]) -> dict:
         raise
     duration_ms = int((time.perf_counter() - t0) * 1000)
     await log.ainfo(f"cron.{name}.completed", duration_ms=duration_ms, **result)
-    return {"status": "ok", "duration_ms": duration_ms, **result}
+    # Spread task result first so the handler-level contract keys (status, duration_ms)
+    # always win if a task ever starts returning a key with the same name.
+    return {**result, "status": "ok", "duration_ms": duration_ms}
 
 
 @router.post("/sync", dependencies=[Depends(verify_secret)])
