@@ -173,6 +173,11 @@ export const api = {
     apiFetch<{ id: string; generation_status: string }>(`/api/applications/${id}/regenerate`, {
       method: 'POST',
     }),
+  resumeApplication: (id: string, decision: 'approve' | 'regenerate') =>
+    apiFetch<{ id: string; generation_status: string; decision: string }>(
+      `/api/applications/${id}/resume`,
+      { method: 'POST', body: JSON.stringify({ decision }) }
+    ),
   submitApplication: (id: string) =>
     apiFetch<{ success?: boolean; method: string; apply_url?: string; error?: string; unanswered_questions?: string[] }>(
       `/api/applications/${id}/submit`,

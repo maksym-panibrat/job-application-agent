@@ -3,11 +3,12 @@
 import asyncio
 import json
 import uuid
-from datetime import UTC
+from datetime import UTC, datetime
 
 import structlog
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
@@ -22,14 +23,67 @@ log = structlog.get_logger()
 router = APIRouter(prefix="/api/applications", tags=["applications"])
 
 
+async def _mark_generation_failed(app_id: uuid.UUID, failure_event: str) -> None:
+    """Open a fresh session and flip ``generating`` -> ``failed``.
+
+    Used as a last-resort recovery path when a background task crashes before
+    the service layer's own try/except can set ``failed`` itself. We only
+    touch the row when it is still ``generating`` to avoid clobbering a
+    terminal state written elsewhere.
+    """
+    from app.database import get_session_factory
+
+    try:
+        factory = get_session_factory()
+        async with factory() as recovery_session:
+            row = await recovery_session.get(Application, app_id)
+            if row is not None and row.generation_status == "generating":
+                row.generation_status = "failed"
+                row.updated_at = datetime.now(UTC)
+                recovery_session.add(row)
+                await recovery_session.commit()
+    except Exception:
+        await log.aexception(failure_event, application_id=str(app_id))
+
+
 async def _generate_in_background(app_id: uuid.UUID, checkpointer) -> None:
-    """Background task: generate materials with its own DB session."""
+    """Background task: generate materials with its own DB session.
+
+    Wraps ``generate_materials`` in a fail-safe recovery block so a crash in
+    session acquisition / imports / the service call itself cannot leave the
+    row pinned in ``generating`` forever.
+    """
     from app.database import get_session_factory
     from app.services.application_service import generate_materials
 
-    factory = get_session_factory()
-    async with factory() as session:
-        await generate_materials(app_id, session, checkpointer=checkpointer)
+    try:
+        factory = get_session_factory()
+        async with factory() as session:
+            await generate_materials(app_id, session, checkpointer=checkpointer)
+    except Exception:
+        await log.aexception("generate.background_crash", application_id=str(app_id))
+        await _mark_generation_failed(app_id, "generate.background_recovery_failed")
+
+
+async def _resume_in_background(app_id: uuid.UUID, decision: dict, checkpointer) -> None:
+    """Background task: resume a paused generation graph with its own DB session.
+
+    Wraps ``resume_generation`` in a fail-safe recovery block: if anything at
+    all (session acquisition, imports, the service call itself) raises before
+    ``resume_generation``'s internal try/except sets status to ``failed``,
+    we open a fresh session and flip ``generating`` -> ``failed`` so the row
+    never stays pinned in ``generating``.
+    """
+    from app.database import get_session_factory
+    from app.services.application_service import resume_generation
+
+    try:
+        factory = get_session_factory()
+        async with factory() as session:
+            await resume_generation(app_id, decision, session, checkpointer=checkpointer)
+    except Exception:
+        await log.aexception("resume.background_crash", application_id=str(app_id))
+        await _mark_generation_failed(app_id, "resume.background_recovery_failed")
 
 
 @router.get("")
@@ -148,8 +202,6 @@ async def review_application(
 ):
     """Action: approved, dismissed, applied.
     Approving also triggers immediate document generation."""
-    from datetime import datetime
-
     app = await session.get(Application, uuid.UUID(app_id))
     if not app or app.profile_id != profile.id:
         raise HTTPException(status_code=404, detail="Application not found")
@@ -259,7 +311,10 @@ async def stream_generation_status(
                 a = await s.get(Application, uuid.UUID(app_id))
                 status = a.generation_status if a else "failed"
             yield f"data: {json.dumps({'generation_status': status})}\n\n"
-            if status in ("ready", "failed"):
+            # Terminal states: the graph is either done ("ready"/"failed") or
+            # paused at the review interrupt ("awaiting_review"). In all cases
+            # there is nothing more to poll for — the UI drives the next step.
+            if status in ("ready", "failed", "awaiting_review"):
                 return
             await asyncio.sleep(5)
         yield f"data: {json.dumps({'generation_status': 'timeout'})}\n\n"
@@ -276,8 +331,6 @@ async def regenerate_application(
     session: AsyncSession = Depends(get_db),
 ):
     """Reset generation_status to pending and trigger generation immediately."""
-    from datetime import datetime
-
     app = await session.get(Application, uuid.UUID(app_id))
     if not app or app.profile_id != profile.id:
         raise HTTPException(status_code=404, detail="Application not found")
@@ -294,6 +347,116 @@ async def regenerate_application(
     background_tasks.add_task(_generate_in_background, uuid.UUID(app_id), checkpointer)
 
     return {"id": str(app.id), "generation_status": "pending"}
+
+
+_RESUME_DECISION_MAP: dict[str, dict] = {
+    "approve": {"approved": True},
+    "regenerate": {"regenerate": True},
+}
+
+
+@router.post("/{app_id}/resume")
+async def resume_application(
+    app_id: str,
+    data: dict,
+    request: Request,
+    background_tasks: BackgroundTasks,
+    profile: UserProfile = Depends(get_current_profile),
+    session: AsyncSession = Depends(get_db),
+):
+    """Resume a paused generation graph with the user's review decision.
+
+    Body: ``{"decision": "approve"}`` or ``{"decision": "regenerate"}``.
+
+    Only valid when generation_status == 'awaiting_review'. The graph is
+    resumed in a background task so this endpoint returns quickly; the UI
+    polls the status stream to see the transition to 'ready' or the next
+    'awaiting_review'.
+    """
+    decision = data.get("decision")
+    if decision not in _RESUME_DECISION_MAP:
+        raise HTTPException(
+            status_code=422,
+            detail="decision must be 'approve' or 'regenerate'",
+        )
+
+    app_uuid = uuid.UUID(app_id)
+
+    # 404 / ownership check first — read a snapshot to verify the row exists
+    # and belongs to the caller. The actual status transition is guarded
+    # atomically below to prevent TOCTOU races between concurrent resume POSTs.
+    app = await session.get(Application, app_uuid)
+    if not app or app.profile_id != profile.id:
+        raise HTTPException(status_code=404, detail="Application not found")
+
+    checkpointer = getattr(request.app.state, "checkpointer", None)
+    if checkpointer is None:
+        raise HTTPException(status_code=503, detail="checkpointer not initialized")
+
+    # Atomic conditional UPDATE: flip awaiting_review -> generating in a single
+    # statement so two concurrent POSTs cannot both pass the guard. The
+    # regenerate path additionally enforces the 3-attempt cap and bumps the
+    # counter atomically, so a caller cannot bypass the cap by racing.
+    if decision == "regenerate":
+        result = await session.execute(
+            text(
+                "UPDATE applications "
+                "SET generation_status = 'generating', "
+                "    generation_attempts = generation_attempts + 1, "
+                "    updated_at = NOW() "
+                "WHERE id = :id "
+                "  AND generation_status = 'awaiting_review' "
+                "  AND generation_attempts < 3 "
+                "RETURNING generation_attempts"
+            ),
+            {"id": app_uuid},
+        )
+        row = result.fetchone()
+        if row is None:
+            # Disambiguate 409 (wrong status) vs 429 (attempts maxed)
+            await session.rollback()
+            latest = await session.get(Application, app_uuid)
+            if latest is not None and latest.generation_attempts >= 3:
+                raise HTTPException(status_code=429, detail="Max generation attempts (3) reached")
+            current = latest.generation_status if latest else "unknown"
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"Application is not awaiting review (current generation_status="
+                    f"'{current}'); resume is only valid after the graph pauses."
+                ),
+            )
+    else:
+        result = await session.execute(
+            text(
+                "UPDATE applications "
+                "SET generation_status = 'generating', updated_at = NOW() "
+                "WHERE id = :id AND generation_status = 'awaiting_review' "
+                "RETURNING id"
+            ),
+            {"id": app_uuid},
+        )
+        if result.fetchone() is None:
+            await session.rollback()
+            latest = await session.get(Application, app_uuid)
+            current = latest.generation_status if latest else "unknown"
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"Application is not awaiting review (current generation_status="
+                    f"'{current}'); resume is only valid after the graph pauses."
+                ),
+            )
+    await session.commit()
+
+    command_payload = _RESUME_DECISION_MAP[decision]
+    background_tasks.add_task(_resume_in_background, app_uuid, command_payload, checkpointer)
+
+    return {
+        "id": str(app.id),
+        "generation_status": "generating",
+        "decision": decision,
+    }
 
 
 SMOKE_USER_ID = uuid.UUID("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
@@ -315,8 +478,6 @@ async def submit_application(
       400 — ATS rejected the submission (4xx upstream)
       502 — ATS server error (5xx upstream) or network/timeout failure
     """
-    from datetime import datetime
-
     app = await session.get(Application, uuid.UUID(app_id))
     if not app or app.profile_id != profile.id:
         raise HTTPException(status_code=404, detail="Application not found")

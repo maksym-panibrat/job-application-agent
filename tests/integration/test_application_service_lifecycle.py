@@ -115,12 +115,14 @@ async def test_generate_materials_max_attempts_skipped(db_session):
 
 
 @pytest.mark.asyncio
-async def test_generate_materials_graph_path_sets_ready(db_session):
+async def test_generate_materials_graph_path_sets_awaiting_review(db_session):
     """
     generate_materials() with a MemorySaver checkpointer exercises the LangGraph
     code path (the only route since PR 9a removed _generate_direct). Since
     ENVIRONMENT=test, the fake LLM is used. Verifies that the graph path
-    correctly saves documents and sets status to "ready".
+    correctly saves documents and pauses at the review interrupt, leaving
+    generation_status = "awaiting_review" (promoted to "ready" only after
+    resume_generation() approves).
     """
     app_row, _, _ = await _seed_application(db_session)
 
@@ -128,7 +130,7 @@ async def test_generate_materials_graph_path_sets_ready(db_session):
     await generate_materials(app_row.id, db_session, checkpointer=checkpointer)
 
     await db_session.refresh(app_row)
-    assert app_row.generation_status == "ready"
+    assert app_row.generation_status == "awaiting_review"
 
     result = await db_session.execute(
         select(GeneratedDocument).where(GeneratedDocument.application_id == app_row.id)
@@ -138,3 +140,55 @@ async def test_generate_materials_graph_path_sets_ready(db_session):
     doc_types = {d.doc_type for d in docs}
     assert "tailored_resume" in doc_types
     assert "cover_letter" in doc_types
+
+
+@pytest.mark.asyncio
+async def test_resume_generation_approve_sets_ready(db_session):
+    """
+    After generate_materials() pauses at the review interrupt, calling
+    resume_generation() with {"approved": True} should drive the graph to END
+    and flip generation_status to "ready".
+    """
+    from app.services.application_service import resume_generation
+
+    app_row, _, _ = await _seed_application(db_session)
+
+    checkpointer = MemorySaver()
+    await generate_materials(app_row.id, db_session, checkpointer=checkpointer)
+    await db_session.refresh(app_row)
+    assert app_row.generation_status == "awaiting_review"
+
+    await resume_generation(app_row.id, {"approved": True}, db_session, checkpointer=checkpointer)
+    await db_session.refresh(app_row)
+    assert app_row.generation_status == "ready"
+
+
+@pytest.mark.asyncio
+async def test_resume_generation_regenerate_stays_awaiting_review(db_session):
+    """
+    Resuming with {"regenerate": True} loops the graph back through
+    load_context and pauses at the next review interrupt, so status
+    should remain "awaiting_review".
+    """
+    from app.services.application_service import resume_generation
+
+    app_row, _, _ = await _seed_application(db_session)
+
+    checkpointer = MemorySaver()
+    await generate_materials(app_row.id, db_session, checkpointer=checkpointer)
+    await db_session.refresh(app_row)
+    assert app_row.generation_status == "awaiting_review"
+
+    await resume_generation(app_row.id, {"regenerate": True}, db_session, checkpointer=checkpointer)
+    await db_session.refresh(app_row)
+    assert app_row.generation_status == "awaiting_review"
+
+
+@pytest.mark.asyncio
+async def test_resume_generation_requires_checkpointer(db_session):
+    """resume_generation() must raise RuntimeError without a checkpointer."""
+    from app.services.application_service import resume_generation
+
+    app_row, _, _ = await _seed_application(db_session)
+    with pytest.raises(RuntimeError, match="checkpointer required"):
+        await resume_generation(app_row.id, {"approved": True}, db_session, checkpointer=None)

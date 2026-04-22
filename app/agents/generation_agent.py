@@ -302,6 +302,14 @@ def build_graph(checkpointer: AsyncPostgresSaver) -> StateGraph:
         return "finalize"
 
     def finalize_node(state: GenerationState) -> dict:
+        """Terminal node — graph END follows.
+
+        Only mutates the graph's in-memory state. The DB ``generation_status``
+        is owned by the service layer (``generate_materials`` and
+        ``resume_generation`` write it exactly once, after ``graph.ainvoke``
+        returns). Writing here too would race with those callers and re-read
+        a stale ``app`` snapshot afterwards.
+        """
         return {"generation_status": "ready"}
 
     builder = StateGraph(GenerationState)
