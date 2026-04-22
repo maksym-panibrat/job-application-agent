@@ -3,11 +3,12 @@
 import asyncio
 import json
 import uuid
-from datetime import UTC
+from datetime import UTC, datetime
 
 import structlog
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
@@ -158,8 +159,6 @@ async def review_application(
 ):
     """Action: approved, dismissed, applied.
     Approving also triggers immediate document generation."""
-    from datetime import datetime
-
     app = await session.get(Application, uuid.UUID(app_id))
     if not app or app.profile_id != profile.id:
         raise HTTPException(status_code=404, detail="Application not found")
@@ -289,8 +288,6 @@ async def regenerate_application(
     session: AsyncSession = Depends(get_db),
 ):
     """Reset generation_status to pending and trigger generation immediately."""
-    from datetime import datetime
-
     app = await session.get(Application, uuid.UUID(app_id))
     if not app or app.profile_id != profile.id:
         raise HTTPException(status_code=404, detail="Application not found")
@@ -333,8 +330,6 @@ async def resume_application(
     polls the status stream to see the transition to 'ready' or the next
     'awaiting_review'.
     """
-    from datetime import datetime
-
     decision = data.get("decision")
     if decision not in _RESUME_DECISION_MAP:
         raise HTTPException(
@@ -342,40 +337,77 @@ async def resume_application(
             detail="decision must be 'approve' or 'regenerate'",
         )
 
-    app = await session.get(Application, uuid.UUID(app_id))
+    app_uuid = uuid.UUID(app_id)
+
+    # 404 / ownership check first — read a snapshot to verify the row exists
+    # and belongs to the caller. The actual status transition is guarded
+    # atomically below to prevent TOCTOU races between concurrent resume POSTs.
+    app = await session.get(Application, app_uuid)
     if not app or app.profile_id != profile.id:
         raise HTTPException(status_code=404, detail="Application not found")
-
-    if app.generation_status != "awaiting_review":
-        raise HTTPException(
-            status_code=409,
-            detail=(
-                f"Application is not awaiting review (current generation_status="
-                f"'{app.generation_status}'); resume is only valid after the graph pauses."
-            ),
-        )
-
-    # Regenerate path re-enters load_context and will bump generation_attempts
-    # when the graph loops — but the model-level check in generate_materials is
-    # bypassed during resume, so enforce it here too.
-    if decision == "regenerate" and app.generation_attempts >= 3:
-        raise HTTPException(status_code=429, detail="Max generation attempts (3) reached")
 
     checkpointer = getattr(request.app.state, "checkpointer", None)
     if checkpointer is None:
         raise HTTPException(status_code=503, detail="checkpointer not initialized")
 
-    # Flip to "generating" before scheduling so the UI sees the transition
-    # immediately (the status-stream poll is what watches for the next state).
-    app.generation_status = "generating"
-    app.updated_at = datetime.now(UTC)
-    session.add(app)
+    # Atomic conditional UPDATE: flip awaiting_review -> generating in a single
+    # statement so two concurrent POSTs cannot both pass the guard. The
+    # regenerate path additionally enforces the 3-attempt cap and bumps the
+    # counter atomically, so a caller cannot bypass the cap by racing.
+    if decision == "regenerate":
+        result = await session.execute(
+            text(
+                "UPDATE applications "
+                "SET generation_status = 'generating', "
+                "    generation_attempts = generation_attempts + 1, "
+                "    updated_at = NOW() "
+                "WHERE id = :id "
+                "  AND generation_status = 'awaiting_review' "
+                "  AND generation_attempts < 3 "
+                "RETURNING generation_attempts"
+            ),
+            {"id": app_uuid},
+        )
+        row = result.fetchone()
+        if row is None:
+            # Disambiguate 409 (wrong status) vs 429 (attempts maxed)
+            await session.rollback()
+            latest = await session.get(Application, app_uuid)
+            if latest is not None and latest.generation_attempts >= 3:
+                raise HTTPException(status_code=429, detail="Max generation attempts (3) reached")
+            current = latest.generation_status if latest else "unknown"
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"Application is not awaiting review (current generation_status="
+                    f"'{current}'); resume is only valid after the graph pauses."
+                ),
+            )
+    else:
+        result = await session.execute(
+            text(
+                "UPDATE applications "
+                "SET generation_status = 'generating', updated_at = NOW() "
+                "WHERE id = :id AND generation_status = 'awaiting_review' "
+                "RETURNING id"
+            ),
+            {"id": app_uuid},
+        )
+        if result.fetchone() is None:
+            await session.rollback()
+            latest = await session.get(Application, app_uuid)
+            current = latest.generation_status if latest else "unknown"
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"Application is not awaiting review (current generation_status="
+                    f"'{current}'); resume is only valid after the graph pauses."
+                ),
+            )
     await session.commit()
 
     command_payload = _RESUME_DECISION_MAP[decision]
-    background_tasks.add_task(
-        _resume_in_background, uuid.UUID(app_id), command_payload, checkpointer
-    )
+    background_tasks.add_task(_resume_in_background, app_uuid, command_payload, checkpointer)
 
     return {
         "id": str(app.id),
@@ -403,8 +435,6 @@ async def submit_application(
       400 — ATS rejected the submission (4xx upstream)
       502 — ATS server error (5xx upstream) or network/timeout failure
     """
-    from datetime import datetime
-
     app = await session.get(Application, uuid.UUID(app_id))
     if not app or app.profile_id != profile.id:
         raise HTTPException(status_code=404, detail="Application not found")

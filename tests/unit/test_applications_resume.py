@@ -55,7 +55,37 @@ def _make_test_app(
     session = AsyncMock()
     session.get = AsyncMock(return_value=app_row)
     session.commit = AsyncMock()
+    session.rollback = AsyncMock()
     session.add = MagicMock()
+
+    # Simulate the atomic UPDATE ... RETURNING used by the resume endpoint.
+    # The conditional UPDATE returns a row only when the pre-conditions
+    # (status = 'awaiting_review', and for regenerate generation_attempts < 3)
+    # are satisfied on the mocked Application row. We inspect the SQL text and
+    # parameters to decide whether the update "matched" a row.
+    def _execute_side_effect(stmt, params=None):
+        sql = str(stmt).lower()
+        result = MagicMock()
+        is_update = "update applications" in sql
+        if not is_update or app_row is None:
+            result.fetchone = MagicMock(return_value=None)
+            return result
+
+        is_regenerate = "generation_attempts = generation_attempts + 1" in sql
+        status_ok = app_row.generation_status == "awaiting_review"
+        attempts_ok = (not is_regenerate) or app_row.generation_attempts < 3
+        if status_ok and attempts_ok:
+            if is_regenerate:
+                app_row.generation_attempts += 1
+            app_row.generation_status = "generating"
+            row_value = MagicMock()
+            row_value.__getitem__ = lambda _self, _k: app_row.generation_attempts
+            result.fetchone = MagicMock(return_value=row_value)
+        else:
+            result.fetchone = MagicMock(return_value=None)
+        return result
+
+    session.execute = AsyncMock(side_effect=_execute_side_effect)
 
     async def _get_db_override():
         yield session
@@ -236,3 +266,83 @@ def test_resume_no_checkpointer_returns_503():
     )
     assert resp.status_code == 503
     assert resp.json()["detail"] == "checkpointer not initialized"
+
+
+def test_resume_generating_returns_409():
+    """Status=generating already (e.g. a resume is in flight) — reject."""
+    pid = uuid.uuid4()
+    app_row = _mock_application(profile_id=pid, generation_status="generating")
+    app, _ = _make_test_app(app_row=app_row, profile_id=pid)
+
+    client = TestClient(app)
+    resp = client.post(
+        f"/api/applications/{app_row.id}/resume",
+        json={"decision": "approve"},
+    )
+    assert resp.status_code == 409
+
+
+def test_resume_pending_returns_409():
+    """Status=pending (initial queued state) — resume not valid yet."""
+    pid = uuid.uuid4()
+    app_row = _mock_application(profile_id=pid, generation_status="pending")
+    app, _ = _make_test_app(app_row=app_row, profile_id=pid)
+
+    client = TestClient(app)
+    resp = client.post(
+        f"/api/applications/{app_row.id}/resume",
+        json={"decision": "approve"},
+    )
+    assert resp.status_code == 409
+
+
+def test_resume_approve_schedules_mapped_payload():
+    """Happy path: the mapped Command payload reaches _resume_in_background.
+
+    The endpoint must translate the public ``"approve"`` string into the
+    LangGraph ``Command(resume={"approved": True})`` payload before scheduling
+    the background task — never pass the raw string through.
+    """
+    from app.api import applications as applications_mod
+
+    pid = uuid.uuid4()
+    app_row = _mock_application(profile_id=pid, generation_status="awaiting_review")
+    app, _ = _make_test_app(app_row=app_row, profile_id=pid)
+
+    with patch.object(
+        applications_mod, "_resume_in_background", new=AsyncMock(return_value=None)
+    ) as spy:
+        client = TestClient(app)
+        resp = client.post(
+            f"/api/applications/{app_row.id}/resume",
+            json={"decision": "approve"},
+        )
+        assert resp.status_code == 200
+        # Positional args: (app_id, command_payload, checkpointer)
+        assert spy.await_count == 1
+        _, payload, _ = spy.await_args.args
+        assert payload == {"approved": True}
+
+
+def test_resume_regenerate_schedules_mapped_payload():
+    """Happy path: regenerate string maps to ``{"regenerate": True}``."""
+    from app.api import applications as applications_mod
+
+    pid = uuid.uuid4()
+    app_row = _mock_application(
+        profile_id=pid, generation_status="awaiting_review", generation_attempts=1
+    )
+    app, _ = _make_test_app(app_row=app_row, profile_id=pid)
+
+    with patch.object(
+        applications_mod, "_resume_in_background", new=AsyncMock(return_value=None)
+    ) as spy:
+        client = TestClient(app)
+        resp = client.post(
+            f"/api/applications/{app_row.id}/resume",
+            json={"decision": "regenerate"},
+        )
+        assert resp.status_code == 200
+        assert spy.await_count == 1
+        _, payload, _ = spy.await_args.args
+        assert payload == {"regenerate": True}
