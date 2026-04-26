@@ -145,14 +145,14 @@ async def test_dismiss_application(test_app, monkeypatch):
 
     factory = get_session_factory()
     async with factory() as session:
-        # Ensure dev user + profile exist (created by first GET /api/profile)
-        await test_app.get("/api/profile")
+        # Retrieve the seeded profile via API (dependency override resolves to it)
+        profile_resp = await test_app.get("/api/profile")
+        profile_id = uuid.UUID(profile_resp.json()["id"])
 
-        user_id = uuid.UUID("00000000-0000-0000-0000-000000000001")
         from sqlmodel import select
 
         profile_result = await session.execute(
-            select(UserProfile).where(UserProfile.user_id == user_id)
+            select(UserProfile).where(UserProfile.id == profile_id)
         )
         profile = profile_result.scalar_one()
 
