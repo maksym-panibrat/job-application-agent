@@ -1,6 +1,13 @@
 import os
 import uuid
 
+import pytest
+
+pytest.skip(
+    "SINGLE_USER_ID removed; this file is deleted in Task 1.5",
+    allow_module_level=True,
+)
+
 
 def setup_env():
     os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/test")
