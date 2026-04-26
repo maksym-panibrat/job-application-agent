@@ -137,7 +137,9 @@ app.include_router(cron_router)
 app.include_router(status_router)
 app.include_router(users_router)
 
-# OAuth routes — only mount if credentials are configured
+# OAuth routes — always mounted in any environment that has Google credentials.
+# In production we require them (Settings validator enforces this); in dev/test
+# they may legitimately be absent and tests use the JWT path directly.
 if _startup_settings.google_oauth_client_id and _startup_settings.google_oauth_client_secret:
     from app.api.auth import auth_backend, fastapi_users, get_google_oauth_client
 

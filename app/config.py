@@ -16,7 +16,6 @@ class Settings(BaseSettings):
     max_matches_displayed: int = 20
     job_sync_interval_hours: int = 24
     environment: str = "development"
-    auth_enabled: bool = False
     google_oauth_client_id: SecretStr | None = None
     google_oauth_client_secret: SecretStr | None = None
     github_oauth_client_id: SecretStr | None = None
@@ -58,9 +57,8 @@ class Settings(BaseSettings):
                 raise ValueError("jwt_secret must be set in production")
             if self.cron_shared_secret.get_secret_value() == "dev-cron-secret":
                 raise ValueError("cron_shared_secret must be set in production")
-            if self.auth_enabled:
-                if not self.google_oauth_client_id or not self.google_oauth_client_secret:
-                    raise ValueError("Google OAuth credentials required when AUTH_ENABLED=true")
+            if not self.google_oauth_client_id or not self.google_oauth_client_secret:
+                raise ValueError("Google OAuth credentials required in production")
         return self
 
 
