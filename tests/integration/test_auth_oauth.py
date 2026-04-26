@@ -1,7 +1,7 @@
 """
 Integration tests for JWT authentication path.
 
-AUTH_ENABLED=true is set per fixture. A User row is seeded in the test DB.
+A User row is seeded in the test DB.
 JWTs are minted with PyJWT using the test secret and the same payload format
 that app/api/deps.py decodes.
 """
@@ -33,10 +33,9 @@ def _mint_jwt(user_id: uuid.UUID, expired: bool = False) -> str:
 @pytest.fixture
 async def auth_client(db_session, monkeypatch):
     """
-    HTTP client with AUTH_ENABLED=true against the real testcontainers DB.
+    HTTP client against the real testcontainers DB.
     Returns (client, seeded_user_id).
     """
-    monkeypatch.setenv("AUTH_ENABLED", "true")
     monkeypatch.setenv("JWT_SECRET", _TEST_JWT_SECRET)
     monkeypatch.setenv("CRON_SHARED_SECRET", "real-cron-secret")
     monkeypatch.setenv("GOOGLE_OAUTH_CLIENT_ID", "fake-client-id")

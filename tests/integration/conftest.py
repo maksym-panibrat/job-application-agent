@@ -67,9 +67,6 @@ def patch_settings(asyncpg_url, monkeypatch):
     monkeypatch.setenv("ENVIRONMENT", "test")
     monkeypatch.setenv("GOOGLE_API_KEY", "fake-test-key")
     monkeypatch.setenv("CRON_SHARED_SECRET", "dev-cron-secret")
-    # Force the JWT auth path so seeded_user / auth_headers actually gate access
-    # rather than falling through to the single-user bypass (removed in PR 1.4).
-    monkeypatch.setenv("AUTH_ENABLED", "true")
     # Reset the cached settings singleton between tests
     import app.config as cfg
 
