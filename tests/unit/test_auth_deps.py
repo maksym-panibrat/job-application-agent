@@ -13,7 +13,7 @@ Approach:
 
 import uuid
 from datetime import UTC, datetime, timedelta
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
 import jwt
 from fastapi import FastAPI
@@ -68,14 +68,9 @@ def _make_settings() -> Settings:
 
 
 def _make_session_mock(returned_user: User | None) -> AsyncMock:
-    """
-    Return an AsyncMock that satisfies session.get(User, id) → returned_user.
-    """
+    """Return an AsyncMock that satisfies session.get(User, id) → returned_user."""
     session = AsyncMock()
     session.get = AsyncMock(return_value=returned_user)
-    session.add = MagicMock()
-    session.commit = AsyncMock()
-    session.refresh = AsyncMock()
     return session
 
 
