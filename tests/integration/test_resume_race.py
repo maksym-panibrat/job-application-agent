@@ -30,16 +30,17 @@ async def _seed_awaiting_review_application(
     generation_attempts: int = 1,
 ) -> Application:
     """Seed a Job + Application row at generation_status='awaiting_review'."""
-    # Top up profile fields the existing tests relied on
-    if not profile.full_name:
-        profile.full_name = "Jane Doe"
-        profile.first_name = "Jane"
-        profile.last_name = "Doe"
-        profile.base_resume_md = "# Jane Doe\n\nSoftware Engineer"
-        profile.target_roles = ["Software Engineer"]
-        db_session.add(profile)
-        await db_session.commit()
-        await db_session.refresh(profile)
+    # Populate the profile with values the tests reference. These are
+    # test-local; setting them unconditionally is fine because seeded_user
+    # returns a freshly-created profile.
+    profile.full_name = "Jane Doe"
+    profile.first_name = "Jane"
+    profile.last_name = "Doe"
+    profile.base_resume_md = "# Jane Doe\n\nSoftware Engineer"
+    profile.target_roles = ["Software Engineer"]
+    db_session.add(profile)
+    await db_session.commit()
+    await db_session.refresh(profile)
 
     job = Job(
         source="test",
@@ -115,8 +116,16 @@ async def test_concurrent_approve_exactly_one_wins(client, db_session, seeded_us
     app_row = await _seed_awaiting_review_application(db_session, profile, generation_attempts=1)
 
     coros = [
-        client.post(f"/api/applications/{app_row.id}/resume", json={"decision": "approve"}, headers=auth_headers),
-        client.post(f"/api/applications/{app_row.id}/resume", json={"decision": "approve"}, headers=auth_headers),
+        client.post(
+            f"/api/applications/{app_row.id}/resume",
+            json={"decision": "approve"},
+            headers=auth_headers,
+        ),
+        client.post(
+            f"/api/applications/{app_row.id}/resume",
+            json={"decision": "approve"},
+            headers=auth_headers,
+        ),
     ]
     responses = await asyncio.gather(*coros)
     status_codes = sorted(r.status_code for r in responses)
@@ -127,7 +136,9 @@ async def test_concurrent_approve_exactly_one_wins(client, db_session, seeded_us
 
 
 @pytest.mark.asyncio
-async def test_concurrent_regenerate_exactly_one_wins_and_bumps_attempts(client, db_session, seeded_user, auth_headers):
+async def test_concurrent_regenerate_exactly_one_wins_and_bumps_attempts(
+    client, db_session, seeded_user, auth_headers
+):
     """
     Two concurrent regenerate POSTs: exactly one must succeed and bump
     generation_attempts by exactly 1 (not 2). The losing POST returns 409.
@@ -136,8 +147,16 @@ async def test_concurrent_regenerate_exactly_one_wins_and_bumps_attempts(client,
     app_row = await _seed_awaiting_review_application(db_session, profile, generation_attempts=1)
 
     coros = [
-        client.post(f"/api/applications/{app_row.id}/resume", json={"decision": "regenerate"}, headers=auth_headers),
-        client.post(f"/api/applications/{app_row.id}/resume", json={"decision": "regenerate"}, headers=auth_headers),
+        client.post(
+            f"/api/applications/{app_row.id}/resume",
+            json={"decision": "regenerate"},
+            headers=auth_headers,
+        ),
+        client.post(
+            f"/api/applications/{app_row.id}/resume",
+            json={"decision": "regenerate"},
+            headers=auth_headers,
+        ),
     ]
     responses = await asyncio.gather(*coros)
     status_codes = sorted(r.status_code for r in responses)
@@ -155,7 +174,9 @@ async def test_concurrent_regenerate_exactly_one_wins_and_bumps_attempts(client,
 
 
 @pytest.mark.asyncio
-async def test_regenerate_enforces_attempts_cap_atomically(client, db_session, seeded_user, auth_headers):
+async def test_regenerate_enforces_attempts_cap_atomically(
+    client, db_session, seeded_user, auth_headers
+):
     """
     Seed generation_attempts=2; a single regenerate succeeds and bumps to 3,
     then a second regenerate is refused with 429. This verifies the cap is
@@ -166,7 +187,9 @@ async def test_regenerate_enforces_attempts_cap_atomically(client, db_session, s
     app_row = await _seed_awaiting_review_application(db_session, profile, generation_attempts=2)
 
     first = await client.post(
-        f"/api/applications/{app_row.id}/resume", json={"decision": "regenerate"}, headers=auth_headers
+        f"/api/applications/{app_row.id}/resume",
+        json={"decision": "regenerate"},
+        headers=auth_headers,
     )
     assert first.status_code == 200, first.text
 
@@ -180,7 +203,9 @@ async def test_regenerate_enforces_attempts_cap_atomically(client, db_session, s
     await db_session.commit()
 
     second = await client.post(
-        f"/api/applications/{app_row.id}/resume", json={"decision": "regenerate"}, headers=auth_headers
+        f"/api/applications/{app_row.id}/resume",
+        json={"decision": "regenerate"},
+        headers=auth_headers,
     )
     assert second.status_code == 429, second.text
 

@@ -13,7 +13,6 @@ from sqlmodel import SQLModel
 import app.models  # noqa: F401 — registers all SQLModel tables with metadata
 from app.models.application import Application, GeneratedDocument
 from app.models.job import Job
-from app.models.user import User
 from app.models.user_profile import UserProfile
 
 
@@ -27,16 +26,17 @@ async def _seed_submit_application(
     custom_answers_structured: dict | None = None,
 ) -> tuple[Application, Job, UserProfile]:
     """Seed a Job + Application tied to the given profile."""
-    # Top up profile fields the tests rely on
-    if not profile.full_name:
-        profile.full_name = "Jane Doe"
-        profile.first_name = "Jane"
-        profile.last_name = "Doe"
-        profile.base_resume_md = "# Jane Doe\n\nSoftware Engineer"
-        profile.target_roles = ["Software Engineer"]
-        db_session.add(profile)
-        await db_session.commit()
-        await db_session.refresh(profile)
+    # Populate the profile with values the tests reference. These are
+    # test-local; setting them unconditionally is fine because seeded_user
+    # returns a freshly-created profile.
+    profile.full_name = "Jane Doe"
+    profile.first_name = "Jane"
+    profile.last_name = "Doe"
+    profile.base_resume_md = "# Jane Doe\n\nSoftware Engineer"
+    profile.target_roles = ["Software Engineer"]
+    db_session.add(profile)
+    await db_session.commit()
+    await db_session.refresh(profile)
 
     job = Job(
         source="test",
@@ -84,7 +84,9 @@ async def client(patch_settings, asyncpg_url):
 
 
 @pytest.mark.asyncio
-async def test_submit_needs_review_when_unanswered_questions(client, db_session, seeded_user, auth_headers):
+async def test_submit_needs_review_when_unanswered_questions(
+    client, db_session, seeded_user, auth_headers
+):
     """If custom_answers has empty answers, returns needs_review without setting submitted_at."""
     _, profile = seeded_user
     app_row, _, _ = await _seed_submit_application(
@@ -161,7 +163,9 @@ async def test_submit_greenhouse_api_success(client, db_session, seeded_user, au
 
 
 @pytest.mark.asyncio
-async def test_submit_greenhouse_422_returns_http_400(client, db_session, seeded_user, auth_headers):
+async def test_submit_greenhouse_422_returns_http_400(
+    client, db_session, seeded_user, auth_headers
+):
     """Greenhouse 422 → endpoint returns HTTP 400 with failure_reason."""
     _, profile = seeded_user
     apply_url = "https://boards.greenhouse.io/exampleco/jobs/12345"
@@ -193,7 +197,9 @@ async def test_submit_greenhouse_422_returns_http_400(client, db_session, seeded
 
 
 @pytest.mark.asyncio
-async def test_submit_greenhouse_503_returns_http_502(client, db_session, seeded_user, auth_headers):
+async def test_submit_greenhouse_503_returns_http_502(
+    client, db_session, seeded_user, auth_headers
+):
     """Greenhouse 503 → endpoint returns HTTP 502 with failure_reason."""
     _, profile = seeded_user
     apply_url = "https://boards.greenhouse.io/exampleco/jobs/12345"
@@ -224,7 +230,9 @@ async def test_submit_greenhouse_503_returns_http_502(client, db_session, seeded
 
 
 @pytest.mark.asyncio
-async def test_submit_greenhouse_unreachable_returns_http_502(client, db_session, seeded_user, auth_headers):
+async def test_submit_greenhouse_unreachable_returns_http_502(
+    client, db_session, seeded_user, auth_headers
+):
     """Greenhouse network error (status_code=None) → HTTP 502 + failure_reason=ats_unreachable."""
     _, profile = seeded_user
     apply_url = "https://boards.greenhouse.io/exampleco/jobs/12345"
@@ -288,6 +296,7 @@ async def test_submit_dry_run_smoke_user_short_circuits(client, db_session):
     import uuid as uuid_mod
 
     from app.api.applications import SMOKE_USER_ID
+    from app.models.user import User
 
     apply_url = "https://boards.greenhouse.io/exampleco/jobs/99999"
 
