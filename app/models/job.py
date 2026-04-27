@@ -9,9 +9,8 @@ from sqlmodel import Field, SQLModel
 class Job(SQLModel, table=True):
     __tablename__ = "jobs"
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
-    source: str  # adzuna, greenhouse, lever, ashby
+    source: str  # adzuna, greenhouse_board, jsearch, remoteok, remotive
     external_id: str
-    ats_type: str | None = None
     title: str
     company_name: str
     location: str | None = None
@@ -20,7 +19,6 @@ class Job(SQLModel, table=True):
     salary: str | None = None
     contract_type: str | None = None
     apply_url: str
-    supports_api_apply: bool = False
     posted_at: datetime | None = Field(
         default=None, sa_column=Column(sa.DateTime(timezone=True), nullable=True)
     )

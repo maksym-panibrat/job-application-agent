@@ -21,8 +21,6 @@ class JobData(BaseModel):
     contract_type: str | None = None
     apply_url: str
     posted_at: datetime | None = None
-    ats_type: str | None = None  # greenhouse, lever, ashby
-    supports_api_apply: bool = False
 
 
 class JobSource(ABC):

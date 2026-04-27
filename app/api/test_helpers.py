@@ -90,8 +90,6 @@ async def seed_test_data(
                 workplace_type="hybrid",
                 description_md=f"# {title}\n\nThis is a test job posting for E2E testing.",
                 apply_url=f"https://boards.greenhouse.io/testcompany/jobs/{external_id}",
-                ats_type="greenhouse",
-                supports_api_apply=True,
                 is_active=True,
                 posted_at=datetime.now(UTC),
             )

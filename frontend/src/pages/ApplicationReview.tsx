@@ -179,15 +179,6 @@ function DocumentEditor({
   )
 }
 
-function submissionMethodLabel(method: string | null): string {
-  if (!method) return ''
-  return {
-    greenhouse_api: 'Submitted via Greenhouse API',
-    lever_api: 'Submitted via Lever API',
-    manual: 'Applied manually',
-  }[method] ?? `Submitted (${method})`
-}
-
 // Backend's /api/applications/{id}/status/stream gives up at ~300s
 // (60 iterations × 5s sleep in app/api/applications.py::stream_generation_status).
 // Frontend poll timeout is backend + 30s safety margin so we don't stop before
@@ -250,17 +241,9 @@ export default function ApplicationReview() {
     },
   })
 
-  const submit = useMutation({
-    mutationFn: () => api.submitApplication(id!),
-    onSuccess: async (result) => {
-      if (result.method === 'needs_review') return
-      if (result.method === 'manual' && result.apply_url) {
-        window.open(result.apply_url, '_blank')
-        await api.reviewApplication(id!, 'applied')
-      }
-      qc.invalidateQueries({ queryKey: ['applications'] })
-      qc.invalidateQueries({ queryKey: ['application', id] })
-    },
+  const markApplied = useMutation({
+    mutationFn: () => api.markApplied(id!),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['application', id] }),
   })
 
   // In "awaiting_review" the graph is paused at an interrupt and the user must
@@ -292,7 +275,6 @@ export default function ApplicationReview() {
   const isAwaitingReview = app.generation_status === 'awaiting_review'
   const isFailed = app.generation_status === 'failed'
   const hasCustomQuestions = Object.keys(customAnswers).length > 0
-  const hasUnansweredCustomQuestions = hasCustomQuestions && Object.values(customAnswers).some((a) => !a)
   // The regenerate path (either the awaiting-review resume or the hard reset) is
   // gated by the 3-attempt cap enforced server-side.
   const canRegenerate = app.generation_attempts < 3
@@ -331,26 +313,23 @@ export default function ApplicationReview() {
               </button>
             )}
             <div className="flex flex-col items-end gap-1">
-              <button
-                onClick={() => submit.mutate()}
-                disabled={
-                  submit.isPending ||
-                  isGenerating ||
-                  isAwaitingReview ||
-                  !docs.length ||
-                  hasUnansweredCustomQuestions ||
-                  submit.data?.method === 'needs_review'
-                }
-                className="px-3 py-1.5 text-sm font-medium bg-green-600 text-white rounded-md hover:bg-green-700 disabled:opacity-50"
-              >
-                {submit.isPending ? 'Submitting...' : 'Apply'}
-              </button>
-              {hasUnansweredCustomQuestions && (
-                <span className="text-xs text-amber-600">Answer all custom questions before applying</span>
-              )}
-              {isAwaitingReview && (
-                <span className="text-xs text-gray-500">Approve documents before applying</span>
-              )}
+              <div className="flex gap-2">
+                <a
+                  href={app.job?.apply_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 text-sm font-medium"
+                >
+                  Open application ↗
+                </a>
+                <button
+                  onClick={() => markApplied.mutate()}
+                  disabled={app.status === 'applied' || markApplied.isPending}
+                  className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 disabled:opacity-50 text-sm font-medium"
+                >
+                  {app.status === 'applied' ? 'Applied ✓' : 'Mark as applied'}
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -448,35 +427,10 @@ export default function ApplicationReview() {
         </div>
       )}
 
-      {/* Submit result */}
-      {submit.data?.method === 'needs_review' && (
-        <div className="mt-4 p-3 text-sm rounded-md bg-amber-50 text-amber-700">
-          <p className="font-medium mb-1">Some questions need your answers before submitting:</p>
-          <ul className="list-disc list-inside space-y-0.5">
-            {submit.data.unanswered_questions?.map((q) => (
-              <li key={q}>{q}</li>
-            ))}
-          </ul>
-        </div>
-      )}
-      {submit.data && submit.data.method !== 'needs_review' && (
-        <div className={`mt-4 p-3 text-sm rounded-md ${
-          submit.data.success ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'
-        }`}>
-          {submit.data.success
-            ? (submit.data.method === 'manual'
-                ? 'Opened apply URL in new tab (manual application required)'
-                : 'Application submitted successfully!')
-            : `Submit failed: ${submit.data.error}`}
-        </div>
-      )}
-
-      {/* Post-submit audit info */}
-      {app.submitted_at && (
-        <div className="mt-4 p-3 text-sm rounded-md bg-gray-50 text-gray-600">
-          <span>{submissionMethodLabel(app.submission_method)}</span>
-          {' · '}
-          <span>{new Date(app.submitted_at).toLocaleString()}</span>
+      {/* Applied timestamp */}
+      {app.applied_at && (
+        <div className="mt-4 p-3 text-sm rounded-md bg-green-50 text-green-700">
+          Applied {new Date(app.applied_at).toLocaleString()}
         </div>
       )}
 
@@ -499,7 +453,6 @@ export default function ApplicationReview() {
                   value={answer}
                   onChange={(e) => {
                     const updatedAnswers = { ...customAnswers, [question]: e.target.value }
-                    submit.reset()
                     setCustomAnswers(updatedAnswers)
                     if (customAnswersDoc) {
                       api.updateDocument(id!, customAnswersDoc.id, { structured_content: updatedAnswers })

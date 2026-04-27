@@ -120,8 +120,6 @@ async def list_applications(
                     "salary": job.salary,
                     "contract_type": job.contract_type,
                     "apply_url": job.apply_url,
-                    "ats_type": job.ats_type,
-                    "supports_api_apply": job.supports_api_apply,
                     "posted_at": job.posted_at,
                 },
             }
@@ -156,8 +154,7 @@ async def get_application(
         "match_rationale": app.match_rationale,
         "match_strengths": app.match_strengths,
         "match_gaps": app.match_gaps,
-        "submitted_at": app.submitted_at,
-        "submission_method": app.submission_method,
+        "applied_at": app.applied_at,
         "created_at": app.created_at,
         "job": {
             "id": str(job.id),
@@ -169,8 +166,6 @@ async def get_application(
             "contract_type": job.contract_type,
             "description_md": job.description_md,
             "apply_url": job.apply_url,
-            "ats_type": job.ats_type,
-            "supports_api_apply": job.supports_api_apply,
             "posted_at": job.posted_at,
         }
         if job
@@ -432,147 +427,30 @@ async def resume_application(
     }
 
 
-SMOKE_USER_ID = uuid.UUID("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
-
-
-@router.post("/{app_id}/submit")
-async def submit_application(
+@router.post("/{app_id}/mark-applied")
+async def mark_applied(
     app_id: str,
-    request: Request,
     profile: UserProfile = Depends(get_current_profile),
     session: AsyncSession = Depends(get_db),
 ):
-    """
-    Attempt ATS API submission (Greenhouse or Lever).
-    Other ATS types fall back to method=manual (open apply URL in browser).
+    """Manually mark an application as applied.
 
-    HTTP status codes:
-      200 — success, manual fallback, needs_review, or dry-run
-      400 — ATS rejected the submission (4xx upstream)
-      502 — ATS server error (5xx upstream) or network/timeout failure
+    Transitions status from pending_review or open to applied and records
+    the applied_at timestamp. Idempotent — calling again when already applied
+    returns the existing applied_at without modifying it.
     """
-    app = await session.get(Application, uuid.UUID(app_id))
+    import uuid as _uuid
+
+    app = await session.get(Application, _uuid.UUID(app_id))
     if not app or app.profile_id != profile.id:
         raise HTTPException(status_code=404, detail="Application not found")
-
-    job = await session.get(Job, app.job_id)
-    if not job:
-        raise HTTPException(status_code=404, detail="Job not found")
-
-    # Dry-run gating: only honored for the smoke user; silently ignored otherwise
-    dry_run = False
-    if request.headers.get("x-smoke-dryrun", "").lower() == "true":
-        if profile.user_id == SMOKE_USER_ID:
-            dry_run = True
-
-    # Load all generated documents
-    docs_result = await session.execute(
-        select(GeneratedDocument).where(GeneratedDocument.application_id == app.id)
-    )
-    docs = {d.doc_type: d for d in docs_result.scalars().all()}
-
-    # Check custom_answers for unanswered required questions
-    custom_answers_doc = docs.get("custom_answers")
-    custom_answers: dict[str, str] | None = None
-    if custom_answers_doc and custom_answers_doc.structured_content:
-        custom_answers = custom_answers_doc.structured_content
-        unanswered = [label for label, answer in custom_answers.items() if not answer]
-        if unanswered:
-            return {"method": "needs_review", "unanswered_questions": unanswered}
-
-    resume_doc = docs.get("tailored_resume")
-    cover_letter_doc = docs.get("cover_letter")
-
-    resume_md = (resume_doc.user_edited_md or resume_doc.content_md) if resume_doc else None
-    cover_letter_md = (
-        (cover_letter_doc.user_edited_md or cover_letter_doc.content_md)
-        if cover_letter_doc
-        else None
-    )
-
-    # Resolve first/last name from profile
-    if profile.first_name:
-        first_name = profile.first_name
-        last_name = profile.last_name or ""
-    else:
-        name_parts = (profile.full_name or "").split(maxsplit=1)
-        first_name = name_parts[0] if name_parts else "Candidate"
-        last_name = name_parts[1] if len(name_parts) > 1 else ""
-
-    ats_type = job.ats_type or ""
-
-    # Short-circuit for smoke dry-run: write audit fields without hitting the ATS
-    if dry_run:
-        result: dict = {
-            "method": "dry_run",
-            "would_submit": True,
-            "ats_type": ats_type if ats_type else "manual",
-        }
-        app.submitted_at = datetime.now(UTC)
-        app.submission_method = "dry_run"
-        app.submission_result = result
-        app.updated_at = datetime.now(UTC)
-        session.add(app)
-        await session.commit()
-        return result
-
-    if ats_type == "greenhouse" and job.supports_api_apply:
-        from app.sources.greenhouse import try_submit as greenhouse_submit
-
-        result = await greenhouse_submit(
-            apply_url=job.apply_url,
-            first_name=first_name,
-            last_name=last_name,
-            email=profile.email or "",
-            phone=profile.phone,
-            resume_md=resume_md,
-            cover_letter_md=cover_letter_md,
-            custom_answers=custom_answers,
-        )
-    elif ats_type == "lever":
-        from app.sources.lever_submit import try_submit as lever_submit
-
-        result = await lever_submit(
-            apply_url=job.apply_url,
-            resume_text=resume_md or "",
-            cover_letter_md=cover_letter_md or "",
-            first_name=first_name,
-            last_name=last_name,
-            email=profile.email or "",
-            api_key=None,
-        )
-    else:
-        result = {"method": "manual", "apply_url": job.apply_url}
-
-    # Record audit fields for all submission attempts (needs_review already returned early)
-    app.submitted_at = datetime.now(UTC)
-    app.submission_method = result["method"]
-    app.submission_result = result
-    if result.get("success"):
-        app.status = "applied"
+    if app.status == "applied":
+        return {"id": str(app.id), "status": app.status, "applied_at": app.applied_at}
+    if app.status not in ("pending_review", "open"):
+        raise HTTPException(status_code=409, detail=f"Cannot mark applied from status {app.status}")
+    app.status = "applied"
+    app.applied_at = datetime.now(UTC)
     app.updated_at = datetime.now(UTC)
     session.add(app)
     await session.commit()
-
-    # Map ATS result to an appropriate HTTP status code
-    result_method = result.get("method", "")
-    if result_method in ("manual", "needs_review"):
-        http_status = 200
-    elif result.get("success"):
-        http_status = 200
-    elif result.get("status_code") is None:
-        # Network error / timeout / exception — upstream was unreachable
-        http_status = 502
-        result.setdefault("failure_reason", "ats_unreachable")
-    elif 400 <= result["status_code"] < 500:
-        http_status = 400
-        result.setdefault("failure_reason", f"ats_rejected_{result['status_code']}")
-    elif 500 <= result["status_code"] < 600:
-        http_status = 502
-        result.setdefault("failure_reason", f"ats_upstream_error_{result['status_code']}")
-    else:
-        http_status = 200
-
-    from fastapi.responses import JSONResponse
-
-    return JSONResponse(content=result, status_code=http_status)
+    return {"id": str(app.id), "status": app.status, "applied_at": app.applied_at}
