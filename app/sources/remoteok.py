@@ -14,7 +14,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
 from app.models.search_cache import JobSearchCache
-from app.sources.ats_detection import detect_ats_type, supports_api_apply
 from app.sources.base import JobData, JobSource
 
 REMOTEOK_BASE_URL = "https://remoteok.com/api"
@@ -145,9 +144,6 @@ class RemoteOKSource(JobSource):
                 if not any(token in searchable for token in query_tokens):
                     continue
 
-            ats = detect_ats_type(apply_url)
-            api_apply = supports_api_apply(apply_url)
-
             location = item.get("location") or None
             if location == "":
                 location = None
@@ -177,8 +173,6 @@ class RemoteOKSource(JobSource):
                     contract_type=None,
                     apply_url=apply_url,
                     posted_at=posted_at,
-                    ats_type=ats,
-                    supports_api_apply=api_apply,
                 )
             )
         return jobs

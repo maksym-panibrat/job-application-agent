@@ -13,7 +13,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
 from app.models.search_cache import JobSearchCache
-from app.sources.ats_detection import detect_ats_type, supports_api_apply
 from app.sources.base import JobData, JobSource
 
 JSEARCH_BASE_URL = "https://jsearch.p.rapidapi.com/search"
@@ -126,9 +125,6 @@ class JSearchSource(JobSource):
             if not apply_url:
                 continue
 
-            ats = detect_ats_type(apply_url)
-            api_apply = supports_api_apply(apply_url)
-
             # Location: prefer city+state
             city = item.get("job_city") or ""
             state = item.get("job_state") or ""
@@ -171,8 +167,6 @@ class JSearchSource(JobSource):
                     contract_type=item.get("job_employment_type"),
                     apply_url=apply_url,
                     posted_at=posted_at,
-                    ats_type=ats,
-                    supports_api_apply=api_apply,
                 )
             )
         return jobs

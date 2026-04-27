@@ -120,7 +120,7 @@ async def test_remotive_connection_error(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_remotive_ats_detection_applied(monkeypatch):
+async def test_remotive_greenhouse_apply_url_parsed(monkeypatch):
     source = no_cache_source(monkeypatch)
     settings = make_settings()
 
@@ -132,5 +132,4 @@ async def test_remotive_ats_detection_applied(monkeypatch):
 
     assert len(jobs) == 1
     job = jobs[0]
-    assert job.ats_type == "greenhouse"
-    assert job.supports_api_apply is True
+    assert "greenhouse.io" in job.apply_url

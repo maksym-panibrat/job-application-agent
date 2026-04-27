@@ -133,22 +133,6 @@ async def generate_materials(
         config = {"configurable": {"thread_id": thread_id}}
 
         custom_questions: list = []
-        if job.ats_type == "greenhouse" and job.supports_api_apply and job.apply_url:
-            from app.sources.greenhouse import (
-                GreenhouseUnavailable,
-                get_job_questions_by_url,
-            )
-
-            try:
-                custom_questions = await get_job_questions_by_url(job.apply_url)
-            except GreenhouseUnavailable as exc:
-                await log.awarning(
-                    "generation.greenhouse_questions_unavailable",
-                    application_id=str(application_id),
-                    apply_url=job.apply_url,
-                    error=str(exc),
-                )
-                custom_questions = []
 
         initial_state = {
             "application_id": str(application_id),

@@ -13,8 +13,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
 from app.models.search_cache import JobSearchCache
-from app.sources.ats_detection import detect_ats_type
-from app.sources.ats_detection import supports_api_apply as ats_supports_api_apply
 from app.sources.base import JobData, JobSource
 
 ARBEITNOW_BASE_URL = "https://www.arbeitnow.com/api/job-board-api"
@@ -139,9 +137,6 @@ class ArbeitnowSource(JobSource):
             if not apply_url:
                 continue
 
-            ats = detect_ats_type(apply_url)
-            api_apply = ats_supports_api_apply(apply_url)
-
             workplace_type = "remote" if item.get("remote") else None
 
             job_types = item.get("job_types") or []
@@ -166,8 +161,6 @@ class ArbeitnowSource(JobSource):
                     contract_type=contract_type,
                     apply_url=apply_url,
                     posted_at=posted_at,
-                    ats_type=ats,
-                    supports_api_apply=api_apply,
                 )
             )
         return jobs

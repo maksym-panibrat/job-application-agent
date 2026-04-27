@@ -275,7 +275,6 @@ export default function ApplicationReview() {
   const isAwaitingReview = app.generation_status === 'awaiting_review'
   const isFailed = app.generation_status === 'failed'
   const hasCustomQuestions = Object.keys(customAnswers).length > 0
-  const hasUnansweredCustomQuestions = hasCustomQuestions && Object.values(customAnswers).some((a) => !a)
   // The regenerate path (either the awaiting-review resume or the hard reset) is
   // gated by the 3-attempt cap enforced server-side.
   const canRegenerate = app.generation_attempts < 3
@@ -454,7 +453,6 @@ export default function ApplicationReview() {
                   value={answer}
                   onChange={(e) => {
                     const updatedAnswers = { ...customAnswers, [question]: e.target.value }
-                    submit.reset()
                     setCustomAnswers(updatedAnswers)
                     if (customAnswersDoc) {
                       api.updateDocument(id!, customAnswersDoc.id, { structured_content: updatedAnswers })

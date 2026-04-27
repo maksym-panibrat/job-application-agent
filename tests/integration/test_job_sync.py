@@ -36,8 +36,6 @@ def make_job_data(external_id: str = "job-001", title: str = "Python Engineer") 
         company_name="Acme Corp",
         location="New York",
         apply_url="https://boards.greenhouse.io/acme/jobs/12345",
-        ats_type="greenhouse",
-        supports_api_apply=True,
         description_md="We need a Python engineer.",
         posted_at=datetime.now(UTC),
     )
@@ -53,7 +51,6 @@ async def test_upsert_job_creates_new(db_session):
     assert job.title == "Python Engineer"
     assert job.source == "adzuna"
     assert job.external_id == "job-001"
-    assert job.supports_api_apply is True
 
 
 @pytest.mark.asyncio

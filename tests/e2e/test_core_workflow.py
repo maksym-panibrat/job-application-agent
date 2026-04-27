@@ -22,8 +22,6 @@ def _make_job_data(idx: int = 0) -> JobData:
         company_name="Acme Corp",
         location="New York",
         apply_url=f"https://jobs.lever.co/acme/abc-{idx}",
-        ats_type="lever",
-        supports_api_apply=False,
         description_md="We need a Python expert for distributed systems work.",
     )
 

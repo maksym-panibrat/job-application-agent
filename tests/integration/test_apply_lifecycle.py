@@ -49,7 +49,9 @@ async def test_submit_endpoint_is_gone(client, seeded_user, auth_headers, sample
         f"/api/applications/{sample_application.id}/submit",
         headers=auth_headers,
     )
-    assert r.status_code == 404, r.text
+    # FastAPI returns 404 when no path matches, or 405 when a path matches
+    # but not the method. Either confirms the /submit handler is gone.
+    assert r.status_code in (404, 405), r.text
 
 
 @pytest.mark.asyncio

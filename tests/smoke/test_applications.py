@@ -137,9 +137,11 @@ async def test_mark_applied(client, seeded_data):
     assert apps, "No seeded applications — seeded_data is empty"
     app_id = apps[0]["id"]
 
-    # /submit must no longer exist
+    # /submit must no longer exist (404 if no path matches, 405 if method mismatch)
     r_submit = await client.post(f"/api/applications/{app_id}/submit")
-    assert r_submit.status_code == 404, f"Expected 404 for removed /submit, got {r_submit.status_code}"
+    assert r_submit.status_code in (404, 405), (
+        f"Expected 404/405 for removed /submit, got {r_submit.status_code}"
+    )
 
     # Mark as applied
     r = await client.post(f"/api/applications/{app_id}/mark-applied")

@@ -34,8 +34,6 @@ def _make_job_data(
         company_name="Acme Corp",
         location="New York",
         apply_url=f"https://boards.greenhouse.io/acme/jobs/{idx}",
-        ats_type="greenhouse",
-        supports_api_apply=True,
         description_md="We need a Python expert.",
         posted_at=posted_at,
     )

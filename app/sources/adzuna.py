@@ -9,7 +9,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
 from app.models.search_cache import JobSearchCache
-from app.sources.ats_detection import detect_ats_type, supports_api_apply
 from app.sources.base import JobData, JobSource
 
 ADZUNA_BASE_URL = "https://api.adzuna.com/v1/api/jobs"
@@ -118,8 +117,6 @@ class AdzunaSource(JobSource):
         jobs = []
         for item in data.get("results", []):
             apply_url = item.get("redirect_url", "")
-            ats = detect_ats_type(apply_url)
-            api_apply = supports_api_apply(apply_url)
 
             posted_at = None
             if created := item.get("created"):
@@ -138,8 +135,6 @@ class AdzunaSource(JobSource):
                     description_md=item.get("description", ""),
                     apply_url=apply_url,
                     posted_at=posted_at,
-                    ats_type=ats,
-                    supports_api_apply=api_apply,
                 )
             )
         return jobs
