@@ -5,8 +5,9 @@ from contextlib import asynccontextmanager
 import structlog
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from httpx_oauth.exceptions import GetIdEmailError
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
 from app.api.applications import router as applications_router
@@ -106,6 +107,24 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Job Application Agent", lifespan=lifespan)
+
+
+@app.exception_handler(GetIdEmailError)
+async def _log_oauth_get_id_email_error(request: Request, exc: GetIdEmailError):
+    # Without this handler, only the Python traceback reaches Cloud Run logs and
+    # Google's actual error payload (e.g. "API not enabled", "invalid scope",
+    # "user not in test users list") is lost on `exc.response`. Log it so future
+    # OAuth callback failures are diagnosable from logs alone.
+    log = structlog.get_logger()
+    response = exc.response
+    await log.aerror(
+        "oauth.callback.get_id_email_failed",
+        status_code=response.status_code,
+        body=response.text[:1000],
+        url=str(response.request.url) if response.request else None,
+    )
+    return JSONResponse(status_code=500, content={"detail": "OAuth profile lookup failed"})
+
 
 _startup_settings = get_settings()
 app.add_middleware(
