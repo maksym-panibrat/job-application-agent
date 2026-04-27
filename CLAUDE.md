@@ -35,7 +35,7 @@ Each agent module's `get_llm()` returns `FakeListChatModel` when `ENVIRONMENT=te
 
 ### LangGraph checkpointer
 
-All three agents (`app/agents/{onboarding,matching_agent,generation_agent}.py`) share an `AsyncPostgresSaver` on a **separate psycopg v3 pool** from the SQLAlchemy asyncpg pool. `setup()` must run on a plain (non-pipeline) connection — it issues `CREATE INDEX CONCURRENTLY`. `checkpoint_*` tables are owned by the saver; **do not add them to Alembic migrations**. All LLM calls go through `safe_ainvoke()` (`app/agents/llm_safe.py`) to catch `ResourceExhausted`.
+Onboarding (`app/agents/onboarding.py`) is the only agent that uses `AsyncPostgresSaver` — on a **separate psycopg v3 pool** from the SQLAlchemy asyncpg pool. `setup()` must run on a plain (non-pipeline) connection — it issues `CREATE INDEX CONCURRENTLY`. `checkpoint_*` tables are owned by the saver; **do not add them to Alembic migrations**. Generation and matching agents do not checkpoint. All LLM calls go through `safe_ainvoke()` (`app/agents/llm_safe.py`) to catch `ResourceExhausted`.
 
 ### SQLModel / Alembic / Neon
 
@@ -62,9 +62,9 @@ Matching agent uses `asyncio.Semaphore` + 1.5s sleep + 10s/30s exponential backo
 
 No in-process scheduler. `app/scheduler/tasks.py` is invoked via `POST /internal/cron/{sync,generation-queue,maintenance}` with `X-Cron-Secret`, triggered by `.github/workflows/cron.yml`.
 
-### Generation interrupt/resume contract
+### Generation contract
 
-`generate_materials()` (`app/services/application_service.py`) drives the generation graph until it pauses at the `review` interrupt, then leaves `Application.generation_status = "awaiting_review"` — **not** `"ready"`. `POST /api/applications/{id}/resume` with `{"decision": "approve"|"regenerate"}` calls `graph.ainvoke(Command(resume=...), config)` to unpark the graph; approve → `ready`, regenerate → another `awaiting_review`. Valid `generation_status` values: `none · pending · generating · awaiting_review · ready · failed`. Single-writer rule: `resume_generation` / `generate_materials` own the status write; `finalize_node` returns state only. The status transition at `/resume` is an atomic conditional UPDATE (`WHERE generation_status='awaiting_review'`) so two concurrent POSTs cannot both dispatch to the same LangGraph thread_id.
+`generate_materials()` (`app/services/application_service.py`) runs the cover-letter graph synchronously and returns the saved `GeneratedDocument`. The HTTP entrypoint is `POST /api/applications/{id}/cover-letter` — the request blocks for the duration of the LLM call (≈10–30s) and there is no background task, no checkpointer, no interrupt, and no `/resume` endpoint. Valid `generation_status` values: `none · generating · ready · failed`. Single-writer rule: `generate_materials` owns the status writes (`generating` → `ready`/`failed`); the API route does nothing but await it.
 
 ### Observability
 

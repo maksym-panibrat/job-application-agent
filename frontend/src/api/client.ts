@@ -150,7 +150,7 @@ export const api = {
     return apiFetch<Application[]>(`/api/applications?${q}`)
   },
   getApplication: (id: string) => apiFetch<ApplicationDetail>(`/api/applications/${id}`),
-  reviewApplication: (id: string, status: 'approved' | 'dismissed' | 'applied') =>
+  reviewApplication: (id: string, status: 'dismissed' | 'applied') =>
     apiFetch<{ id: string; status: string }>(`/api/applications/${id}`, {
       method: 'PATCH',
       body: JSON.stringify({ status }),
@@ -160,15 +160,14 @@ export const api = {
       `/api/applications/${appId}/documents/${docId}`,
       { method: 'PATCH', body: JSON.stringify(data) }
     ),
-  regenerate: (id: string) =>
-    apiFetch<{ id: string; generation_status: string }>(`/api/applications/${id}/regenerate`, {
-      method: 'POST',
-    }),
-  resumeApplication: (id: string, decision: 'approve' | 'regenerate') =>
-    apiFetch<{ id: string; generation_status: string; decision: string }>(
-      `/api/applications/${id}/resume`,
-      { method: 'POST', body: JSON.stringify({ decision }) }
-    ),
+  generateCoverLetter: (id: string) =>
+    apiFetch<{
+      id: string
+      doc_type: string
+      content_md: string
+      generation_model: string | null
+      created_at: string
+    }>(`/api/applications/${id}/cover-letter`, { method: 'POST' }),
   markApplied: (id: string) =>
     apiFetch<{ id: string; status: string; applied_at: string | null }>(
       `/api/applications/${id}/mark-applied`,

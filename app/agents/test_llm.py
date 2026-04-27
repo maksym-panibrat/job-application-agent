@@ -15,8 +15,8 @@ _DEFAULT_RESPONSES: dict[str, list[str]] = {
         '{"score": 0.75, "rationale": "Good match", "strengths": ["Python"], "gaps": ["Go"]}',
     ],
     "generation": [
-        "Tailored resume content here.",
-        "Tailored cover letter content here.",
+        "Dear Hiring Team,\n\nI bring strong Python and FastAPI experience tailored "
+        "to this role and would welcome the chance to contribute.\n\nBest regards.",
     ],
     "resume_extraction": [
         '{"name": "Test User", "skills": ["Python"], "work_experience": []}',

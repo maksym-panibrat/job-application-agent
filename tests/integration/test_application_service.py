@@ -1,15 +1,11 @@
-"""
-Integration tests for generate_materials() with a mocked LLM.
+"""Integration tests for generate_materials() with a fake LLM (sync, cover-letter only).
 
-Uses FakeListChatModel (injected via ENVIRONMENT=test in get_llm()) to avoid
-real API calls while exercising the full DB read/write path through the
-generation pipeline.
+ENVIRONMENT=test activates FakeListChatModel in get_llm(), so no real LLM calls.
 """
 
 import uuid
 
 import pytest
-from langgraph.checkpoint.memory import MemorySaver
 from sqlmodel import select
 
 from app.models.application import Application, GeneratedDocument
@@ -62,27 +58,21 @@ async def test_save_documents_creates_records(db_session):
 
     docs = [
         {
-            "doc_type": "tailored_resume",
-            "content_md": "# Tailored Resume\n\nContent here.",
-            "generation_model": "claude-sonnet-4-6",
-        },
-        {
             "doc_type": "cover_letter",
-            "content_md": "Dear Hiring Manager...",
-            "generation_model": "claude-sonnet-4-6",
+            "content_md": "Dear Hiring Team...",
+            "generation_model": "test-model",
         },
     ]
 
     saved = await save_documents(str(application.id), docs, db_session)
-    assert len(saved) == 2
+    assert len(saved) == 1
 
     result = await db_session.execute(
         select(GeneratedDocument).where(GeneratedDocument.application_id == application.id)
     )
     stored = result.scalars().all()
-    assert len(stored) == 2
-    types = {d.doc_type for d in stored}
-    assert types == {"tailored_resume", "cover_letter"}
+    assert len(stored) == 1
+    assert stored[0].doc_type == "cover_letter"
 
 
 @pytest.mark.asyncio
@@ -90,8 +80,8 @@ async def test_save_documents_upserts_on_retry(db_session):
     """Calling save_documents twice for the same doc_type updates in place."""
     _, _, _, application = await _seed_db(db_session)
 
-    docs_v1 = [{"doc_type": "tailored_resume", "content_md": "v1", "generation_model": None}]
-    docs_v2 = [{"doc_type": "tailored_resume", "content_md": "v2", "generation_model": None}]
+    docs_v1 = [{"doc_type": "cover_letter", "content_md": "v1", "generation_model": None}]
+    docs_v2 = [{"doc_type": "cover_letter", "content_md": "v2", "generation_model": None}]
 
     await save_documents(str(application.id), docs_v1, db_session)
     await save_documents(str(application.id), docs_v2, db_session)
@@ -99,7 +89,7 @@ async def test_save_documents_upserts_on_retry(db_session):
     result = await db_session.execute(
         select(GeneratedDocument).where(
             GeneratedDocument.application_id == application.id,
-            GeneratedDocument.doc_type == "tailored_resume",
+            GeneratedDocument.doc_type == "cover_letter",
         )
     )
     docs = result.scalars().all()
@@ -108,46 +98,21 @@ async def test_save_documents_upserts_on_retry(db_session):
 
 
 @pytest.mark.asyncio
-async def test_generate_materials_graph_path_with_fake_llm(db_session):
-    """
-    generate_materials() exercises the LangGraph path (the only path since
-    PR 9a removed _generate_direct). ENVIRONMENT=test activates the
-    FakeListChatModel shim in get_llm(), so no real API calls are made.
+async def test_generate_materials_sync_persists_cover_letter(db_session):
+    """generate_materials() runs the cover-letter graph synchronously and persists the doc."""
+    _, _, _, application = await _seed_db(db_session)
 
-    The first ainvoke() pauses at the review interrupt, so the correct
-    post-call status is "awaiting_review" with docs already persisted.
-    """
-    _, profile, _, application = await _seed_db(db_session)
+    doc = await generate_materials(application.id, db_session)
 
-    checkpointer = MemorySaver()
-    await generate_materials(application.id, db_session, checkpointer=checkpointer)
+    assert doc.doc_type == "cover_letter"
+    assert len(doc.content_md) > 0
 
     await db_session.refresh(application)
-    # Graph pauses at the review interrupt; status should reflect that.
-    assert application.generation_status == "awaiting_review"
+    assert application.generation_status == "ready"
 
     result = await db_session.execute(
         select(GeneratedDocument).where(GeneratedDocument.application_id == application.id)
     )
     docs = result.scalars().all()
-    assert len(docs) == 2
-    doc_types = {d.doc_type for d in docs}
-    assert "tailored_resume" in doc_types
-    assert "cover_letter" in doc_types
-
-
-@pytest.mark.asyncio
-async def test_generate_materials_max_attempts_guard(db_session):
-    """generate_materials() exits early if generation_attempts >= 3."""
-    _, _, _, application = await _seed_db(db_session)
-    application.generation_attempts = 3
-    db_session.add(application)
-    await db_session.commit()
-
-    # Should return without setting status to "ready"
-    checkpointer = MemorySaver()
-    await generate_materials(application.id, db_session, checkpointer=checkpointer)
-
-    await db_session.refresh(application)
-    # Status unchanged (still "none" — model default since generation never started)
-    assert application.generation_status == "none"
+    assert len(docs) == 1
+    assert docs[0].doc_type == "cover_letter"

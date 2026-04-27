@@ -25,7 +25,6 @@ function JobDetails({ app }: { app: ApplicationDetail }) {
       {open && (
         <div className="px-3 pb-3 border-t border-gray-100 pt-2 space-y-3">
 
-          {/* Meta row */}
           {(job.salary || job.contract_type || job.posted_at) && (
             <div className="flex flex-wrap gap-x-4 gap-y-1 text-gray-500">
               {job.salary && <span>{job.salary}</span>}
@@ -44,7 +43,6 @@ function JobDetails({ app }: { app: ApplicationDetail }) {
             </div>
           )}
 
-          {/* Strengths / Gaps */}
           {(app.match_strengths?.length > 0 || app.match_gaps?.length > 0) && (
             <div className="flex gap-6">
               {app.match_strengths?.length > 0 && (
@@ -66,7 +64,6 @@ function JobDetails({ app }: { app: ApplicationDetail }) {
             </div>
           )}
 
-          {/* Full description */}
           {job.description_md && (
             <div>
               <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Description</p>
@@ -81,37 +78,6 @@ function JobDetails({ app }: { app: ApplicationDetail }) {
   )
 }
 
-function DocTab({
-  label,
-  active,
-  onClick,
-}: {
-  label: string
-  active: boolean
-  onClick: () => void
-}) {
-  return (
-    <button
-      onClick={onClick}
-      className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
-        active
-          ? 'border-blue-600 text-blue-600'
-          : 'border-transparent text-gray-500 hover:text-gray-700'
-      }`}
-    >
-      {label}
-    </button>
-  )
-}
-
-function DocTypeLabel(type: string): string {
-  return {
-    tailored_resume: 'Resume',
-    cover_letter: 'Cover Letter',
-    custom_answers: 'Application Answers',
-  }[type] ?? type
-}
-
 function DocumentEditor({
   doc,
   appId,
@@ -122,12 +88,9 @@ function DocumentEditor({
   const [content, setContent] = useState(doc.content_md)
   const [saved, setSaved] = useState(false)
   const qc = useQueryClient()
-  // Track the last AI-generated content so we can reset when the doc is replaced
-  // (e.g. after regeneration) without clobbering unsaved user edits.
   const baseContentRef = useRef(doc.content_md)
   useEffect(() => {
     if (doc.content_md !== baseContentRef.current) {
-      // New AI content arrived — only reset if the user hasn't made edits
       if (content === baseContentRef.current) {
         setContent(doc.content_md)
       }
@@ -179,58 +142,14 @@ function DocumentEditor({
   )
 }
 
-// Backend's /api/applications/{id}/status/stream gives up at ~300s
-// (60 iterations × 5s sleep in app/api/applications.py::stream_generation_status).
-// Frontend poll timeout is backend + 30s safety margin so we don't stop before
-// the server does. If you bump one, bump the other in lockstep.
-const GENERATION_POLL_TIMEOUT_MS = 330_000
-
 export default function ApplicationReview() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const qc = useQueryClient()
-  const [activeTab, setActiveTab] = useState(0)
-  const [customAnswers, setCustomAnswers] = useState<Record<string, string>>({})
-  const pollStartRef = useRef<number | null>(null)
-  const [pollTimedOut, setPollTimedOut] = useState(false)
 
   const { data: app, isLoading } = useQuery({
     queryKey: ['application', id],
     queryFn: () => api.getApplication(id!),
-    refetchInterval: (query) => {
-      const status = query?.state?.data?.generation_status
-      const isPolling = status === 'generating' || status === 'pending'
-      if (!isPolling) {
-        pollStartRef.current = null
-        return false
-      }
-      if (pollStartRef.current === null) pollStartRef.current = Date.now()
-      if (Date.now() - pollStartRef.current > GENERATION_POLL_TIMEOUT_MS) {
-        setPollTimedOut(true)
-        return false
-      }
-      return 3000
-    },
-  })
-
-  // Initialise customAnswers from the custom_answers doc when it first arrives.
-  // Track by doc ID (not object reference) so poll-cycle re-renders don't clobber edits.
-  const customAnswersDoc = app?.documents?.find((d) => d.doc_type === 'custom_answers')
-  const customAnswersDocRef = useRef<string | null>(null)
-  useEffect(() => {
-    const sc = customAnswersDoc?.structured_content
-    if (customAnswersDoc?.id && customAnswersDoc.id !== customAnswersDocRef.current && sc && Object.keys(sc).length > 0) {
-      customAnswersDocRef.current = customAnswersDoc.id
-      setCustomAnswers(sc)
-    }
-  }, [customAnswersDoc?.id])
-
-  const approve = useMutation({
-    mutationFn: () => api.reviewApplication(id!, 'approved'),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['applications'] })
-      qc.invalidateQueries({ queryKey: ['application', id] })
-    },
   })
 
   const dismiss = useMutation({
@@ -246,22 +165,8 @@ export default function ApplicationReview() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['application', id] }),
   })
 
-  // In "awaiting_review" the graph is paused at an interrupt and the user must
-  // approve or request regeneration. Approve drives the graph to END -> "ready"
-  // (docs stay as-is); regenerate loops back through load_context and produces
-  // fresh docs, pausing at the next review interrupt.
-  const resumeApprove = useMutation({
-    mutationFn: () => api.resumeApplication(id!, 'approve'),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['application', id] }),
-  })
-  const resumeRegenerate = useMutation({
-    mutationFn: () => api.resumeApplication(id!, 'regenerate'),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['application', id] }),
-  })
-
-  // Full-reset regeneration used when the graph failed (no live checkpoint to resume).
-  const regen = useMutation({
-    mutationFn: () => api.regenerate(id!),
+  const generateCoverLetter = useMutation({
+    mutationFn: () => api.generateCoverLetter(id!),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['application', id] }),
   })
 
@@ -270,19 +175,11 @@ export default function ApplicationReview() {
   }
 
   const job = app.job
-  const docs = app.documents ?? []
-  const isGenerating = app.generation_status === 'generating' || app.generation_status === 'pending'
-  const isAwaitingReview = app.generation_status === 'awaiting_review'
+  const cover = app.documents?.find((d) => d.doc_type === 'cover_letter')
   const isFailed = app.generation_status === 'failed'
-  const hasCustomQuestions = Object.keys(customAnswers).length > 0
-  // The regenerate path (either the awaiting-review resume or the hard reset) is
-  // gated by the 3-attempt cap enforced server-side.
-  const canRegenerate = app.generation_attempts < 3
-  const regeneratePending = resumeRegenerate.isPending || regen.isPending
 
   return (
     <div className="max-w-4xl mx-auto">
-      {/* Job header */}
       <div className="mb-6">
         <div className="flex items-start justify-between">
           <div>
@@ -303,34 +200,21 @@ export default function ApplicationReview() {
             >
               Dismiss
             </button>
-            {app.status === 'pending_review' && (
-              <button
-                onClick={() => approve.mutate()}
-                disabled={approve.isPending}
-                className="px-3 py-1.5 text-sm font-medium bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50"
-              >
-                {approve.isPending ? 'Approving...' : 'Approve'}
-              </button>
-            )}
-            <div className="flex flex-col items-end gap-1">
-              <div className="flex gap-2">
-                <a
-                  href={app.job?.apply_url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 text-sm font-medium"
-                >
-                  Open application ↗
-                </a>
-                <button
-                  onClick={() => markApplied.mutate()}
-                  disabled={app.status === 'applied' || markApplied.isPending}
-                  className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 disabled:opacity-50 text-sm font-medium"
-                >
-                  {app.status === 'applied' ? 'Applied ✓' : 'Mark as applied'}
-                </button>
-              </div>
-            </div>
+            <a
+              href={app.job?.apply_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 text-sm font-medium"
+            >
+              Open application ↗
+            </a>
+            <button
+              onClick={() => markApplied.mutate()}
+              disabled={app.status === 'applied' || markApplied.isPending}
+              className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 disabled:opacity-50 text-sm font-medium"
+            >
+              {app.status === 'applied' ? 'Applied ✓' : 'Mark as applied'}
+            </button>
           </div>
         </div>
 
@@ -344,126 +228,33 @@ export default function ApplicationReview() {
 
       <JobDetails app={app} />
 
-      {/* Approve prompt for pending_review with no docs */}
-      {app.status === 'pending_review' && app.generation_status === 'none' && (
-        <div className="mb-4 p-4 bg-gray-50 border border-gray-200 rounded-md text-sm text-gray-600">
-          Click <strong>Approve</strong> to generate a tailored resume and cover letter for this job.
-        </div>
-      )}
-
-      {/* Generation status */}
-      {(isGenerating || app.generation_status === 'pending') && !pollTimedOut && (
-        <div className="mb-4 p-3 bg-blue-50 text-blue-700 text-sm rounded-md animate-pulse">
-          Generating tailored documents...
-        </div>
-      )}
-      {pollTimedOut && isGenerating && (
-        <div className="mb-4 p-3 bg-amber-50 text-amber-700 text-sm rounded-md flex items-center justify-between">
-          <span>Generation is taking longer than expected. The server may still be working — refresh to check, or retry.</span>
+      {cover ? (
+        <DocumentEditor doc={cover} appId={id!} />
+      ) : (
+        <div className="space-y-3">
           <button
-            onClick={() => { setPollTimedOut(false); regen.mutate() }}
-            disabled={regen.isPending || app.generation_attempts >= 3}
-            className="text-sm font-medium underline disabled:opacity-50"
+            onClick={() => generateCoverLetter.mutate()}
+            disabled={generateCoverLetter.isPending}
+            className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 text-sm font-medium"
           >
-            Retry
+            {generateCoverLetter.isPending ? 'Generating cover letter…' : 'Generate cover letter'}
           </button>
-        </div>
-      )}
-      {approve.isSuccess && app.generation_status === 'none' && (
-        <div className="mb-4 p-3 bg-green-50 text-green-700 text-sm rounded-md">
-          Approved. Generating documents now...
-        </div>
-      )}
-      {isFailed && (
-        <div className="mb-4 p-3 bg-red-50 text-red-700 text-sm rounded-md flex items-center justify-between">
-          <span>Document generation failed</span>
-          <button
-            onClick={() => regen.mutate()}
-            disabled={regen.isPending || !canRegenerate}
-            className="text-sm font-medium underline disabled:opacity-50"
-          >
-            Retry
-          </button>
-        </div>
-      )}
-      {isAwaitingReview && (
-        <div className="mb-4 p-3 bg-indigo-50 text-indigo-800 text-sm rounded-md flex items-center justify-between gap-3">
-          <span>Documents generated — review and approve, or regenerate.</span>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => resumeRegenerate.mutate()}
-              disabled={regeneratePending || !canRegenerate}
-              className="px-3 py-1 text-xs font-medium bg-white border border-indigo-300 text-indigo-700 rounded hover:bg-indigo-100 disabled:opacity-50"
-            >
-              {resumeRegenerate.isPending ? 'Regenerating...' : 'Regenerate'}
-            </button>
-            <button
-              onClick={() => resumeApprove.mutate()}
-              disabled={resumeApprove.isPending}
-              className="px-3 py-1 text-xs font-medium bg-indigo-600 text-white rounded hover:bg-indigo-700 disabled:opacity-50"
-            >
-              {resumeApprove.isPending ? 'Approving...' : 'Approve documents'}
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* Document tabs */}
-      {docs.length > 0 && (
-        <div>
-          <div className="flex border-b border-gray-200 mb-4">
-            {docs.map((doc, i) => (
-              <DocTab
-                key={doc.id}
-                label={DocTypeLabel(doc.doc_type)}
-                active={activeTab === i}
-                onClick={() => setActiveTab(i)}
-              />
-            ))}
-          </div>
-          {docs[activeTab] && (
-            <DocumentEditor doc={docs[activeTab]} appId={id!} />
+          {isFailed && (
+            <p className="text-sm text-red-600">
+              Last generation failed. Try again.
+            </p>
+          )}
+          {generateCoverLetter.isError && (
+            <p className="text-sm text-red-600">
+              {(generateCoverLetter.error as Error)?.message ?? 'Generation failed.'}
+            </p>
           )}
         </div>
       )}
 
-      {/* Applied timestamp */}
       {app.applied_at && (
         <div className="mt-4 p-3 text-sm rounded-md bg-green-50 text-green-700">
           Applied {new Date(app.applied_at).toLocaleString()}
-        </div>
-      )}
-
-      {/* Custom Questions */}
-      {hasCustomQuestions && (
-        <div className="mt-6">
-          <h2 className="text-sm font-semibold text-gray-700 mb-3">Custom Questions</h2>
-          <div className="space-y-4">
-            {Object.entries(customAnswers).map(([question, answer]) => (
-              <div key={question}>
-                <div className="flex items-center gap-2 mb-1">
-                  <label className="text-sm text-gray-600">{question}</label>
-                  {!answer && (
-                    <span className="px-1.5 py-0.5 text-xs font-medium bg-amber-100 text-amber-700 rounded">
-                      Needs review
-                    </span>
-                  )}
-                </div>
-                <textarea
-                  value={answer}
-                  onChange={(e) => {
-                    const updatedAnswers = { ...customAnswers, [question]: e.target.value }
-                    setCustomAnswers(updatedAnswers)
-                    if (customAnswersDoc) {
-                      api.updateDocument(id!, customAnswersDoc.id, { structured_content: updatedAnswers })
-                    }
-                  }}
-                  className="w-full h-24 text-sm border border-gray-200 rounded-md p-2 focus:outline-none focus:ring-2 focus:ring-blue-500 resize-y"
-                  spellCheck
-                />
-              </div>
-            ))}
-          </div>
         </div>
       )}
     </div>
