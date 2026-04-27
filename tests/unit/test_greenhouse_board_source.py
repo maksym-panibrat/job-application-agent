@@ -1,7 +1,5 @@
 """Unit tests for the GreenhouseBoardSource adapter."""
 
-from unittest.mock import AsyncMock, MagicMock
-
 import httpx
 import pytest
 import respx
@@ -35,39 +33,15 @@ AIRBNB_JOB_FIXTURE = {
 }
 
 
-def make_settings() -> MagicMock:
-    settings = MagicMock()
-    settings.adzuna_cache_ttl_hours = 24
-    return settings
-
-
-def no_cache_source(monkeypatch) -> GreenhouseBoardSource:
-    source = GreenhouseBoardSource()
-    monkeypatch.setattr(source, "_get_cached", AsyncMock(return_value=None))
-    monkeypatch.setattr(source, "_save_cache", AsyncMock(return_value=None))
-    return source
-
-
-def make_profile(slugs: dict) -> MagicMock:
-    profile = MagicMock()
-    profile.target_company_slugs = slugs
-    return profile
-
-
-async def do_search(source, profile):
-    return await source.search("", None, None, make_settings(), MagicMock(), profile=profile)
-
-
 @pytest.mark.asyncio
-async def test_greenhouse_board_happy_path(monkeypatch):
-    source = no_cache_source(monkeypatch)
-    profile = make_profile({"greenhouse": ["stripe"]})
+async def test_greenhouse_board_happy_path():
+    source = GreenhouseBoardSource()
 
     with respx.mock:
         respx.get(f"{GREENHOUSE_BOARDS_BASE}/stripe/jobs").mock(
             return_value=httpx.Response(200, json=STRIPE_JOB_FIXTURE)
         )
-        jobs, cursor = await do_search(source, profile)
+        jobs, cursor = await source.search("", None, slug="stripe")
 
     assert cursor is None
     assert len(jobs) == 1
@@ -81,9 +55,9 @@ async def test_greenhouse_board_happy_path(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_greenhouse_board_two_slugs_combined(monkeypatch):
-    source = no_cache_source(monkeypatch)
-    profile = make_profile({"greenhouse": ["stripe", "airbnb"]})
+async def test_greenhouse_board_two_slugs_called_independently():
+    """The source takes one slug per call; service layer iterates."""
+    source = GreenhouseBoardSource()
 
     with respx.mock:
         respx.get(f"{GREENHOUSE_BOARDS_BASE}/stripe/jobs").mock(
@@ -92,56 +66,39 @@ async def test_greenhouse_board_two_slugs_combined(monkeypatch):
         respx.get(f"{GREENHOUSE_BOARDS_BASE}/airbnb/jobs").mock(
             return_value=httpx.Response(200, json=AIRBNB_JOB_FIXTURE)
         )
-        jobs, cursor = await do_search(source, profile)
+        stripe_jobs, _ = await source.search("", None, slug="stripe")
+        airbnb_jobs, _ = await source.search("", None, slug="airbnb")
 
-    assert cursor is None
-    assert len(jobs) == 2
-    company_names = {j.company_name for j in jobs}
+    company_names = {j.company_name for j in stripe_jobs + airbnb_jobs}
     assert company_names == {"Stripe", "Airbnb"}
 
 
 @pytest.mark.asyncio
-async def test_greenhouse_board_404_skips_slug(monkeypatch):
-    source = no_cache_source(monkeypatch)
-    profile = make_profile({"greenhouse": ["bad-slug", "stripe"]})
+async def test_greenhouse_board_404_returns_empty():
+    source = GreenhouseBoardSource()
 
     with respx.mock:
         respx.get(f"{GREENHOUSE_BOARDS_BASE}/bad-slug/jobs").mock(return_value=httpx.Response(404))
-        respx.get(f"{GREENHOUSE_BOARDS_BASE}/stripe/jobs").mock(
-            return_value=httpx.Response(200, json=STRIPE_JOB_FIXTURE)
-        )
-        jobs, cursor = await do_search(source, profile)
-
-    assert cursor is None
-    assert len(jobs) == 1
-    assert jobs[0].external_id == "4000001"
-
-
-@pytest.mark.asyncio
-async def test_greenhouse_board_no_profile(monkeypatch):
-    source = no_cache_source(monkeypatch)
-
-    jobs, cursor = await do_search(source, None)
+        jobs, cursor = await source.search("", None, slug="bad-slug")
 
     assert jobs == []
     assert cursor is None
 
 
 @pytest.mark.asyncio
-async def test_greenhouse_board_no_greenhouse_slugs(monkeypatch):
-    source = no_cache_source(monkeypatch)
-    profile = make_profile({})
+async def test_greenhouse_board_no_slug_returns_empty():
+    """A None slug short-circuits to an empty result set."""
+    source = GreenhouseBoardSource()
 
-    jobs, cursor = await do_search(source, profile)
+    jobs, cursor = await source.search("", None, slug=None)
 
     assert jobs == []
     assert cursor is None
 
 
 @pytest.mark.asyncio
-async def test_greenhouse_board_remote_location(monkeypatch):
-    source = no_cache_source(monkeypatch)
-    profile = make_profile({"greenhouse": ["stripe"]})
+async def test_greenhouse_board_remote_location():
+    source = GreenhouseBoardSource()
 
     fixture = {
         "jobs": [
@@ -160,26 +117,21 @@ async def test_greenhouse_board_remote_location(monkeypatch):
         respx.get(f"{GREENHOUSE_BOARDS_BASE}/stripe/jobs").mock(
             return_value=httpx.Response(200, json=fixture)
         )
-        jobs, cursor = await do_search(source, profile)
+        jobs, _ = await source.search("", None, slug="stripe")
 
     assert len(jobs) == 1
     assert jobs[0].workplace_type == "remote"
 
 
 @pytest.mark.asyncio
-async def test_greenhouse_board_other_error_skips_slug(monkeypatch):
-    source = no_cache_source(monkeypatch)
-    profile = make_profile({"greenhouse": ["bad-slug", "stripe"]})
+async def test_greenhouse_board_connection_error_returns_empty():
+    source = GreenhouseBoardSource()
 
     with respx.mock:
         respx.get(f"{GREENHOUSE_BOARDS_BASE}/bad-slug/jobs").mock(
             side_effect=httpx.ConnectError("connection refused")
         )
-        respx.get(f"{GREENHOUSE_BOARDS_BASE}/stripe/jobs").mock(
-            return_value=httpx.Response(200, json=STRIPE_JOB_FIXTURE)
-        )
-        jobs, cursor = await do_search(source, profile)
+        jobs, cursor = await source.search("", None, slug="bad-slug")
 
+    assert jobs == []
     assert cursor is None
-    assert len(jobs) == 1
-    assert jobs[0].external_id == "4000001"
