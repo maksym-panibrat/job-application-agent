@@ -1,17 +1,26 @@
 import { test, expect } from '@playwright/test'
+import { loginAsTestUser } from './helpers'
 
 test.describe('Application review flow', () => {
   let applicationId: string
+  let authToken: string
 
-  test.beforeEach(async ({ request }) => {
-    const res = await request.post('http://localhost:8000/api/test/seed')
+  test.beforeEach(async ({ page }) => {
+    const { token } = await loginAsTestUser(page)
+    authToken = token
+
+    const res = await page.request.post('/api/test/seed', {
+      headers: { Authorization: `Bearer ${authToken}` },
+    })
     expect(res.ok()).toBeTruthy()
     const body = await res.json()
     applicationId = body.applications[0]
   })
 
-  test.afterEach(async ({ request }) => {
-    await request.delete('http://localhost:8000/api/test/seed')
+  test.afterEach(async ({ page }) => {
+    await page.request.delete('/api/test/seed', {
+      headers: { Authorization: `Bearer ${authToken}` },
+    })
   })
 
   test('application review page loads with job details', async ({ page }) => {

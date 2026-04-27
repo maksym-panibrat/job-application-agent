@@ -24,7 +24,6 @@ export default defineConfig({
       env: {
         DATABASE_URL: databaseUrl,
         ANTHROPIC_API_KEY: 'test-key',
-        AUTH_ENABLED: 'false',
         ENVIRONMENT: 'test',
         GOOGLE_API_KEY: 'fake-test-key',
       },

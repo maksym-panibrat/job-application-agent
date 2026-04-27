@@ -5,12 +5,18 @@ All integration tests use a single Postgres container per session,
 with per-test schema teardown to keep tests isolated.
 """
 
+import uuid
+
+import jwt
 import pytest
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlmodel import SQLModel
 from testcontainers.postgres import PostgresContainer
 
 import app.models  # noqa: F401 — registers all SQLModel tables with metadata
+from app.config import get_settings
+from app.models.user import User
+from app.models.user_profile import UserProfile
 
 
 @pytest.fixture(scope="session")
@@ -69,3 +75,33 @@ def patch_settings(asyncpg_url, monkeypatch):
 
     monkeypatch.setattr(db_mod, "engine", None)
     monkeypatch.setattr(db_mod, "async_session_factory", None)
+
+
+@pytest.fixture
+async def seeded_user(db_session):
+    user_id = uuid.uuid4()
+    user = User(
+        id=user_id,
+        email=f"test-{user_id}@local",
+        is_active=True,
+        is_verified=True,
+        is_superuser=False,
+        hashed_password="",
+    )
+    db_session.add(user)
+    profile = UserProfile(user_id=user_id, email=user.email)
+    db_session.add(profile)
+    await db_session.commit()
+    return user, profile
+
+
+@pytest.fixture
+async def auth_headers(seeded_user):
+    user, _ = seeded_user
+    settings = get_settings()
+    token = jwt.encode(
+        {"sub": str(user.id), "aud": ["fastapi-users:auth"]},
+        settings.jwt_secret.get_secret_value(),
+        algorithm="HS256",
+    )
+    return {"Authorization": f"Bearer {token}"}

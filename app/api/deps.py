@@ -4,7 +4,6 @@ import jwt
 import structlog
 from fastapi import Depends, HTTPException
 from fastapi.security import OAuth2PasswordBearer
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings, get_settings
@@ -14,8 +13,6 @@ from app.models.user_profile import UserProfile
 
 log = structlog.get_logger()
 
-SINGLE_USER_ID = uuid.UUID("00000000-0000-0000-0000-000000000001")
-
 _oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/jwt/login", auto_error=False)
 
 
@@ -24,37 +21,8 @@ async def get_current_user(
     settings: Settings = Depends(get_settings),
     token: str | None = Depends(_oauth2_scheme),
 ) -> User:
-    if not settings.auth_enabled:
-        user = await session.get(User, SINGLE_USER_ID)
-        if user is None:
-            user = User(
-                id=SINGLE_USER_ID,
-                email="dev@local",
-                is_active=True,
-                is_verified=True,
-                is_superuser=True,
-                hashed_password="",
-            )
-            session.add(user)
-            try:
-                await session.commit()
-            except IntegrityError:
-                # Concurrent first-hit: another request auto-provisioned the
-                # single user between our SELECT and INSERT. Roll back and
-                # re-fetch — the row is there now. Caught in e2e by
-                # frontend/e2e/auth-and-nav.spec.ts (React StrictMode +
-                # multiple initial /api/* calls hit a fresh DB simultaneously).
-                await session.rollback()
-                user = await session.get(User, SINGLE_USER_ID)
-                if user is None:
-                    raise
-            else:
-                await session.refresh(user)
-        return user
-
     if token is None:
         raise HTTPException(status_code=401, detail="Not authenticated")
-
     try:
         data = jwt.decode(
             token,
@@ -72,11 +40,9 @@ async def get_current_user(
     except jwt.PyJWTError as exc:
         await log.awarning("auth.token_invalid", error_type=type(exc).__name__)
         raise HTTPException(status_code=401, detail="Invalid token")
-
     if user_id_str is None:
         await log.awarning("auth.token_missing_sub")
         raise HTTPException(status_code=401, detail="Invalid token")
-
     user = await session.get(User, uuid.UUID(user_id_str))
     if user is None:
         await log.awarning("auth.user_not_found", user_id=user_id_str)

@@ -21,40 +21,23 @@ from sqlmodel import SQLModel
 import app.models  # noqa: F401 — registers all SQLModel tables with metadata
 from app.models.application import Application
 from app.models.job import Job
-from app.models.user import User
-from app.models.user_profile import UserProfile
-
-# Matches SINGLE_USER_ID in app/api/deps.py — used when AUTH_ENABLED=false
-SINGLE_USER_ID = uuid.UUID("00000000-0000-0000-0000-000000000001")
 
 
 async def _seed_awaiting_review_application(
     db_session,
+    profile,  # passed from caller (seeded_user fixture)
     *,
     generation_attempts: int = 1,
 ) -> Application:
-    """Seed a User → UserProfile → Job → Application row already at
-    generation_status='awaiting_review' so the resume endpoint can act on it."""
-    user = User(
-        id=SINGLE_USER_ID,
-        email="dev@local",
-        is_active=True,
-        is_verified=True,
-        is_superuser=True,
-        hashed_password="",
-    )
-    db_session.add(user)
-    await db_session.commit()
-
-    profile = UserProfile(
-        user_id=SINGLE_USER_ID,
-        full_name="Jane Doe",
-        first_name="Jane",
-        last_name="Doe",
-        email="jane@example.com",
-        base_resume_md="# Jane Doe\n\nSoftware Engineer",
-        target_roles=["Software Engineer"],
-    )
+    """Seed a Job + Application row at generation_status='awaiting_review'."""
+    # Populate the profile with values the tests reference. These are
+    # test-local; setting them unconditionally is fine because seeded_user
+    # returns a freshly-created profile.
+    profile.full_name = "Jane Doe"
+    profile.first_name = "Jane"
+    profile.last_name = "Doe"
+    profile.base_resume_md = "# Jane Doe\n\nSoftware Engineer"
+    profile.target_roles = ["Software Engineer"]
     db_session.add(profile)
     await db_session.commit()
     await db_session.refresh(profile)
@@ -80,7 +63,6 @@ async def _seed_awaiting_review_application(
     db_session.add(app_row)
     await db_session.commit()
     await db_session.refresh(app_row)
-
     return app_row
 
 
@@ -124,17 +106,26 @@ def _noop_resume_background():
 
 
 @pytest.mark.asyncio
-async def test_concurrent_approve_exactly_one_wins(client, db_session):
+async def test_concurrent_approve_exactly_one_wins(client, db_session, seeded_user, auth_headers):
     """
     Two concurrent resume POSTs against the same awaiting_review row must
     result in exactly one 200 and one 409 — the atomic UPDATE prevents both
     from passing the status guard.
     """
-    app_row = await _seed_awaiting_review_application(db_session, generation_attempts=1)
+    _, profile = seeded_user
+    app_row = await _seed_awaiting_review_application(db_session, profile, generation_attempts=1)
 
     coros = [
-        client.post(f"/api/applications/{app_row.id}/resume", json={"decision": "approve"}),
-        client.post(f"/api/applications/{app_row.id}/resume", json={"decision": "approve"}),
+        client.post(
+            f"/api/applications/{app_row.id}/resume",
+            json={"decision": "approve"},
+            headers=auth_headers,
+        ),
+        client.post(
+            f"/api/applications/{app_row.id}/resume",
+            json={"decision": "approve"},
+            headers=auth_headers,
+        ),
     ]
     responses = await asyncio.gather(*coros)
     status_codes = sorted(r.status_code for r in responses)
@@ -145,16 +136,27 @@ async def test_concurrent_approve_exactly_one_wins(client, db_session):
 
 
 @pytest.mark.asyncio
-async def test_concurrent_regenerate_exactly_one_wins_and_bumps_attempts(client, db_session):
+async def test_concurrent_regenerate_exactly_one_wins_and_bumps_attempts(
+    client, db_session, seeded_user, auth_headers
+):
     """
     Two concurrent regenerate POSTs: exactly one must succeed and bump
     generation_attempts by exactly 1 (not 2). The losing POST returns 409.
     """
-    app_row = await _seed_awaiting_review_application(db_session, generation_attempts=1)
+    _, profile = seeded_user
+    app_row = await _seed_awaiting_review_application(db_session, profile, generation_attempts=1)
 
     coros = [
-        client.post(f"/api/applications/{app_row.id}/resume", json={"decision": "regenerate"}),
-        client.post(f"/api/applications/{app_row.id}/resume", json={"decision": "regenerate"}),
+        client.post(
+            f"/api/applications/{app_row.id}/resume",
+            json={"decision": "regenerate"},
+            headers=auth_headers,
+        ),
+        client.post(
+            f"/api/applications/{app_row.id}/resume",
+            json={"decision": "regenerate"},
+            headers=auth_headers,
+        ),
     ]
     responses = await asyncio.gather(*coros)
     status_codes = sorted(r.status_code for r in responses)
@@ -172,17 +174,22 @@ async def test_concurrent_regenerate_exactly_one_wins_and_bumps_attempts(client,
 
 
 @pytest.mark.asyncio
-async def test_regenerate_enforces_attempts_cap_atomically(client, db_session):
+async def test_regenerate_enforces_attempts_cap_atomically(
+    client, db_session, seeded_user, auth_headers
+):
     """
     Seed generation_attempts=2; a single regenerate succeeds and bumps to 3,
     then a second regenerate is refused with 429. This verifies the cap is
     enforced as part of the same conditional UPDATE — no TOCTOU window for a
     caller to sneak in a 4th attempt.
     """
-    app_row = await _seed_awaiting_review_application(db_session, generation_attempts=2)
+    _, profile = seeded_user
+    app_row = await _seed_awaiting_review_application(db_session, profile, generation_attempts=2)
 
     first = await client.post(
-        f"/api/applications/{app_row.id}/resume", json={"decision": "regenerate"}
+        f"/api/applications/{app_row.id}/resume",
+        json={"decision": "regenerate"},
+        headers=auth_headers,
     )
     assert first.status_code == 200, first.text
 
@@ -196,7 +203,9 @@ async def test_regenerate_enforces_attempts_cap_atomically(client, db_session):
     await db_session.commit()
 
     second = await client.post(
-        f"/api/applications/{app_row.id}/resume", json={"decision": "regenerate"}
+        f"/api/applications/{app_row.id}/resume",
+        json={"decision": "regenerate"},
+        headers=auth_headers,
     )
     assert second.status_code == 429, second.text
 

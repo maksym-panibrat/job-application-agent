@@ -13,44 +13,27 @@ from sqlmodel import SQLModel
 import app.models  # noqa: F401 — registers all SQLModel tables with metadata
 from app.models.application import Application, GeneratedDocument
 from app.models.job import Job
-from app.models.user import User
 from app.models.user_profile import UserProfile
-
-# Matches SINGLE_USER_ID in app/api/deps.py — used when AUTH_ENABLED=false
-SINGLE_USER_ID = uuid.UUID("00000000-0000-0000-0000-000000000001")
 
 
 async def _seed_submit_application(
     db_session,
+    profile,  # passed from caller (seeded_user fixture)
     *,
     ats_type: str | None = None,
     supports_api_apply: bool = False,
     apply_url: str = "https://example.com/apply",
     custom_answers_structured: dict | None = None,
 ) -> tuple[Application, Job, UserProfile]:
-    """Seed User → UserProfile → Job → Application tied to SINGLE_USER_ID."""
-    # Use SINGLE_USER_ID so the API (which authenticates as SINGLE_USER_ID when
-    # AUTH_ENABLED=false) finds the application via profile_id ownership check.
-    user = User(
-        id=SINGLE_USER_ID,
-        email="dev@local",
-        is_active=True,
-        is_verified=True,
-        is_superuser=True,
-        hashed_password="",
-    )
-    db_session.add(user)
-    await db_session.commit()
-
-    profile = UserProfile(
-        user_id=SINGLE_USER_ID,
-        full_name="Jane Doe",
-        first_name="Jane",
-        last_name="Doe",
-        email="jane@example.com",
-        base_resume_md="# Jane Doe\n\nSoftware Engineer",
-        target_roles=["Software Engineer"],
-    )
+    """Seed a Job + Application tied to the given profile."""
+    # Populate the profile with values the tests reference. These are
+    # test-local; setting them unconditionally is fine because seeded_user
+    # returns a freshly-created profile.
+    profile.full_name = "Jane Doe"
+    profile.first_name = "Jane"
+    profile.last_name = "Doe"
+    profile.base_resume_md = "# Jane Doe\n\nSoftware Engineer"
+    profile.target_roles = ["Software Engineer"]
     db_session.add(profile)
     await db_session.commit()
     await db_session.refresh(profile)
@@ -101,15 +84,19 @@ async def client(patch_settings, asyncpg_url):
 
 
 @pytest.mark.asyncio
-async def test_submit_needs_review_when_unanswered_questions(client, db_session):
+async def test_submit_needs_review_when_unanswered_questions(
+    client, db_session, seeded_user, auth_headers
+):
     """If custom_answers has empty answers, returns needs_review without setting submitted_at."""
+    _, profile = seeded_user
     app_row, _, _ = await _seed_submit_application(
         db_session,
+        profile,
         ats_type=None,
         custom_answers_structured={"Q1": "", "Q2": "Some answer"},
     )
 
-    resp = await client.post(f"/api/applications/{app_row.id}/submit")
+    resp = await client.post(f"/api/applications/{app_row.id}/submit", headers=auth_headers)
     assert resp.status_code == 200
     data = resp.json()
     assert data["method"] == "needs_review"
@@ -122,16 +109,18 @@ async def test_submit_needs_review_when_unanswered_questions(client, db_session)
 
 
 @pytest.mark.asyncio
-async def test_submit_manual_fallback_when_no_ats(client, db_session):
+async def test_submit_manual_fallback_when_no_ats(client, db_session, seeded_user, auth_headers):
     """Job with ats_type=None → method=manual, submitted_at set, submission_method=manual."""
+    _, profile = seeded_user
     apply_url = "https://example.com/apply/12345"
     app_row, _, _ = await _seed_submit_application(
         db_session,
+        profile,
         ats_type=None,
         apply_url=apply_url,
     )
 
-    resp = await client.post(f"/api/applications/{app_row.id}/submit")
+    resp = await client.post(f"/api/applications/{app_row.id}/submit", headers=auth_headers)
     assert resp.status_code == 200
     data = resp.json()
     assert data["method"] == "manual"
@@ -143,11 +132,13 @@ async def test_submit_manual_fallback_when_no_ats(client, db_session):
 
 
 @pytest.mark.asyncio
-async def test_submit_greenhouse_api_success(client, db_session):
+async def test_submit_greenhouse_api_success(client, db_session, seeded_user, auth_headers):
     """Greenhouse job with supports_api_apply=True → greenhouse submit, sets applied status."""
+    _, profile = seeded_user
     apply_url = "https://boards.greenhouse.io/exampleco/jobs/12345"
     app_row, _, _ = await _seed_submit_application(
         db_session,
+        profile,
         ats_type="greenhouse",
         supports_api_apply=True,
         apply_url=apply_url,
@@ -158,7 +149,7 @@ async def test_submit_greenhouse_api_success(client, db_session):
         "app.sources.greenhouse.try_submit",
         new=AsyncMock(return_value=mock_result),
     ):
-        resp = await client.post(f"/api/applications/{app_row.id}/submit")
+        resp = await client.post(f"/api/applications/{app_row.id}/submit", headers=auth_headers)
 
     assert resp.status_code == 200
     data = resp.json()
@@ -172,11 +163,15 @@ async def test_submit_greenhouse_api_success(client, db_session):
 
 
 @pytest.mark.asyncio
-async def test_submit_greenhouse_422_returns_http_400(client, db_session):
+async def test_submit_greenhouse_422_returns_http_400(
+    client, db_session, seeded_user, auth_headers
+):
     """Greenhouse 422 → endpoint returns HTTP 400 with failure_reason."""
+    _, profile = seeded_user
     apply_url = "https://boards.greenhouse.io/exampleco/jobs/12345"
     app_row, _, _ = await _seed_submit_application(
         db_session,
+        profile,
         ats_type="greenhouse",
         supports_api_apply=True,
         apply_url=apply_url,
@@ -192,7 +187,7 @@ async def test_submit_greenhouse_422_returns_http_400(client, db_session):
         "app.sources.greenhouse.try_submit",
         new=AsyncMock(return_value=mock_result),
     ):
-        resp = await client.post(f"/api/applications/{app_row.id}/submit")
+        resp = await client.post(f"/api/applications/{app_row.id}/submit", headers=auth_headers)
 
     assert resp.status_code == 400
     data = resp.json()
@@ -202,11 +197,15 @@ async def test_submit_greenhouse_422_returns_http_400(client, db_session):
 
 
 @pytest.mark.asyncio
-async def test_submit_greenhouse_503_returns_http_502(client, db_session):
+async def test_submit_greenhouse_503_returns_http_502(
+    client, db_session, seeded_user, auth_headers
+):
     """Greenhouse 503 → endpoint returns HTTP 502 with failure_reason."""
+    _, profile = seeded_user
     apply_url = "https://boards.greenhouse.io/exampleco/jobs/12345"
     app_row, _, _ = await _seed_submit_application(
         db_session,
+        profile,
         ats_type="greenhouse",
         supports_api_apply=True,
         apply_url=apply_url,
@@ -222,7 +221,7 @@ async def test_submit_greenhouse_503_returns_http_502(client, db_session):
         "app.sources.greenhouse.try_submit",
         new=AsyncMock(return_value=mock_result),
     ):
-        resp = await client.post(f"/api/applications/{app_row.id}/submit")
+        resp = await client.post(f"/api/applications/{app_row.id}/submit", headers=auth_headers)
 
     assert resp.status_code == 502
     data = resp.json()
@@ -231,11 +230,15 @@ async def test_submit_greenhouse_503_returns_http_502(client, db_session):
 
 
 @pytest.mark.asyncio
-async def test_submit_greenhouse_unreachable_returns_http_502(client, db_session):
+async def test_submit_greenhouse_unreachable_returns_http_502(
+    client, db_session, seeded_user, auth_headers
+):
     """Greenhouse network error (status_code=None) → HTTP 502 + failure_reason=ats_unreachable."""
+    _, profile = seeded_user
     apply_url = "https://boards.greenhouse.io/exampleco/jobs/12345"
     app_row, _, _ = await _seed_submit_application(
         db_session,
+        profile,
         ats_type="greenhouse",
         supports_api_apply=True,
         apply_url=apply_url,
@@ -251,7 +254,7 @@ async def test_submit_greenhouse_unreachable_returns_http_502(client, db_session
         "app.sources.greenhouse.try_submit",
         new=AsyncMock(return_value=mock_result),
     ):
-        resp = await client.post(f"/api/applications/{app_row.id}/submit")
+        resp = await client.post(f"/api/applications/{app_row.id}/submit", headers=auth_headers)
 
     assert resp.status_code == 502
     data = resp.json()
@@ -259,11 +262,13 @@ async def test_submit_greenhouse_unreachable_returns_http_502(client, db_session
 
 
 @pytest.mark.asyncio
-async def test_submit_lever_500_returns_http_502(client, db_session):
+async def test_submit_lever_500_returns_http_502(client, db_session, seeded_user, auth_headers):
     """Lever 500 → endpoint returns HTTP 502."""
+    _, profile = seeded_user
     apply_url = "https://jobs.lever.co/acme/abc-1234"
     app_row, _, _ = await _seed_submit_application(
         db_session,
+        profile,
         ats_type="lever",
         apply_url=apply_url,
     )
@@ -278,7 +283,7 @@ async def test_submit_lever_500_returns_http_502(client, db_session):
         "app.sources.lever_submit.try_submit",
         new=AsyncMock(return_value=mock_result),
     ):
-        resp = await client.post(f"/api/applications/{app_row.id}/submit")
+        resp = await client.post(f"/api/applications/{app_row.id}/submit", headers=auth_headers)
 
     assert resp.status_code == 502
     data = resp.json()
@@ -291,6 +296,7 @@ async def test_submit_dry_run_smoke_user_short_circuits(client, db_session):
     import uuid as uuid_mod
 
     from app.api.applications import SMOKE_USER_ID
+    from app.models.user import User
 
     apply_url = "https://boards.greenhouse.io/exampleco/jobs/99999"
 
@@ -366,11 +372,13 @@ async def test_submit_dry_run_smoke_user_short_circuits(client, db_session):
 
 
 @pytest.mark.asyncio
-async def test_submit_dry_run_non_smoke_user_ignored(client, db_session):
+async def test_submit_dry_run_non_smoke_user_ignored(client, db_session, seeded_user, auth_headers):
     """X-Smoke-DryRun: true from a normal user → header silently ignored, ATS called normally."""
+    _, profile = seeded_user
     apply_url = "https://boards.greenhouse.io/exampleco/jobs/77777"
     app_row, _, _ = await _seed_submit_application(
         db_session,
+        profile,
         ats_type="greenhouse",
         supports_api_apply=True,
         apply_url=apply_url,
@@ -381,7 +389,7 @@ async def test_submit_dry_run_non_smoke_user_ignored(client, db_session):
     with patch("app.sources.greenhouse.try_submit", new=ats_mock):
         resp = await client.post(
             f"/api/applications/{app_row.id}/submit",
-            headers={"X-Smoke-DryRun": "true"},
+            headers={**auth_headers, "X-Smoke-DryRun": "true"},
         )
 
     assert resp.status_code == 200

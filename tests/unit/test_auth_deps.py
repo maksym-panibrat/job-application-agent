@@ -13,14 +13,14 @@ Approach:
 
 import uuid
 from datetime import UTC, datetime, timedelta
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
 import jwt
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from structlog.testing import capture_logs
 
-from app.api.deps import SINGLE_USER_ID, get_current_user
+from app.api.deps import get_current_user
 from app.config import Settings, get_settings
 from app.database import get_db
 from app.models.user import User
@@ -59,38 +59,28 @@ def _make_token(
     return jwt.encode(payload, secret, algorithm="HS256")
 
 
-def _make_settings(auth_enabled: bool = True) -> Settings:
+def _make_settings() -> Settings:
     return Settings(
         database_url="postgresql+asyncpg://x:x@localhost/x",
         jwt_secret=TEST_SECRET,
         google_api_key="fake",
-        auth_enabled=auth_enabled,
     )
 
 
 def _make_session_mock(returned_user: User | None) -> AsyncMock:
-    """
-    Return an AsyncMock that satisfies session.get(User, id) → returned_user.
-    Also stubs add/commit/refresh for the single-user-mode path.
-    """
+    """Return an AsyncMock that satisfies session.get(User, id) → returned_user."""
     session = AsyncMock()
     session.get = AsyncMock(return_value=returned_user)
-    session.add = MagicMock()
-    session.commit = AsyncMock()
-    session.refresh = AsyncMock()
     return session
 
 
-def _make_app(
-    session_mock: AsyncMock | None = None,
-    auth_enabled: bool = True,
-) -> TestClient:
+def _make_app(session_mock: AsyncMock | None = None) -> TestClient:
     """
     Build a minimal FastAPI app with a single GET /me endpoint that exercises
     get_current_user, wiring in overrides for get_db and get_settings.
     """
     app = FastAPI()
-    settings = _make_settings(auth_enabled=auth_enabled)
+    settings = _make_settings()
 
     @app.get("/me")
     async def me(user: User = __import__("fastapi").Depends(get_current_user)):
@@ -223,66 +213,14 @@ def test_get_current_user_happy_path():
 
 
 # ---------------------------------------------------------------------------
-# 7. No Authorization header when auth is enabled → 401
+# 7. No Authorization header → always 401 (no bypass path exists)
 # ---------------------------------------------------------------------------
 
 
-def test_get_current_user_no_token_when_auth_enabled():
+def test_get_current_user_no_token_returns_401():
     session = _make_session_mock(None)
-    client = _make_app(session_mock=session, auth_enabled=True)
+    client = _make_app(session_mock=session)
 
     resp = client.get("/me")  # no Authorization header
 
     assert resp.status_code == 401
-
-
-# ---------------------------------------------------------------------------
-# 8. auth_enabled=False → single-user bypass, returns SINGLE_USER_ID user
-# ---------------------------------------------------------------------------
-
-
-def test_get_current_user_single_user_mode_bypass():
-    # Simulate: user already exists in DB (common case after first boot).
-    single_user = User(
-        id=SINGLE_USER_ID,
-        email="dev@local",
-        is_active=True,
-        is_superuser=True,
-        is_verified=True,
-        hashed_password="",
-    )
-    session = _make_session_mock(returned_user=single_user)
-    client = _make_app(session_mock=session, auth_enabled=False)
-
-    resp = client.get("/me")  # no token needed
-
-    assert resp.status_code == 200
-    body = resp.json()
-    assert body["id"] == str(SINGLE_USER_ID)
-
-
-def test_get_current_user_single_user_mode_autocreates():
-    """
-    When auth_enabled=False and the DB has no user yet, get_current_user
-    should create the SINGLE_USER_ID user and return it.
-    """
-    # First .get() returns None (no user yet); deps.py constructs the User
-    # internally, adds it, commits, and refreshes — we verify those calls.
-    session = AsyncMock()
-    session.get = AsyncMock(return_value=None)
-    session.add = MagicMock()
-    session.commit = AsyncMock()
-    # Simulate session.refresh populating the object that was added.
-    session.refresh = AsyncMock(side_effect=lambda u: None)
-
-    # After refresh the function returns the user that was session.add()-ed.
-    # We override get_current_user's return to verify the flow instead.
-    # Actually, we just need the endpoint to return 200; the user object is
-    # constructed inside deps.py so we trust the logic and verify status.
-    client = _make_app(session_mock=session, auth_enabled=False)
-
-    resp = client.get("/me")
-
-    assert resp.status_code == 200
-    session.add.assert_called_once()
-    session.commit.assert_awaited_once()

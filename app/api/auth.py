@@ -1,7 +1,4 @@
-"""
-fastapi-users Google OAuth wiring.
-Only mounted when settings.auth_enabled = True.
-"""
+"""fastapi-users Google OAuth wiring."""
 
 import uuid
 from collections.abc import AsyncGenerator
@@ -61,7 +58,7 @@ def get_google_oauth_client() -> GoogleOAuth2:
     if not settings.google_oauth_client_id or not settings.google_oauth_client_secret:
         raise RuntimeError(
             "GOOGLE_OAUTH_CLIENT_ID and GOOGLE_OAUTH_CLIENT_SECRET must be set"
-            " when AUTH_ENABLED=true"
+            " in production"
         )
     return GoogleOAuth2(
         settings.google_oauth_client_id.get_secret_value(),
