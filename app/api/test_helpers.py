@@ -9,7 +9,7 @@ import uuid
 from datetime import UTC, datetime
 
 import jwt as pyjwt
-from fastapi import APIRouter, BackgroundTasks, Depends, Request
+from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
@@ -150,11 +150,6 @@ async def seed_test_data(
 
     await upsert_document(
         app1.id,
-        "tailored_resume",
-        "# Jane Smith\njane@example.com\n\n## Experience\nSenior Engineer at Acme Corp",
-    )
-    await upsert_document(
-        app1.id,
         "cover_letter",
         "Dear Hiring Manager,\n\nI am excited to apply for this Senior Software Engineer role.",
     )
@@ -198,16 +193,14 @@ async def clear_all_applications(
 
 @router.post("/generate")
 async def run_generation(
-    request: Request,
-    background_tasks: BackgroundTasks,
     profile: UserProfile = Depends(get_current_profile),
     session: AsyncSession = Depends(get_db),
 ) -> dict:
-    """
-    Enqueue document generation for all pending_review applications of the current
-    profile that haven't been generated yet.  Returns immediately; generation runs
-    in the background so smoke tests can poll GET /api/applications/{id} for
-    generation_status=ready.
+    """Generate cover letters for all pending_review applications without one yet.
+
+    Synchronous: each application's generation runs in this request before
+    returning. Smoke tests can immediately read GET /api/applications/{id}
+    for generation_status=ready.
     """
     from app.services.application_service import generate_materials
 
@@ -215,24 +208,17 @@ async def run_generation(
         select(Application).where(
             Application.profile_id == profile.id,
             Application.status == "pending_review",
-            Application.generation_status == "pending",
+            Application.generation_status.in_(("none", "failed")),
         )
     )
-    apps = result.scalars().all()
-    app_ids = [a.id for a in apps]
-
-    checkpointer = getattr(request.app.state, "checkpointer", None)
-
-    async def _generate_all():
-        from app.database import get_session_factory
-
-        factory = get_session_factory()
-        for app_id in app_ids:
-            async with factory() as gen_session:
-                await generate_materials(app_id, gen_session, checkpointer=checkpointer)
-
-    background_tasks.add_task(_generate_all)
-    return {"triggered": len(app_ids)}
+    apps = list(result.scalars().all())
+    for app in apps:
+        try:
+            await generate_materials(app.id, session)
+        except Exception:
+            # generate_materials sets status=failed itself; keep going.
+            continue
+    return {"triggered": len(apps)}
 
 
 @router.delete("/seed")

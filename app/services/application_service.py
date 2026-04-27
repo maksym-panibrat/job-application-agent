@@ -1,13 +1,8 @@
 """
-Application service — generate_materials() background pipeline.
+Application service — generate_materials() drives the cover-letter agent.
 
-Called by match_service when a job scores above threshold.
-Drives the generation agent and saves resulting documents to DB.
-
-Lifecycle:
-    pending -> generating -> awaiting_review (interrupt) -> ready (after approve)
-                                           \
-                                            -> regenerate -> generating -> awaiting_review ...
+Synchronous: callers (the API route) await this directly. No checkpointer,
+no interrupt, no resume. generation_status: none -> generating -> ready/failed.
 """
 
 import time
@@ -15,7 +10,6 @@ import uuid
 from datetime import UTC, datetime
 
 import structlog
-from langgraph.types import Command
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
@@ -30,12 +24,9 @@ async def save_documents(
     application_id: str, documents: list[dict], session: AsyncSession
 ) -> list[GeneratedDocument]:
     """Persist a list of generated document dicts to DB."""
-    import uuid as _uuid
-
-    app_id = _uuid.UUID(application_id)
+    app_id = uuid.UUID(application_id)
     saved = []
     for doc in documents:
-        # Check for existing document of this type (avoid duplicates on retry)
         existing = await session.execute(
             select(GeneratedDocument).where(
                 GeneratedDocument.application_id == app_id,
@@ -63,49 +54,26 @@ async def save_documents(
     return saved
 
 
-def _status_from_graph_next(next_nodes: tuple) -> str:
-    """Map LangGraph state.next to an application generation_status.
-
-    - Empty tuple = graph reached END -> "ready".
-    - Non-empty = graph paused at an interrupt (before the 'review' node in
-      our generation graph) -> "awaiting_review".
-    """
-    return "ready" if next_nodes == () else "awaiting_review"
-
-
 async def generate_materials(
     application_id: uuid.UUID,
     session: AsyncSession,
-    checkpointer=None,
-) -> None:
-    """
-    Background task: generate tailored resume, cover letter, custom answers.
-    Updates generation_status on the Application row.
+) -> GeneratedDocument:
+    """Run the cover-letter graph synchronously and return the saved doc.
 
-    A LangGraph checkpointer is required — there is no direct-generation
-    fallback. Callers should resolve the checkpointer from
-    ``request.app.state.checkpointer`` (initialized in the FastAPI lifespan).
-
-    After graph.ainvoke() returns, inspect the graph state: if paused at the
-    review interrupt, set ``awaiting_review``; if the graph reached END, set
-    ``ready``.
+    generation_status: generating -> ready (or failed). The single-writer
+    rule is preserved here; callers don't touch generation_status directly.
     """
-    if checkpointer is None:
-        raise RuntimeError(
-            "checkpointer required — generate_materials cannot run without a LangGraph checkpointer"
-        )
     t0 = time.perf_counter()
     await log.ainfo("generation.started", application_id=str(application_id))
+
     app = await session.get(Application, application_id)
-    if not app:
-        await log.awarning("generate_materials.not_found", application_id=str(application_id))
-        return
+    if app is None:
+        raise ValueError(f"application {application_id} not found")
+    job = await session.get(Job, app.job_id)
+    profile = await session.get(UserProfile, app.profile_id)
+    if job is None or profile is None:
+        raise ValueError("missing job or profile")
 
-    if app.generation_attempts >= 3:
-        await log.awarning("generate_materials.max_attempts", application_id=str(application_id))
-        return
-
-    # Mark as generating
     app.generation_status = "generating"
     app.generation_attempts += 1
     app.updated_at = datetime.now(UTC)
@@ -113,26 +81,13 @@ async def generate_materials(
     await session.commit()
 
     try:
-        job = await session.get(Job, app.job_id)
-        profile = await session.get(UserProfile, app.profile_id)
-        if not job or not profile:
-            raise ValueError("Job or profile not found")
-
+        from app.agents.generation_agent import build_graph
         from app.services.match_service import format_profile_text
         from app.services.profile_service import get_skills, get_work_experiences
 
         skills = await get_skills(profile.id, session)
         experiences = await get_work_experiences(profile.id, session)
         profile_text = format_profile_text(profile, skills, experiences)
-
-        # Use generation agent via LangGraph
-        from app.agents.generation_agent import build_graph
-
-        graph = build_graph(checkpointer)
-        thread_id = f"gen-{application_id}"
-        config = {"configurable": {"thread_id": thread_id}}
-
-        custom_questions: list = []
 
         initial_state = {
             "application_id": str(application_id),
@@ -141,137 +96,39 @@ async def generate_materials(
             "job_company": job.company_name,
             "job_description": job.description_md or "",
             "base_resume_md": profile.base_resume_md or "",
-            "custom_questions": custom_questions,
-            "documents": [],
-            "generation_status": "pending",
-            "user_decision": {},
+            "document": None,
         }
 
-        # Run until interrupt (before review node)
-        await graph.ainvoke(initial_state, config)
-        # Inspect where the graph landed — either paused at 'review' (docs saved
-        # by save_documents_node, awaiting user decision) or at END.
-        state = await graph.aget_state(config)
-        next_status = _status_from_graph_next(state.next)
+        graph = build_graph()
+        result = await graph.ainvoke(initial_state)
+        doc_dict = result.get("document")
+        if doc_dict is None:
+            raise RuntimeError("generation graph returned no document")
 
-    except Exception as exc:
-        await log.aexception(
-            "generation.failed",
-            application_id=str(application_id),
-            error=str(exc),
-            duration_ms=int((time.perf_counter() - t0) * 1000),
-        )
-        app.generation_status = "failed"
+        saved = await save_documents(str(application_id), [doc_dict], session)
+
+        app.generation_status = "ready"
         app.updated_at = datetime.now(UTC)
         session.add(app)
         await session.commit()
-        return
 
-    app.generation_status = next_status
-    app.updated_at = datetime.now(UTC)
-    session.add(app)
-    await session.commit()
-    await log.ainfo(
-        "generation.completed",
-        application_id=str(application_id),
-        status=app.generation_status,
-        graph_next=list(state.next),
-        duration_ms=int((time.perf_counter() - t0) * 1000),
-    )
-
-
-async def resume_generation(
-    application_id: uuid.UUID,
-    decision: dict,
-    session: AsyncSession,
-    checkpointer=None,
-) -> None:
-    """
-    Resume a paused generation graph with the user's review decision.
-
-    ``decision`` is the payload passed to ``Command(resume=...)``:
-      - ``{"approved": True}``  -> graph proceeds to finalize, ends -> "ready"
-      - ``{"regenerate": True}`` -> graph loops back to load_context, generates
-        new docs, and pauses at the next review interrupt -> "awaiting_review"
-
-    After the resume invoke, the new status is derived from ``state.next``.
-    """
-    if checkpointer is None:
-        raise RuntimeError(
-            "checkpointer required — resume_generation cannot run without a LangGraph checkpointer"
-        )
-
-    t0 = time.perf_counter()
-    # Tag the decision as a scalar for observability — never log the raw
-    # dict. A future caller could route arbitrary keys through ``decision``;
-    # a tag keeps structlog free of PII / unbounded payloads.
-    if decision.get("approved"):
-        decision_type = "approve"
-    elif decision.get("regenerate"):
-        decision_type = "regenerate"
-    else:
-        decision_type = "unknown"
-    await log.ainfo(
-        "generation.resumed",
-        application_id=str(application_id),
-        decision_type=decision_type,
-    )
-
-    app = await session.get(Application, application_id)
-    if not app:
-        await log.awarning("resume_generation.not_found", application_id=str(application_id))
-        return
-
-    try:
-        from app.agents.generation_agent import build_graph
-
-        graph = build_graph(checkpointer)
-        thread_id = f"gen-{application_id}"
-        config = {"configurable": {"thread_id": thread_id}}
-
-        await graph.ainvoke(Command(resume=decision), config)
-
-        state = await graph.aget_state(config)
-        next_status = _status_from_graph_next(state.next)
-
-    except Exception as exc:
-        await log.aexception(
-            "generation.resume_failed",
+        await log.ainfo(
+            "generation.completed",
             application_id=str(application_id),
-            error=str(exc),
             duration_ms=int((time.perf_counter() - t0) * 1000),
         )
-        # Re-read fresh — the original snapshot may be stale if the graph
-        # mutated the row from another session (e.g. the API-layer atomic
-        # UPDATE that flipped 'awaiting_review' -> 'generating' before
-        # scheduling this task).
+        return saved[0]
+    except Exception:
+        await log.aexception(
+            "generation.failed",
+            application_id=str(application_id),
+            duration_ms=int((time.perf_counter() - t0) * 1000),
+        )
+        # Re-read in case another session touched the row.
         fresh = await session.get(Application, application_id)
         if fresh is not None:
             fresh.generation_status = "failed"
             fresh.updated_at = datetime.now(UTC)
             session.add(fresh)
             await session.commit()
-        return
-
-    # Re-read to pick up any out-of-session writes (the API layer's atomic
-    # UPDATE bumped generation_attempts and flipped status to 'generating'
-    # between scheduling this task and us running; the snapshot on ``app``
-    # above predates that).
-    fresh = await session.get(Application, application_id)
-    if fresh is None:
-        await log.awarning("resume_generation.row_vanished", application_id=str(application_id))
-        return
-    fresh.generation_status = next_status
-    fresh.updated_at = datetime.now(UTC)
-    session.add(fresh)
-    await session.commit()
-
-    outcome = "approved" if next_status == "ready" else "regenerated"
-    await log.ainfo(
-        "generation.resume_completed",
-        application_id=str(application_id),
-        status=fresh.generation_status,
-        outcome=outcome,
-        graph_next=list(state.next),
-        duration_ms=int((time.perf_counter() - t0) * 1000),
-    )
+        raise
