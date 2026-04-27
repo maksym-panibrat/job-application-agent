@@ -12,7 +12,7 @@ class Application(SQLModel, table=True):
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     job_id: uuid.UUID = Field(foreign_key="jobs.id")
     profile_id: uuid.UUID = Field(foreign_key="user_profiles.id")
-    status: str = "pending_review"  # pending_review, approved, applied, dismissed, auto_rejected
+    status: str = "pending_review"  # pending_review, dismissed, applied
     # Values: none, pending, generating, awaiting_review, ready, failed
     generation_status: str = "none"
     generation_attempts: int = 0
@@ -20,11 +20,9 @@ class Application(SQLModel, table=True):
     match_rationale: str | None = None
     match_strengths: list[str] = Field(default_factory=list, sa_column=Column(ARRAY(sa.String)))
     match_gaps: list[str] = Field(default_factory=list, sa_column=Column(ARRAY(sa.String)))
-    submitted_at: datetime | None = Field(
+    applied_at: datetime | None = Field(
         default=None, sa_column=Column(sa.DateTime(timezone=True), nullable=True)
     )
-    submission_method: str | None = None
-    submission_result: dict | None = Field(default=None, sa_column=Column(JSONB, nullable=True))
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(UTC),
         sa_column=Column(sa.DateTime(timezone=True), nullable=False),

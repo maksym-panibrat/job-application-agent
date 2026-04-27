@@ -26,7 +26,6 @@ from app.services import job_service, profile_service
 from app.sources.adzuna import AdzunaSource
 from app.sources.adzuna_enrichment import fetch_full_description
 from app.sources.arbeitnow import ArbeitnowSource
-from app.sources.ats_detection import detect_ats_type, supports_api_apply
 from app.sources.base import JobData, JobSource
 from app.sources.greenhouse_board import GreenhouseBoardSource
 from app.sources.jsearch import JSearchSource
@@ -194,8 +193,6 @@ async def _enrich_jobs(
                         salary_count += 1
                 if resolved_url and resolved_url != j.apply_url:
                     j.apply_url = resolved_url
-                    j.ats_type = detect_ats_type(resolved_url)
-                    j.supports_api_apply = supports_api_apply(resolved_url)
             except Exception as exc:
                 failed_count += 1
                 await log.awarning(
