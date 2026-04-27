@@ -44,11 +44,6 @@ async def get_profile(
         "target_company_slugs": profile.target_company_slugs,
         "first_name": profile.first_name,
         "last_name": profile.last_name,
-        "work_authorization": profile.work_authorization,
-        "requires_sponsorship": profile.requires_sponsorship,
-        "salary_expectation_usd": profile.salary_expectation_usd,
-        "available_from": profile.available_from,
-        "standard_answers": profile.standard_answers,
         "skills": [
             {
                 "id": str(s.id),
@@ -103,11 +98,6 @@ async def update_profile(
         "target_company_slugs",
         "first_name",
         "last_name",
-        "work_authorization",
-        "requires_sponsorship",
-        "salary_expectation_usd",
-        "available_from",
-        "standard_answers",
     }
     filtered = {k: v for k, v in data.items() if k in allowed}
     updated = await profile_service.update_profile(profile.id, filtered, session)
