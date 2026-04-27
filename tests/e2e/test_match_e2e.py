@@ -23,17 +23,27 @@ def _make_job_data(idx: int = 0, title: str | None = None) -> JobData:
         title=title or f"Software Engineer #{idx}",
         company_name="TechCorp",
         location="Remote",
-        apply_url=f"https://example.com/jobs/{idx}",
+        apply_url=f"https://boards.greenhouse.io/acme/jobs/{idx}",
+        ats_type="greenhouse",
+        supports_api_apply=True,
         description_md="We need a great engineer to join our team.",
     )
 
 
-def _mock_source(name: str, jobs: list[JobData]) -> MagicMock:
+def _mock_greenhouse_source(jobs: list[JobData]) -> MagicMock:
     source = MagicMock()
-    source.source_name = name
-    source.needs_enrichment = False
-    source.search = AsyncMock(return_value=(jobs, len(jobs)))
+    source.source_name = "greenhouse_board"
+    source.search = AsyncMock(return_value=(jobs, None))
     return source
+
+
+async def _set_greenhouse_slug(test_app):
+    """Make sync_profile actually fetch (sync_profile early-returns without slugs)."""
+    resp = await test_app.patch(
+        "/api/profile",
+        json={"target_company_slugs": {"greenhouse": ["acme"]}},
+    )
+    assert resp.status_code == 200, resp.text
 
 
 def _make_matching_llm(score: float) -> MagicMock:
@@ -73,12 +83,14 @@ async def test_sync_scores_and_displays_matches(test_app, monkeypatch):
         _make_job_data(0, title="Senior Python Engineer"),
         _make_job_data(1, title="Backend Developer"),
     ]
-    mock_source = _mock_source("adzuna", jobs)
-    empty_source = _mock_source("jsearch", [])
+    mock_source = _mock_greenhouse_source(jobs)
 
-    monkeypatch.setattr("app.services.job_sync_service.AdzunaSource", lambda: mock_source)
-    monkeypatch.setattr("app.services.job_sync_service.JSearchSource", lambda: empty_source)
+    monkeypatch.setattr(
+        "app.services.job_sync_service.GreenhouseBoardSource", lambda: mock_source
+    )
     monkeypatch.setattr("app.agents.matching_agent.get_llm", lambda: _make_matching_llm(score=0.85))
+
+    await _set_greenhouse_slug(test_app)
 
     # Trigger sync + scoring (background task runs synchronously under ASGITransport)
     resp = await test_app.post("/api/jobs/sync")
@@ -115,12 +127,14 @@ async def test_below_threshold_not_in_pending_list(test_app, monkeypatch):
     from GET /api/applications?status=pending_review.
     """
     jobs = [_make_job_data(0, title="Irrelevant Role")]
-    mock_source = _mock_source("adzuna", jobs)
-    empty_source = _mock_source("jsearch", [])
+    mock_source = _mock_greenhouse_source(jobs)
 
-    monkeypatch.setattr("app.services.job_sync_service.AdzunaSource", lambda: mock_source)
-    monkeypatch.setattr("app.services.job_sync_service.JSearchSource", lambda: empty_source)
+    monkeypatch.setattr(
+        "app.services.job_sync_service.GreenhouseBoardSource", lambda: mock_source
+    )
     monkeypatch.setattr("app.agents.matching_agent.get_llm", lambda: _make_matching_llm(score=0.3))
+
+    await _set_greenhouse_slug(test_app)
 
     resp = await test_app.post("/api/jobs/sync")
     assert resp.status_code == 200
@@ -138,11 +152,11 @@ async def test_matches_ordered_by_score_desc(test_app, monkeypatch):
     Two jobs with different scores: higher score appears first.
     """
     jobs = [_make_job_data(0, title="Low Score Job"), _make_job_data(1, title="High Score Job")]
-    mock_source = _mock_source("adzuna", jobs)
-    empty_source = _mock_source("jsearch", [])
+    mock_source = _mock_greenhouse_source(jobs)
 
-    monkeypatch.setattr("app.services.job_sync_service.AdzunaSource", lambda: mock_source)
-    monkeypatch.setattr("app.services.job_sync_service.JSearchSource", lambda: empty_source)
+    monkeypatch.setattr(
+        "app.services.job_sync_service.GreenhouseBoardSource", lambda: mock_source
+    )
 
     # Alternate scores: job 0 → 0.7, job 1 → 0.9
     call_count = [0]
@@ -176,6 +190,8 @@ async def test_matches_ordered_by_score_desc(test_app, monkeypatch):
         return llm
 
     monkeypatch.setattr("app.agents.matching_agent.get_llm", alternating_llm)
+
+    await _set_greenhouse_slug(test_app)
 
     resp = await test_app.post("/api/jobs/sync")
     assert resp.status_code == 200
