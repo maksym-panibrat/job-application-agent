@@ -176,6 +176,11 @@ if _startup_settings.google_oauth_client_id and _startup_settings.google_oauth_c
             auth_backend,
             _startup_settings.jwt_secret.get_secret_value(),
             redirect_url=_oauth_redirect_url,
+            # Link an OAuth login to an existing local user with the same email
+            # instead of returning OAUTH_USER_ALREADY_EXISTS. Safe under OAuth-only
+            # auth: Google proves the user owns the email, so claiming a seeded
+            # row (smoke@panibrat.com, future admin seeds) is legitimate.
+            associate_by_email=True,
             is_verified_by_default=True,
         ),
         prefix="/auth/google",
