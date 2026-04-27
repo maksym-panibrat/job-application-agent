@@ -11,6 +11,7 @@ def test_test_helpers_not_mounted_in_production(monkeypatch):
     monkeypatch.setenv("CRON_SHARED_SECRET", "real-cron-secret")
     monkeypatch.setenv("GOOGLE_OAUTH_CLIENT_ID", "fake-client-id")
     monkeypatch.setenv("GOOGLE_OAUTH_CLIENT_SECRET", "fake-client-secret")
+    monkeypatch.setenv("PUBLIC_BASE_URL", "https://example.run.app")
 
     import app.config as cfg_module
 

@@ -144,12 +144,19 @@ if _startup_settings.google_oauth_client_id and _startup_settings.google_oauth_c
     from app.api.auth import auth_backend, fastapi_users, get_google_oauth_client
 
     google_oauth_client = get_google_oauth_client()
+    # Path must match the actual callback handler: fastapi-users mounts /callback on
+    # the oauth router, and we mount the router at /auth/google → /auth/google/callback.
+    _oauth_redirect_url = (
+        f"{_startup_settings.public_base_url.rstrip('/')}/auth/google/callback"
+        if _startup_settings.public_base_url
+        else None
+    )
     app.include_router(
         fastapi_users.get_oauth_router(
             google_oauth_client,
             auth_backend,
             _startup_settings.jwt_secret.get_secret_value(),
-            redirect_url="/auth/callback",
+            redirect_url=_oauth_redirect_url,
             is_verified_by_default=True,
         ),
         prefix="/auth/google",

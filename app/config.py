@@ -30,6 +30,10 @@ class Settings(BaseSettings):
     matching_jobs_per_batch: int = 20
 
     cors_allowed_origins: list[str] = ["http://localhost:5173", "http://localhost:3000"]
+    # Absolute base URL Google sees as redirect_uri host. Cloud Run forwards HTTP to
+    # the container, so request-derived URLs would arrive as http:// — Google rejects
+    # those. Setting this explicitly avoids depending on proxy-header forwarding.
+    public_base_url: str | None = None
 
     @model_validator(mode="after")
     def validate_production_secrets(self) -> "Settings":
@@ -40,6 +44,8 @@ class Settings(BaseSettings):
                 raise ValueError("cron_shared_secret must be set in production")
             if not self.google_oauth_client_id or not self.google_oauth_client_secret:
                 raise ValueError("Google OAuth credentials required in production")
+            if not self.public_base_url:
+                raise ValueError("public_base_url must be set in production")
         return self
 
 

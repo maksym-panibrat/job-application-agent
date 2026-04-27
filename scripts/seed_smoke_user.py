@@ -8,10 +8,6 @@ Run against prod Neon (in a local shell with DATABASE_URL exported):
     DATABASE_URL=postgresql+asyncpg://... uv run python scripts/seed_smoke_user.py
 
 Safe to re-run — uses INSERT ... ON CONFLICT DO UPDATE so it is fully idempotent.
-Both AUTH_ENABLED modes are handled:
-  - AUTH_ENABLED=true  → row in `users` table (fastapi-users) + `user_profiles`
-  - AUTH_ENABLED=false → same smoke UUID, but auth machinery is bypassed by deps.py;
-                         we still seed the user row so JWT decode works if auth is ever enabled.
 """
 
 import asyncio
@@ -64,7 +60,6 @@ async def seed(session: AsyncSession) -> None:
                 remote_ok,
                 source_cursors,
                 target_company_slugs,
-                standard_answers,
                 search_active,
                 created_at,
                 updated_at
@@ -77,7 +72,6 @@ async def seed(session: AsyncSession) -> None:
                 '{}',
                 '{}',
                 TRUE,
-                '{}',
                 '{}',
                 '{}',
                 TRUE,

@@ -10,6 +10,7 @@ def _prod_base() -> dict:
         "cron_shared_secret": "real-cron-secret",
         "google_oauth_client_id": "client-id",
         "google_oauth_client_secret": "client-secret",
+        "public_base_url": "https://example.run.app",
         "environment": "production",
     }
 
@@ -54,4 +55,13 @@ def test_default_jwt_secret_still_rejected_in_production():
     data = _prod_base()
     data["jwt_secret"] = "dev-secret"
     with pytest.raises(ValueError, match="jwt_secret"):
+        Settings(**data)
+
+
+def test_missing_public_base_url_rejected_in_production():
+    from app.config import Settings
+
+    data = _prod_base()
+    data.pop("public_base_url")
+    with pytest.raises(ValueError, match="public_base_url"):
         Settings(**data)
