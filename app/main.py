@@ -160,20 +160,32 @@ app.include_router(users_router)
 # In production we require them (Settings validator enforces this); in dev/test
 # they may legitimately be absent and tests use the JWT path directly.
 if _startup_settings.google_oauth_client_id and _startup_settings.google_oauth_client_secret:
+    from fastapi_users.authentication import AuthenticationBackend
+
     from app.api.auth import auth_backend, fastapi_users, get_google_oauth_client
+    from app.api.oauth_redirect import RedirectingBearerTransport
 
     google_oauth_client = get_google_oauth_client()
     # Path must match the actual callback handler: fastapi-users mounts /callback on
     # the oauth router, and we mount the router at /auth/google → /auth/google/callback.
-    _oauth_redirect_url = (
-        f"{_startup_settings.public_base_url.rstrip('/')}/auth/google/callback"
-        if _startup_settings.public_base_url
-        else None
+    _public_base = (
+        _startup_settings.public_base_url.rstrip("/") if _startup_settings.public_base_url else ""
+    )
+    _oauth_redirect_url = f"{_public_base}/auth/google/callback" if _public_base else None
+    # Separate auth backend for the OAuth flow: same JWT strategy as the API,
+    # but the transport returns a 303 redirect to the SPA's /auth/callback page
+    # (token in the URL fragment) instead of raw JSON. Browser users land in
+    # the app; programmatic /auth/jwt/login still gets JSON via auth_backend.
+    _spa_auth_callback = f"{_public_base}/auth/callback" if _public_base else "/auth/callback"
+    oauth_backend = AuthenticationBackend(
+        name="oauth-redirect",
+        transport=RedirectingBearerTransport(redirect_url=_spa_auth_callback),
+        get_strategy=auth_backend.get_strategy,
     )
     app.include_router(
         fastapi_users.get_oauth_router(
             google_oauth_client,
-            auth_backend,
+            oauth_backend,
             _startup_settings.jwt_secret.get_secret_value(),
             redirect_url=_oauth_redirect_url,
             # Link an OAuth login to an existing local user with the same email
