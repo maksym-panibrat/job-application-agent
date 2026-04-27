@@ -1,8 +1,9 @@
 import { test, expect } from '@playwright/test'
+import { loginAsTestUser } from './helpers'
 
 test.describe('Onboarding flow', () => {
   test.beforeEach(async ({ page }) => {
-    // Clear any previous profile state by visiting health first
+    await loginAsTestUser(page)
     await page.goto('/profile')
     await page.waitForLoadState('networkidle')
   })

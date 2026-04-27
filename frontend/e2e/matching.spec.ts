@@ -1,14 +1,24 @@
-import { test, expect, request } from '@playwright/test'
+import { test, expect } from '@playwright/test'
+import { loginAsTestUser } from './helpers'
 
 test.describe('Job matching flow', () => {
-  test.beforeEach(async ({ request }) => {
-    // Seed test jobs and applications via the dev endpoint
-    const res = await request.post('http://localhost:8000/api/test/seed')
+  let authToken: string
+
+  test.beforeEach(async ({ page }) => {
+    const { token } = await loginAsTestUser(page)
+    authToken = token
+
+    // Seed test jobs and applications via the dev endpoint (requires auth after PR 1)
+    const res = await page.request.post('/api/test/seed', {
+      headers: { Authorization: `Bearer ${authToken}` },
+    })
     expect(res.ok()).toBeTruthy()
   })
 
-  test.afterEach(async ({ request }) => {
-    await request.delete('http://localhost:8000/api/test/seed')
+  test.afterEach(async ({ page }) => {
+    await page.request.delete('/api/test/seed', {
+      headers: { Authorization: `Bearer ${authToken}` },
+    })
   })
 
   test('matches page shows seeded jobs', async ({ page }) => {

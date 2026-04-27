@@ -8,20 +8,59 @@ to pre-populate the database with known test data.
 import uuid
 from datetime import UTC, datetime
 
+import jwt as pyjwt
 from fastapi import APIRouter, BackgroundTasks, Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
 from app.api.deps import get_current_profile
+from app.config import get_settings
 from app.database import get_db
 from app.models.application import Application, GeneratedDocument
 from app.models.job import Job
+from app.models.user import User
 from app.models.user_profile import UserProfile
 
 router = APIRouter(prefix="/api/test", tags=["test"])
 
+E2E_TEST_USER_ID = uuid.UUID("a0e2e0e2-e0e2-4e2e-9e2e-e2ee2ee2ee2e")
+
 SEED_JOB_1_EXTERNAL_ID = "e2e-seed-job-001"
 SEED_JOB_2_EXTERNAL_ID = "e2e-seed-job-002"
+
+
+@router.post("/login")
+async def login_as_test_user(session: AsyncSession = Depends(get_db)) -> dict:
+    """
+    Create-or-fetch the deterministic e2e test user and return a JWT bearer token.
+
+    Used by Playwright tests to bypass real OAuth — tests stuff the returned
+    token into sessionStorage via page.addInitScript. Only mounted when
+    ENVIRONMENT is development or test.
+    """
+    user = await session.get(User, E2E_TEST_USER_ID)
+    if user is None:
+        user = User(
+            id=E2E_TEST_USER_ID,
+            email="e2e-test@local",
+            is_active=True,
+            is_verified=True,
+            is_superuser=False,
+            hashed_password="",
+        )
+        session.add(user)
+        profile = UserProfile(user_id=E2E_TEST_USER_ID, email=user.email)
+        session.add(profile)
+        await session.commit()
+        await session.refresh(user)
+
+    settings = get_settings()
+    token = pyjwt.encode(
+        {"sub": str(user.id), "aud": ["fastapi-users:auth"]},
+        settings.jwt_secret.get_secret_value(),
+        algorithm="HS256",
+    )
+    return {"access_token": token, "user_id": str(user.id), "email": user.email}
 
 
 @router.post("/seed")

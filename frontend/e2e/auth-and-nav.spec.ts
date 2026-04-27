@@ -16,6 +16,7 @@
  */
 
 import { test, expect } from '@playwright/test'
+import { loginAsTestUser } from './helpers'
 
 test.describe('Landing page — Sign in with Google', () => {
   test('renders the Landing page with the Google sign-in button', async ({ page }) => {
@@ -72,10 +73,15 @@ test.describe('Landing page — Sign in with Google', () => {
 })
 
 test.describe('Top-level navigation', () => {
-  // These run in AUTH_ENABLED=false mode (per playwright.config.ts), so the
-  // backend auto-provisions SINGLE_USER_ID and the nav bar renders. The goal
-  // isn't to test auth — it's to assert that each top-level route renders
-  // without a 500 or unhandled error boundary.
+  // These tests navigate to protected routes (/matches, /applied, /profile).
+  // We authenticate as the deterministic e2e test user via loginAsTestUser so
+  // the app renders the authenticated nav bar. The goal isn't to test auth —
+  // it's to assert that each top-level route renders without a 500 or
+  // unhandled error boundary.
+
+  test.beforeEach(async ({ page }) => {
+    await loginAsTestUser(page)
+  })
 
   test('Matches page loads and lists 0+ applications without server error', async ({ page, request }) => {
     // Swallow the budget-status endpoint so the amber banner doesn't shift assertions.
