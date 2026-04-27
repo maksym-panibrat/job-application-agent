@@ -50,6 +50,7 @@ async def isolation_app(isolation_asyncpg_url, monkeypatch):
     monkeypatch.setenv("CRON_SHARED_SECRET", "real-cron-secret-for-tests")
     monkeypatch.setenv("GOOGLE_OAUTH_CLIENT_ID", "test-client-id")
     monkeypatch.setenv("GOOGLE_OAUTH_CLIENT_SECRET", "test-client-secret")
+    monkeypatch.setenv("PUBLIC_BASE_URL", "https://example.run.app")
 
     import app.config as cfg
 
