@@ -17,8 +17,7 @@ function makeApp(overrides: Partial<Application> = {}): Application {
     match_strengths: ['Python', 'FastAPI'],
     match_gaps: ['Go experience'],
     created_at: new Date().toISOString(),
-    submitted_at: null,
-    submission_method: null,
+    applied_at: null,
     job: {
       id: 'job-1',
       title: 'Python Engineer',
@@ -29,8 +28,6 @@ function makeApp(overrides: Partial<Application> = {}): Application {
       contract_type: 'full-time',
       description_md: 'A great role.',
       apply_url: 'https://example.com/apply',
-      ats_type: null,
-      supports_api_apply: false,
       posted_at: null,
     },
     ...overrides,
