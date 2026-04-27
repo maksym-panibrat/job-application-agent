@@ -5,12 +5,23 @@ Board token is extracted from the job URL (public, no employer key needed).
 API: https://boards-api.greenhouse.io/v1/boards/{board_token}/jobs/{job_id}
 """
 
+import re
+
 import structlog
 from httpx import AsyncClient
 
-from app.sources.ats_detection import extract_greenhouse_board_token
-
 log = structlog.get_logger()
+
+
+def extract_greenhouse_board_token(apply_url: str) -> str | None:
+    """Extract the Greenhouse board token from a job posting URL.
+
+    Example: https://boards.greenhouse.io/acmecorp/jobs/123 -> "acmecorp"
+    """
+    match = re.search(r"boards\.greenhouse\.io/([^/\?#]+)", apply_url, re.IGNORECASE)
+    if match:
+        return match.group(1)
+    return None
 
 BOARDS_API = "https://boards-api.greenhouse.io/v1/boards"
 
