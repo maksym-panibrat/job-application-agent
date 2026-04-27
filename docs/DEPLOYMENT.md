@@ -22,13 +22,13 @@ gcloud artifacts repositories create app --repository-format=docker --location=u
 ### 3a. Required
 
 ```bash
-printf "%s" "GEMINI_KEY"          | gcloud secrets create google-api-key --data-file=-         # https://aistudio.google.com/apikey
-printf "%s" "ADZUNA_APP_ID"       | gcloud secrets create adzuna-app-id --data-file=-
-printf "%s" "ADZUNA_API_KEY"      | gcloud secrets create adzuna-api-key --data-file=-
+printf "%s" "GEMINI_KEY"                    | gcloud secrets create google-api-key --data-file=-      # https://aistudio.google.com/apikey
 printf "%s" "postgresql+asyncpg://..."      | gcloud secrets create database-url --data-file=-
 printf "%s" "$(openssl rand -hex 32)"       | gcloud secrets create cron-shared-secret --data-file=-
 printf "%s" "$(openssl rand -hex 32)"       | gcloud secrets create jwt-secret --data-file=-
 ```
+
+Google OAuth credentials are required in production; see §3b.
 
 The `cron-shared-secret` value also goes into GHA as `CRON_SHARED_SECRET` (§4):
 
@@ -36,11 +36,9 @@ The `cron-shared-secret` value also goes into GHA as `CRON_SHARED_SECRET` (§4):
 gcloud secrets versions access latest --secret=cron-shared-secret
 ```
 
-### 3b. Optional
+### 3b. Google OAuth (required)
 
-Deploy probes these with `gcloud secrets describe` and includes only what exists.
-
-**Google OAuth** — required for real Google sign-in; without it, `AUTH_ENABLED=false` (single-user mode).
+Required for sign-in (single-user fallback was removed). Deploy probes these with `gcloud secrets describe` and fails closed if absent.
 
 1. <https://console.cloud.google.com/apis/credentials> → OAuth consent screen: External, scopes `email openid profile`, add yourself as a test user.
 2. Create credentials → OAuth client ID → Web application.

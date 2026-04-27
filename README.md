@@ -1,6 +1,6 @@
 # Job Application Agent
 
-AI-powered job search automation: monitors job boards, scores matches against your profile, and pre-generates tailored resume and cover letter before you even open the listing.
+AI-powered job search assistant: ingests Greenhouse company boards, scores each role against your profile, and generates a tailored cover letter on demand.
 
 **Live demo:** https://api-2twfzafrta-uc.a.run.app
 
@@ -9,25 +9,23 @@ AI-powered job search automation: monitors job boards, scores matches against yo
 ```
 Resume upload + onboarding chat
         ↓
-  Adzuna job sync  ──→  ATS detection (Greenhouse / Lever / Ashby)
+  Greenhouse public board sync (target_company_slugs)
         ↓
-  Matching agent scores each job against your profile  (Gemini Flash)
+  Matching agent scores each job (Gemini Flash, parallel Send fan-out)
         ↓
-  Generation agent produces tailored resume + cover letter  (Gemini Pro)
-  (runs in background — documents ready when you open the match card)
+  Visitor reviews matches → clicks "Generate cover letter" (Gemini Pro, ~15s)
         ↓
-  Review + edit inline → Approve → Submit
-  (Greenhouse: API submit · Others: open apply URL)
+  "Open application" → Greenhouse form → "Mark as applied"
 ```
 
 ## Key features
 
-- **Conversational onboarding** — chat agent asks about target roles, location, preferences; updates your profile via tool calls; persists conversation state across browser sessions (LangGraph + AsyncPostgresSaver)
+- **Conversational onboarding** — chat agent asks about target roles, location, preferences; updates your profile via tool calls; persists conversation state across browser sessions (LangGraph + AsyncPostgresSaver, onboarding only)
 - **Parallel job scoring** — LangGraph `Send` fan-out scores multiple jobs concurrently; results collected via state reducer
-- **Human-in-the-loop generation** — generation graph pauses at an `awaiting_review` interrupt after producing documents; `POST /api/applications/{id}/resume` with `approve` or `regenerate` unparks the graph (status lifecycle: `pending → generating → awaiting_review → ready`)
+- **Synchronous cover-letter generation** — `POST /api/applications/{id}/cover-letter` runs the linear graph in-request; `none → generating → ready/failed`
 - **Externalised scheduler** — no in-process scheduler; GitHub Actions cron hits `/internal/cron/*` endpoints (compatible with Cloud Run scale-to-zero)
 - **Budget safety** — Gemini `ResourceExhausted` errors are caught, stored in `llm_status`, surfaced as an amber banner; job collection keeps running
-- **Rate limiting** — Postgres-backed sliding window limits on profile edits, resume uploads, and manual syncs; per-user daily quotas
+- **Rate limiting** — Postgres-backed sliding-window limits on profile edits, resume uploads, and manual syncs; per-user daily quotas (production only)
 - **Observability** — errors flow to GCP Cloud Error Reporting via structlog (`severity=ERROR` + `@type: …ReportedErrorEvent` markers); no third-party SaaS
 
 ## Tech stack
@@ -56,7 +54,7 @@ cd frontend && npm install && npm run dev
 # → http://localhost:5173
 ```
 
-No login required locally (`AUTH_ENABLED=false`).
+Google OAuth is required: set `GOOGLE_OAUTH_CLIENT_ID` / `GOOGLE_OAUTH_CLIENT_SECRET` (see `app/config.py::Settings`).
 
 ## Dev commands
 
@@ -78,7 +76,7 @@ app/
   api/         FastAPI routers — profile, jobs, applications, chat, cron, auth, status
   models/      SQLModel table definitions
   services/    Business logic (job sync, matching, generation, rate limiting)
-  sources/     Job source adapters (Adzuna, JSearch) + ATS detection + resume parser
+  sources/     Job source adapters (Greenhouse Board) + resume parser
   scheduler/   Async task functions (called by cron endpoints)
 frontend/
   src/
@@ -92,7 +90,7 @@ tests/
   smoke/       Live HTTP smoke tests (requires running server)
 .github/
   workflows/
-    ci.yml     test → frontend → e2e-browser → deploy (main only)
+    ci.yml     test → frontend → e2e-browser → migrate → deploy (main only)
     cron.yml   GitHub Actions cron hitting /internal/cron/* endpoints
 ```
 

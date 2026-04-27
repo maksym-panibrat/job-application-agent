@@ -7,16 +7,12 @@ export default function Applied() {
     queryKey: ['applications', 'applied'],
     queryFn: () => api.listApplications({ status: 'applied' }),
   })
-  const { data: approved, isLoading: loadingApproved } = useQuery({
-    queryKey: ['applications', 'approved'],
-    queryFn: () => api.listApplications({ status: 'approved' }),
-  })
   const { data: dismissed, isLoading: loadingDismissed } = useQuery({
     queryKey: ['applications', 'dismissed'],
     queryFn: () => api.listApplications({ status: 'dismissed' }),
   })
 
-  if (loadingApplied || loadingApproved || loadingDismissed) {
+  if (loadingApplied || loadingDismissed) {
     return <div className="flex items-center justify-center h-48 text-gray-400">Loading...</div>
   }
 
@@ -37,28 +33,6 @@ export default function Applied() {
                 key={app.id}
                 to={`/matches/${app.id}`}
                 className="block p-3 bg-white rounded-md border border-gray-200 hover:border-gray-300 transition-colors"
-              >
-                <p className="font-medium text-gray-900 text-sm">{app.job?.title}</p>
-                <p className="text-xs text-gray-500">{app.job?.company_name}</p>
-              </Link>
-            ))}
-          </div>
-        )}
-      </section>
-
-      <section className="mb-8">
-        <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">
-          Approved ({approved?.length ?? 0})
-        </h2>
-        {!approved?.length ? (
-          <p className="text-sm text-gray-400">No approved applications.</p>
-        ) : (
-          <div className="space-y-2">
-            {approved.map((app) => (
-              <Link
-                key={app.id}
-                to={`/matches/${app.id}`}
-                className="block p-3 bg-white rounded-md border border-blue-200 hover:border-blue-300 transition-colors"
               >
                 <p className="font-medium text-gray-900 text-sm">{app.job?.title}</p>
                 <p className="text-xs text-gray-500">{app.job?.company_name}</p>
