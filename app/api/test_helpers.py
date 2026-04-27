@@ -150,11 +150,6 @@ async def seed_test_data(
 
     await upsert_document(
         app1.id,
-        "tailored_resume",
-        "# Jane Smith\njane@example.com\n\n## Experience\nSenior Engineer at Acme Corp",
-    )
-    await upsert_document(
-        app1.id,
         "cover_letter",
         "Dear Hiring Manager,\n\nI am excited to apply for this Senior Software Engineer role.",
     )

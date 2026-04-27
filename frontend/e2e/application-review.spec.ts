@@ -3,6 +3,7 @@ import { loginAsTestUser } from './helpers'
 
 test.describe('Application review flow', () => {
   let applicationId: string
+  let undocumentedApplicationId: string
   let authToken: string
 
   test.beforeEach(async ({ page }) => {
@@ -14,7 +15,9 @@ test.describe('Application review flow', () => {
     })
     expect(res.ok()).toBeTruthy()
     const body = await res.json()
+    // applications[0] has a pre-generated cover letter; applications[1] has no doc.
     applicationId = body.applications[0]
+    undocumentedApplicationId = body.applications[1]
   })
 
   test.afterEach(async ({ page }) => {
@@ -32,7 +35,7 @@ test.describe('Application review flow', () => {
   })
 
   test('generate cover letter button is shown when no doc exists', async ({ page }) => {
-    await page.goto(`/matches/${applicationId}`)
+    await page.goto(`/matches/${undocumentedApplicationId}`)
     await page.waitForLoadState('networkidle')
 
     const generateBtn = page.getByRole('button', { name: /generate cover letter/i })
