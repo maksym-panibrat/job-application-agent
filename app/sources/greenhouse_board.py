@@ -65,8 +65,6 @@ class GreenhouseBoardSource(JobSource):
             contract_type=None,
             apply_url=apply_url,
             posted_at=posted_at,
-            ats_type="greenhouse",
-            supports_api_apply=True,
         )
 
     async def _fetch_slug(self, slug: str) -> list[JobData]:

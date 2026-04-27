@@ -48,8 +48,6 @@ async def test_greenhouse_board_happy_path():
     job = jobs[0]
     assert job.external_id == "4000001"
     assert job.company_name == "Stripe"
-    assert job.ats_type == "greenhouse"
-    assert job.supports_api_apply is True
     assert job.location == "San Francisco, CA"
     assert job.workplace_type is None
 

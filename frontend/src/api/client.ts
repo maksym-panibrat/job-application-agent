@@ -56,8 +56,6 @@ export interface Job {
   contract_type: string | null
   description_md: string | null
   apply_url: string
-  ats_type: string | null
-  supports_api_apply: boolean
   posted_at: string | null
 }
 
@@ -70,8 +68,7 @@ export interface Application {
   match_strengths: string[]
   match_gaps: string[]
   created_at: string
-  submitted_at: string | null
-  submission_method: string | null
+  applied_at: string | null
   job: Job | null
 }
 
@@ -172,9 +169,9 @@ export const api = {
       `/api/applications/${id}/resume`,
       { method: 'POST', body: JSON.stringify({ decision }) }
     ),
-  submitApplication: (id: string) =>
-    apiFetch<{ success?: boolean; method: string; apply_url?: string; error?: string; unanswered_questions?: string[] }>(
-      `/api/applications/${id}/submit`,
+  markApplied: (id: string) =>
+    apiFetch<{ id: string; status: string; applied_at: string | null }>(
+      `/api/applications/${id}/mark-applied`,
       { method: 'POST' }
     ),
   downloadPdf: (docId: string) => `/api/documents/${docId}/pdf`,

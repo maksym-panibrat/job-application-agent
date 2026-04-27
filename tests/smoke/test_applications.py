@@ -128,3 +128,29 @@ async def test_core_workflow(client):
     pending_resp = await client.get("/api/applications?status=pending_review")
     assert pending_resp.status_code == 200
     assert app_id not in {a["id"] for a in pending_resp.json()}
+
+
+@pytest.mark.asyncio
+async def test_mark_applied(client, seeded_data):
+    """Verify /mark-applied sets status=applied and records applied_at."""
+    apps = seeded_data.get("applications", [])
+    assert apps, "No seeded applications — seeded_data is empty"
+    app_id = apps[0]["id"]
+
+    # /submit must no longer exist (404 if no path matches, 405 if method mismatch)
+    r_submit = await client.post(f"/api/applications/{app_id}/submit")
+    assert r_submit.status_code in (404, 405), (
+        f"Expected 404/405 for removed /submit, got {r_submit.status_code}"
+    )
+
+    # Mark as applied
+    r = await client.post(f"/api/applications/{app_id}/mark-applied")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["status"] == "applied"
+    assert body["applied_at"] is not None
+
+    # Idempotent — second call returns same applied_at
+    r2 = await client.post(f"/api/applications/{app_id}/mark-applied")
+    assert r2.status_code == 200
+    assert r2.json()["applied_at"] == body["applied_at"]

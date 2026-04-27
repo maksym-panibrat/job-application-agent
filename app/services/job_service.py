@@ -31,8 +31,6 @@ async def upsert_job(job_data: JobData, source: str, session: AsyncSession) -> t
         existing.apply_url = job_data.apply_url
         existing.location = job_data.location
         existing.workplace_type = job_data.workplace_type
-        existing.ats_type = job_data.ats_type
-        existing.supports_api_apply = job_data.supports_api_apply
         existing.is_active = True
         existing.fetched_at = datetime.now(UTC)
         session.add(existing)
@@ -52,8 +50,6 @@ async def upsert_job(job_data: JobData, source: str, session: AsyncSession) -> t
         contract_type=job_data.contract_type,
         apply_url=job_data.apply_url,
         posted_at=job_data.posted_at,
-        ats_type=job_data.ats_type,
-        supports_api_apply=job_data.supports_api_apply,
     )
     session.add(job)
     await session.commit()
