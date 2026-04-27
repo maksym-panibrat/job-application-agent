@@ -40,14 +40,6 @@ Your goals:
 4. Understand their key skills and experience highlights they want to emphasize.
 5. Note any companies or industries to exclude.
 6. Confirm their contact info (LinkedIn, GitHub, portfolio).
-7. Collect work authorization and sponsorship needs:
-   - Ask which status applies: US citizen, US permanent resident, US work visa, UK citizen,
-     EU citizen, or other. Store as work_authorization.
-   - Ask if they require employer sponsorship (requires_sponsorship true/false).
-8. Ask about salary expectations (annual USD) and when they are available to start (available_from).
-9. As users share answers to common application questions ("why do you want to work here?",
-   "are you willing to relocate?", "what is your greatest strength?", etc.), bank them in
-   `standard_answers` as `{question_key: answer}` for reuse across future applications.
 
 Ask one or two questions at a time. Be conversational and concise.
 When you have enough information to update the profile, call the `save_profile_updates` tool.
@@ -79,11 +71,6 @@ PROFILE_SCALAR_FIELDS = frozenset(
         "target_company_slugs",
         "first_name",
         "last_name",
-        "work_authorization",
-        "requires_sponsorship",
-        "salary_expectation_usd",
-        "available_from",
-        "standard_answers",
     }
 )
 
@@ -119,12 +106,6 @@ def build_graph(checkpointer: AsyncPostgresSaver) -> StateGraph:
         email (str), phone (str), linkedin_url (str), github_url (str),
         portfolio_url (str), target_company_slugs (dict, e.g.
         {"greenhouse": ["stripe", "airbnb"], "lever": [], "ashby": []}),
-        work_authorization (str, one of: us_citizen, us_permanent_resident,
-        us_work_visa, uk_citizen, eu_citizen, other),
-        requires_sponsorship (bool),
-        salary_expectation_usd (int, annual USD),
-        available_from (str, ISO date YYYY-MM-DD),
-        standard_answers (dict, freeform key/value bank for common application questions),
         skills (list of {name, category, proficiency, years}),
         work_experiences (list of {company, title, start_date (YYYY-MM-DD), end_date,
         description_md, technologies (list)}).
