@@ -1,12 +1,12 @@
 """
 E2E regression tests for the job sync/ingestion pipeline.
 
-Covers: job creation, idempotency, timezone roundtrip, multi-source,
-and stale job marking. Tests hit the full FastAPI app backed by a real
-Postgres container via the test_app fixture in conftest.py.
+Covers: job creation, idempotency, timezone roundtrip, and stale job marking.
+Tests hit the full FastAPI app backed by a real Postgres container via the
+test_app fixture in conftest.py.
 
-These tests were added after discovering that JSearch produced timezone-aware
-datetimes that crashed INSERT against naive TIMESTAMP columns.
+These tests were added after discovering that timezone-aware datetimes from
+external sources crashed INSERT against naive TIMESTAMP columns.
 """
 
 import uuid
@@ -25,11 +25,10 @@ from app.sources.base import JobData
 
 def _make_job_data(
     idx: int = 0,
-    source_name: str = "adzuna",
     posted_at: datetime | None = None,
 ) -> JobData:
     return JobData(
-        external_id=f"sync-e2e-{source_name}-{idx:03d}",
+        external_id=f"sync-e2e-greenhouse-{idx:03d}",
         title=f"Python Engineer #{idx}",
         company_name="Acme Corp",
         location="New York",
@@ -41,11 +40,11 @@ def _make_job_data(
     )
 
 
-def _mock_source(name: str, jobs: list[JobData]) -> MagicMock:
+def _mock_greenhouse_source(jobs: list[JobData]) -> MagicMock:
+    """Mock GreenhouseBoardSource — returns the given jobs from search()."""
     source = MagicMock()
-    source.source_name = name
-    source.needs_enrichment = False
-    source.search = AsyncMock(return_value=(jobs, 2))
+    source.source_name = "greenhouse_board"
+    source.search = AsyncMock(return_value=(jobs, None))
     return source
 
 
@@ -57,12 +56,17 @@ def _mock_source(name: str, jobs: list[JobData]) -> MagicMock:
 @pytest.mark.asyncio
 async def test_sync_creates_jobs_in_db(test_app, monkeypatch):
     """Synced jobs are persisted and retrievable from the DB."""
-    jobs = [_make_job_data(i) for i in range(3)]
-    mock_source = _mock_source("adzuna", jobs)
-    empty_jsearch = _mock_source("jsearch", [])
+    await test_app.patch(
+        "/api/profile",
+        json={"target_company_slugs": {"greenhouse": ["acme"]}},
+    )
 
-    monkeypatch.setattr("app.services.job_sync_service.AdzunaSource", lambda: mock_source)
-    monkeypatch.setattr("app.services.job_sync_service.JSearchSource", lambda: empty_jsearch)
+    jobs = [_make_job_data(i) for i in range(3)]
+    mock_source = _mock_greenhouse_source(jobs)
+
+    monkeypatch.setattr(
+        "app.services.job_sync_service.GreenhouseBoardSource", lambda: mock_source
+    )
     monkeypatch.setattr("app.api.jobs._score_after_sync", AsyncMock())
 
     resp = await test_app.post("/api/jobs/sync")
@@ -78,7 +82,7 @@ async def test_sync_creates_jobs_in_db(test_app, monkeypatch):
     factory = get_session_factory()
     async with factory() as session:
         result = await session.execute(
-            select(Job).where(Job.source == "adzuna", Job.is_active.is_(True))
+            select(Job).where(Job.source == "greenhouse_board", Job.is_active.is_(True))
         )
         db_jobs = list(result.scalars().all())
 
@@ -90,12 +94,17 @@ async def test_sync_creates_jobs_in_db(test_app, monkeypatch):
 @pytest.mark.asyncio
 async def test_resync_is_idempotent(test_app, monkeypatch):
     """Re-syncing the same jobs returns new_jobs=0, updated_jobs=3, and the DB still has 3 rows."""
-    jobs = [_make_job_data(i) for i in range(3)]
-    mock_source = _mock_source("adzuna", jobs)
-    empty_jsearch = _mock_source("jsearch", [])
+    await test_app.patch(
+        "/api/profile",
+        json={"target_company_slugs": {"greenhouse": ["acme"]}},
+    )
 
-    monkeypatch.setattr("app.services.job_sync_service.AdzunaSource", lambda: mock_source)
-    monkeypatch.setattr("app.services.job_sync_service.JSearchSource", lambda: empty_jsearch)
+    jobs = [_make_job_data(i) for i in range(3)]
+    mock_source = _mock_greenhouse_source(jobs)
+
+    monkeypatch.setattr(
+        "app.services.job_sync_service.GreenhouseBoardSource", lambda: mock_source
+    )
     monkeypatch.setattr("app.api.jobs._score_after_sync", AsyncMock())
 
     # First sync
@@ -115,7 +124,9 @@ async def test_resync_is_idempotent(test_app, monkeypatch):
 
     factory = get_session_factory()
     async with factory() as session:
-        result = await session.execute(select(Job).where(Job.source == "adzuna"))
+        result = await session.execute(
+            select(Job).where(Job.source == "greenhouse_board")
+        )
         db_jobs = list(result.scalars().all())
 
     assert len(db_jobs) == 3
@@ -126,17 +137,22 @@ async def test_posted_at_timezone_roundtrip(test_app, monkeypatch):
     """
     Regression: timezone-aware posted_at must survive INSERT and SELECT without error.
 
-    JSearch returns datetimes with tzinfo=UTC. Before the timestamptz migration,
-    this caused: asyncpg.exceptions.DataError: can't subtract offset-naive and
-    offset-aware datetimes on commit.
+    External sources may return datetimes with tzinfo=UTC. Before the timestamptz
+    migration, this caused: asyncpg.exceptions.DataError: can't subtract offset-naive
+    and offset-aware datetimes on commit.
     """
+    await test_app.patch(
+        "/api/profile",
+        json={"target_company_slugs": {"greenhouse": ["acme"]}},
+    )
+
     aware_posted_at = datetime(2026, 4, 10, 12, 0, 0, tzinfo=UTC)
     jobs = [_make_job_data(0, posted_at=aware_posted_at)]
-    mock_source = _mock_source("jsearch", jobs)
+    mock_source = _mock_greenhouse_source(jobs)
 
-    empty_adzuna = _mock_source("adzuna", [])
-    monkeypatch.setattr("app.services.job_sync_service.JSearchSource", lambda: mock_source)
-    monkeypatch.setattr("app.services.job_sync_service.AdzunaSource", lambda: empty_adzuna)
+    monkeypatch.setattr(
+        "app.services.job_sync_service.GreenhouseBoardSource", lambda: mock_source
+    )
     monkeypatch.setattr("app.api.jobs._score_after_sync", AsyncMock())
 
     resp = await test_app.post("/api/jobs/sync")
@@ -149,7 +165,9 @@ async def test_posted_at_timezone_roundtrip(test_app, monkeypatch):
 
     factory = get_session_factory()
     async with factory() as session:
-        result = await session.execute(select(Job).where(Job.source == "jsearch"))
+        result = await session.execute(
+            select(Job).where(Job.source == "greenhouse_board")
+        )
         job = result.scalar_one()
 
     assert job.posted_at is not None
@@ -159,46 +177,22 @@ async def test_posted_at_timezone_roundtrip(test_app, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_jsearch_source_stored_with_correct_source_name(test_app, monkeypatch):
-    """Jobs from JSearch are stored with source='jsearch'."""
-    jobs = [_make_job_data(0, source_name="jsearch")]
-    mock_source = _mock_source("jsearch", jobs)
-    empty_adzuna = _mock_source("adzuna", [])
-
-    monkeypatch.setattr("app.services.job_sync_service.JSearchSource", lambda: mock_source)
-    monkeypatch.setattr("app.services.job_sync_service.AdzunaSource", lambda: empty_adzuna)
-    monkeypatch.setattr("app.api.jobs._score_after_sync", AsyncMock())
-
-    resp = await test_app.post("/api/jobs/sync")
-    assert resp.status_code == 200
-    assert resp.json()["new_jobs"] == 1
-
-    from app.database import get_session_factory
-    from app.models.job import Job
-
-    factory = get_session_factory()
-    async with factory() as session:
-        result = await session.execute(select(Job).where(Job.source == "jsearch"))
-        job = result.scalar_one()
-
-    assert job.source == "jsearch"
-    assert job.external_id == "sync-e2e-jsearch-000"
-
-
-@pytest.mark.asyncio
 async def test_stale_job_marking(test_app, monkeypatch):
     """
     Jobs not refreshed within stale_after_days are marked is_active=False on next sync.
     """
+    await test_app.patch(
+        "/api/profile",
+        json={"target_company_slugs": {"greenhouse": ["acme"]}},
+    )
+
     all_jobs = [_make_job_data(0), _make_job_data(1)]
-    empty_jsearch = _mock_source("jsearch", [])
 
     # First sync: both jobs appear
     monkeypatch.setattr(
-        "app.services.job_sync_service.AdzunaSource",
-        lambda: _mock_source("adzuna", all_jobs),
+        "app.services.job_sync_service.GreenhouseBoardSource",
+        lambda: _mock_greenhouse_source(all_jobs),
     )
-    monkeypatch.setattr("app.services.job_sync_service.JSearchSource", lambda: empty_jsearch)
     monkeypatch.setattr("app.api.jobs._score_after_sync", AsyncMock())
 
     resp = await test_app.post("/api/jobs/sync")
@@ -212,7 +206,10 @@ async def test_stale_job_marking(test_app, monkeypatch):
     stale_job_id: uuid.UUID
     async with factory() as session:
         result = await session.execute(
-            select(Job).where(Job.source == "adzuna", Job.external_id == "sync-e2e-adzuna-000")
+            select(Job).where(
+                Job.source == "greenhouse_board",
+                Job.external_id == "sync-e2e-greenhouse-000",
+            )
         )
         stale_job = result.scalar_one()
         stale_job.fetched_at = datetime.now(UTC) - timedelta(days=20)
@@ -222,8 +219,8 @@ async def test_stale_job_marking(test_app, monkeypatch):
 
     # Second sync: only job #1 returned — job #0 is NOT refreshed, so mark_stale picks it up
     monkeypatch.setattr(
-        "app.services.job_sync_service.AdzunaSource",
-        lambda: _mock_source("adzuna", [all_jobs[1]]),
+        "app.services.job_sync_service.GreenhouseBoardSource",
+        lambda: _mock_greenhouse_source([all_jobs[1]]),
     )
 
     resp2 = await test_app.post("/api/jobs/sync")

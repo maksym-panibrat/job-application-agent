@@ -10,8 +10,6 @@ class Settings(BaseSettings):
     llm_generation_model: str = "gemini-2.5-pro"
     llm_matching_model: str = "gemini-2.5-flash"
     llm_resume_extraction_model: str = "gemini-2.5-flash"
-    adzuna_app_id: str = ""
-    adzuna_api_key: SecretStr = SecretStr("")
     match_score_threshold: float = 0.65
     max_matches_displayed: int = 20
     job_sync_interval_hours: int = 24
@@ -27,26 +25,9 @@ class Settings(BaseSettings):
     langsmith_api_key: SecretStr | None = None
     langsmith_project: str = "job-application-agent"
     job_stale_after_days: int = 14
-    adzuna_max_queries_per_sync: int = 3
-    adzuna_max_pages_per_sync: int = 1
-    adzuna_cache_ttl_hours: int = 24
-    adzuna_search_distance_km: int = 50
-    adzuna_category: str = "it-jobs"
-    tavily_api_key: SecretStr | None = None
     log_level: str = "INFO"
-    jsearch_api_key: SecretStr = SecretStr("")
-    jsearch_max_results_per_query: int = 10
     matching_max_concurrency: int = 2
     matching_jobs_per_batch: int = 20
-    remotive_enabled: bool = True
-    remoteok_enabled: bool = True
-    arbeitnow_enabled: bool = True
-    greenhouse_board_enabled: bool = True
-    remotive_max_results: int = 50
-    arbeitnow_max_pages_per_sync: int = 2
-    remoteok_user_agent: str = (
-        "job-application-agent/1.0 (+https://github.com/panibrat/job-application-agent)"
-    )
 
     cors_allowed_origins: list[str] = ["http://localhost:5173", "http://localhost:3000"]
 

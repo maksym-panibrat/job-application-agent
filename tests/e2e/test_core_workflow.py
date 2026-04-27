@@ -21,24 +21,19 @@ def _make_job_data(idx: int = 0) -> JobData:
         title=f"Senior Python Engineer #{idx}",
         company_name="Acme Corp",
         location="New York",
-        apply_url=f"https://jobs.lever.co/acme/abc-{idx}",
-        ats_type="lever",
-        supports_api_apply=False,
+        apply_url=f"https://boards.greenhouse.io/acme/jobs/{idx}",
+        ats_type="greenhouse",
+        supports_api_apply=True,
         description_md="We need a Python expert for distributed systems work.",
     )
 
 
-def _mock_source(name: str, jobs: list[JobData]) -> MagicMock:
-    """Return a mock JobSource that returns `jobs` on search()."""
+def _mock_greenhouse_source(jobs: list[JobData]) -> MagicMock:
+    """Mock GreenhouseBoardSource — returns the given jobs from search()."""
     source = MagicMock()
-    source.source_name = name
-    source.needs_enrichment = False
-    source.search = AsyncMock(return_value=(jobs, len(jobs)))
+    source.source_name = "greenhouse_board"
+    source.search = AsyncMock(return_value=(jobs, None))
     return source
-
-
-def _mock_adzuna_source(jobs: list[JobData]) -> MagicMock:
-    return _mock_source("adzuna", jobs)
 
 
 # ---------------------------------------------------------------------------
@@ -96,15 +91,21 @@ async def test_update_profile(test_app):
 @pytest.mark.asyncio
 async def test_job_sync_with_mocked_source(test_app, monkeypatch):
     """
-    POST /api/jobs/sync → syncs jobs from mocked Adzuna → new jobs returned.
+    POST /api/jobs/sync → syncs jobs from mocked GreenhouseBoardSource → new jobs returned.
     The background scoring task is also mocked to avoid LLM calls.
     """
-    jobs = [_make_job_data(i) for i in range(3)]
-    mock_source = _mock_adzuna_source(jobs)
-    empty_jsearch = _mock_source("jsearch", [])
+    # Set target_company_slugs so sync_profile doesn't early-return
+    await test_app.patch(
+        "/api/profile",
+        json={"target_company_slugs": {"greenhouse": ["acme"]}},
+    )
 
-    monkeypatch.setattr("app.services.job_sync_service.AdzunaSource", lambda: mock_source)
-    monkeypatch.setattr("app.services.job_sync_service.JSearchSource", lambda: empty_jsearch)
+    jobs = [_make_job_data(i) for i in range(3)]
+    mock_source = _mock_greenhouse_source(jobs)
+
+    monkeypatch.setattr(
+        "app.services.job_sync_service.GreenhouseBoardSource", lambda: mock_source
+    )
     monkeypatch.setattr("app.api.jobs._score_after_sync", AsyncMock())
 
     resp = await test_app.post("/api/jobs/sync")
@@ -117,10 +118,17 @@ async def test_job_sync_with_mocked_source(test_app, monkeypatch):
 @pytest.mark.asyncio
 async def test_sync_then_list_applications_empty_without_scoring(test_app, monkeypatch):
     """After sync (no scoring), applications list is empty."""
-    jobs = [_make_job_data()]
-    mock_source = _mock_adzuna_source(jobs)
+    await test_app.patch(
+        "/api/profile",
+        json={"target_company_slugs": {"greenhouse": ["acme"]}},
+    )
 
-    monkeypatch.setattr("app.services.job_sync_service.AdzunaSource", lambda: mock_source)
+    jobs = [_make_job_data()]
+    mock_source = _mock_greenhouse_source(jobs)
+
+    monkeypatch.setattr(
+        "app.services.job_sync_service.GreenhouseBoardSource", lambda: mock_source
+    )
     monkeypatch.setattr("app.api.jobs._score_after_sync", AsyncMock())
 
     await test_app.post("/api/jobs/sync")

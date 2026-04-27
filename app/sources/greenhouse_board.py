@@ -5,16 +5,12 @@ boards API. Driven by the user's profile target_company_slugs["greenhouse"] list
 Non-paginating, non-query-driven.
 """
 
-import hashlib
-from datetime import UTC, datetime, timedelta
+from datetime import datetime
 from typing import Any
 
 import httpx
 import structlog
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlmodel import select
 
-from app.models.search_cache import JobSearchCache
 from app.sources.base import JobData, JobSource
 
 GREENHOUSE_BOARDS_BASE = "https://boards-api.greenhouse.io/v1/boards"
@@ -34,46 +30,6 @@ class GreenhouseBoardSource(JobSource):
     @property
     def supports_query_cursor(self) -> bool:
         return False
-
-    def _make_cache_key(self, slug: str) -> str:
-        raw = f"greenhouse_board|{slug}"
-        return hashlib.sha256(raw.encode()).hexdigest()
-
-    async def _get_cached(self, cache_key: str, session: AsyncSession) -> dict | None:
-        result = await session.execute(
-            select(JobSearchCache).where(
-                JobSearchCache.query_hash == cache_key,
-                JobSearchCache.expires_at > datetime.now(UTC),
-            )
-        )
-        row = result.scalar_one_or_none()
-        return row.results if row else None
-
-    async def _save_cache(
-        self,
-        cache_key: str,
-        slug: str,
-        results: dict,
-        ttl_hours: int,
-        session: AsyncSession,
-    ) -> None:
-        expires = datetime.now(UTC) + timedelta(hours=ttl_hours)
-        existing = await session.execute(
-            select(JobSearchCache).where(JobSearchCache.query_hash == cache_key)
-        )
-        old = existing.scalar_one_or_none()
-        if old:
-            await session.delete(old)
-        cache_row = JobSearchCache(
-            source=self.source_name,
-            query_hash=cache_key,
-            query=slug,
-            location=None,
-            results=results,
-            expires_at=expires,
-        )
-        session.add(cache_row)
-        await session.commit()
 
     def _parse_job(self, item: dict, slug: str) -> JobData | None:
         job_id = item.get("id")
@@ -113,14 +69,7 @@ class GreenhouseBoardSource(JobSource):
             supports_api_apply=True,
         )
 
-    async def _fetch_slug(self, slug: str, settings: Any, session: Any) -> list[JobData]:
-        cache_key = self._make_cache_key(slug)
-
-        if session is not None:
-            cached = await self._get_cached(cache_key, session)
-            if cached:
-                return [j for item in cached.get("jobs", []) if (j := self._parse_job(item, slug))]
-
+    async def _fetch_slug(self, slug: str) -> list[JobData]:
         try:
             async with httpx.AsyncClient(timeout=30) as client:
                 response = await client.get(
@@ -143,41 +92,17 @@ class GreenhouseBoardSource(JobSource):
             )
             return []
 
-        if session is not None:
-            await self._save_cache(cache_key, slug, data, settings.adzuna_cache_ttl_hours, session)
-
         return [j for item in data.get("jobs", []) if (j := self._parse_job(item, slug))]
 
     async def search(
         self,
         query: str,
         location: str | None,
-        cursor: Any,
-        settings: Any,
-        session: Any,
-        *,
-        profile: Any = None,
+        slug: str | None = None,
+        **kwargs: Any,
     ) -> tuple[list[JobData], None]:
-        if profile is None:
+        if slug is None:
             return [], None
 
-        slugs: list[str] = (profile.target_company_slugs or {}).get("greenhouse", [])
-        if not slugs:
-            return [], None
-
-        all_jobs: list[JobData] = []
-        for slug in slugs:
-            try:
-                jobs = await self._fetch_slug(slug, settings, session)
-                all_jobs.extend(jobs)
-            except Exception as exc:
-                await log.aerror(
-                    "greenhouse_board.fetch_failed",
-                    source_name="greenhouse_board",
-                    slug=slug,
-                    error=str(exc),
-                    error_type=type(exc).__name__,
-                    exc_info=True,
-                )
-
-        return all_jobs, None
+        jobs = await self._fetch_slug(slug)
+        return jobs, None
