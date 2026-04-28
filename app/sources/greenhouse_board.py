@@ -9,6 +9,7 @@ from datetime import datetime
 from typing import Any
 
 import httpx
+import markdownify
 import structlog
 
 from app.sources.base import JobData, JobSource
@@ -16,6 +17,14 @@ from app.sources.base import JobData, JobSource
 GREENHOUSE_BOARDS_BASE = "https://boards-api.greenhouse.io/v1/boards"
 
 log = structlog.get_logger()
+
+
+def _html_to_markdown(content: str | None) -> str | None:
+    """Convert Greenhouse HTML `content` to Markdown so the field name matches
+    reality and the matching LLM doesn't burn tokens on tags (issue #51)."""
+    if not content:
+        return content
+    return markdownify.markdownify(content, strip=["script", "style"]).strip() or None
 
 
 class GreenhouseFetchError(Exception):
@@ -76,7 +85,7 @@ class GreenhouseBoardSource(JobSource):
             company_name=company_name,
             location=location,
             workplace_type=workplace_type,
-            description_md=item.get("content"),
+            description_md=_html_to_markdown(item.get("content")),
             salary=None,
             contract_type=None,
             apply_url=apply_url,
