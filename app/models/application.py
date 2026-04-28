@@ -12,7 +12,12 @@ class Application(SQLModel, table=True):
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     job_id: uuid.UUID = Field(foreign_key="jobs.id")
     profile_id: uuid.UUID = Field(foreign_key="user_profiles.id")
-    status: str = "pending_review"  # pending_review, dismissed, applied
+    # status values:
+    #   pending_review — scored above threshold, awaiting user review (default)
+    #   auto_rejected  — scored below match_score_threshold (set by match_service)
+    #   dismissed      — user dismissed via PATCH
+    #   applied        — user marked applied via PATCH
+    status: str = "pending_review"
     # Values: none, pending, generating, awaiting_review, ready, failed
     generation_status: str = "none"
     generation_attempts: int = 0
