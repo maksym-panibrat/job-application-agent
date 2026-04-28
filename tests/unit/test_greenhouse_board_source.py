@@ -72,15 +72,17 @@ async def test_greenhouse_board_two_slugs_called_independently():
 
 
 @pytest.mark.asyncio
-async def test_greenhouse_board_404_returns_empty():
+async def test_greenhouse_board_404_raises_invalid_slug():
+    """404 from Greenhouse means the slug doesn't exist — surface this so the
+    caller can warn the user (issue #47). Previously silently returned []."""
+    from app.sources.greenhouse_board import InvalidSlugError
+
     source = GreenhouseBoardSource()
 
     with respx.mock:
         respx.get(f"{GREENHOUSE_BOARDS_BASE}/bad-slug/jobs").mock(return_value=httpx.Response(404))
-        jobs, cursor = await source.search("", None, slug="bad-slug")
-
-    assert jobs == []
-    assert cursor is None
+        with pytest.raises(InvalidSlugError):
+            await source.search("", None, slug="bad-slug")
 
 
 @pytest.mark.asyncio
@@ -122,14 +124,30 @@ async def test_greenhouse_board_remote_location():
 
 
 @pytest.mark.asyncio
-async def test_greenhouse_board_connection_error_returns_empty():
+async def test_greenhouse_board_connection_error_raises_transient():
+    """Network errors are transient — surface so the caller can retry next sync (#47)."""
+    from app.sources.greenhouse_board import TransientFetchError
+
     source = GreenhouseBoardSource()
 
     with respx.mock:
         respx.get(f"{GREENHOUSE_BOARDS_BASE}/bad-slug/jobs").mock(
             side_effect=httpx.ConnectError("connection refused")
         )
-        jobs, cursor = await source.search("", None, slug="bad-slug")
+        with pytest.raises(TransientFetchError):
+            await source.search("", None, slug="bad-slug")
 
-    assert jobs == []
-    assert cursor is None
+
+@pytest.mark.asyncio
+async def test_greenhouse_board_5xx_raises_transient():
+    """5xx from Greenhouse is transient — distinguish from 404 (#47)."""
+    from app.sources.greenhouse_board import TransientFetchError
+
+    source = GreenhouseBoardSource()
+
+    with respx.mock:
+        respx.get(f"{GREENHOUSE_BOARDS_BASE}/stripe/jobs").mock(
+            return_value=httpx.Response(503, text="service unavailable")
+        )
+        with pytest.raises(TransientFetchError):
+            await source.search("", None, slug="stripe")

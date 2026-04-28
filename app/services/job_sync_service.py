@@ -15,7 +15,11 @@ from app.config import get_settings
 from app.models.user_profile import UserProfile
 from app.services import job_service
 from app.sources.base import JobData, JobSource
-from app.sources.greenhouse_board import GreenhouseBoardSource
+from app.sources.greenhouse_board import (
+    GreenhouseBoardSource,
+    InvalidSlugError,
+    TransientFetchError,
+)
 
 log = structlog.get_logger()
 
@@ -55,14 +59,27 @@ async def sync_profile(
     source = sources[0] if sources else GreenhouseBoardSource()
     source_name = source.source_name
     raw: list[JobData] = []
-    errors = 0
+    failed_slugs: list[dict] = []
 
     for slug in slugs:
         try:
             jobs, _ = await source.search(query="", location=None, slug=slug)
             raw.extend(jobs)
+        except InvalidSlugError as exc:
+            failed_slugs.append({"slug": slug, "kind": "invalid", "error": str(exc)})
+            await log.awarning(
+                "job_sync.invalid_slug", source=source_name, slug=slug, error=str(exc)
+            )
+        except TransientFetchError as exc:
+            failed_slugs.append({"slug": slug, "kind": "transient", "error": str(exc)})
+            await log.awarning(
+                "job_sync.transient_fetch_error",
+                source=source_name,
+                slug=slug,
+                error=str(exc),
+            )
         except Exception as exc:
-            errors += 1
+            failed_slugs.append({"slug": slug, "kind": "error", "error": str(exc)})
             await log.awarning(
                 "job_sync.source_error",
                 source=source_name,
@@ -83,17 +100,23 @@ async def sync_profile(
 
     stale = await job_service.mark_stale_jobs(settings.job_stale_after_days, session)
 
+    warnings: list[str] = []
+    if failed_slugs:
+        warnings.append("slug_fetch_errors")
+
     result = {
         "new_jobs": new_count,
         "updated_jobs": updated_count,
         "stale_jobs": stale,
         "sources": [source_name],
+        "warnings": warnings,
+        "failed_slugs": failed_slugs,
     }
     await log.ainfo(
         "job_sync.complete",
         profile_id=str(profile.id),
         duration_ms=int((time.perf_counter() - t0) * 1000),
-        errors=errors,
-        **result,
+        failed_slug_count=len(failed_slugs),
+        **{k: v for k, v in result.items() if k not in ("failed_slugs", "warnings")},
     )
     return result

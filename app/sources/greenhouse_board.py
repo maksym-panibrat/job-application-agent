@@ -18,6 +18,22 @@ GREENHOUSE_BOARDS_BASE = "https://boards-api.greenhouse.io/v1/boards"
 log = structlog.get_logger()
 
 
+class GreenhouseFetchError(Exception):
+    """Base for slug-fetch failures the caller should surface."""
+
+    def __init__(self, slug: str, message: str = ""):
+        self.slug = slug
+        super().__init__(message or slug)
+
+
+class InvalidSlugError(GreenhouseFetchError):
+    """Greenhouse returned 404 — the slug does not exist on their platform."""
+
+
+class TransientFetchError(GreenhouseFetchError):
+    """5xx or network error — retry on the next sync."""
+
+
 class GreenhouseBoardSource(JobSource):
     @property
     def source_name(self) -> str:
@@ -74,11 +90,28 @@ class GreenhouseBoardSource(JobSource):
                     f"{GREENHOUSE_BOARDS_BASE}/{slug}/jobs",
                     params={"content": "true"},
                 )
-                if response.status_code == 404:
-                    await log.awarning("greenhouse_board.invalid_slug", slug=slug)
-                    return []
-                response.raise_for_status()
-                data = response.json()
+        except httpx.HTTPError as exc:
+            await log.awarning(
+                "greenhouse_board.network_error",
+                slug=slug,
+                error=str(exc),
+                error_type=type(exc).__name__,
+            )
+            raise TransientFetchError(slug, str(exc)) from exc
+
+        if response.status_code == 404:
+            await log.awarning("greenhouse_board.invalid_slug", slug=slug)
+            raise InvalidSlugError(slug, "board not found")
+        if response.status_code >= 500:
+            await log.awarning(
+                "greenhouse_board.upstream_5xx",
+                slug=slug,
+                status=response.status_code,
+            )
+            raise TransientFetchError(slug, f"upstream {response.status_code}")
+        try:
+            response.raise_for_status()
+            data = response.json()
         except Exception as exc:
             await log.aerror(
                 "greenhouse_board.fetch_failed",
@@ -88,7 +121,7 @@ class GreenhouseBoardSource(JobSource):
                 error_type=type(exc).__name__,
                 exc_info=True,
             )
-            return []
+            raise TransientFetchError(slug, str(exc)) from exc
 
         return [j for item in data.get("jobs", []) if (j := self._parse_job(item, slug))]
 
