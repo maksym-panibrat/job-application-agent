@@ -152,6 +152,62 @@ async def test_list_applications_ordering(db_session):
 
 
 @pytest.mark.asyncio
+async def test_score_and_match_picks_unscored_jobs_when_pool_is_largely_scored(db_session):
+    """
+    Issue #45: matching used to LIMIT before filtering out already-scored jobs,
+    so once 20 jobs were scored every subsequent run yielded 0 fresh candidates.
+
+    Seed more jobs than the batch limit, pre-score the first batch, and assert
+    that score_and_match still finds the unscored ones.
+    """
+    from app.config import get_settings
+
+    settings = get_settings()
+    batch = settings.matching_jobs_per_batch  # default 20
+    extra = 5
+
+    profile = await _seed_profile(db_session)
+
+    # First `batch` jobs: pre-create scored Applications so they appear in matched_ids.
+    pre_scored_jobs = [await _seed_job(db_session, title=f"Pre-scored {i}") for i in range(batch)]
+    for j in pre_scored_jobs:
+        db_session.add(
+            Application(
+                job_id=j.id,
+                profile_id=profile.id,
+                match_score=0.8,
+                match_rationale="seeded",
+            )
+        )
+    await db_session.commit()
+
+    # Next `extra` jobs: unscored, must be picked up.
+    fresh_jobs = [await _seed_job(db_session, title=f"Fresh {i}") for i in range(extra)]
+    fresh_ids = {j.id for j in fresh_jobs}
+
+    responses = [
+        '{"score": 0.85, "rationale": "Good", "strengths": ["Python"], "gaps": []}'
+    ] * extra
+    with patch_llm("app.agents.matching_agent", responses):
+        await score_and_match(profile, db_session)
+
+    result = await db_session.execute(
+        select(Application).where(
+            Application.profile_id == profile.id,
+            Application.match_rationale != "seeded",
+        )
+    )
+    new_apps = result.scalars().all()
+    new_job_ids = {a.job_id for a in new_apps}
+
+    assert new_job_ids == fresh_ids, (
+        f"Expected the {extra} fresh jobs to be scored, "
+        f"but got {len(new_job_ids)} new applications. "
+        "The LIMIT is being applied before the matched_ids filter."
+    )
+
+
+@pytest.mark.asyncio
 async def test_list_applications_returns_job_data(db_session):
     """list_applications returns (Application, Job) tuples — no N+1 queries needed."""
     profile = await _seed_profile(db_session)

@@ -108,10 +108,20 @@ async def score_and_match(
         )
         matched_ids = {row[0] for row in matched_result.all()}
 
-        all_jobs_result = await session.execute(
-            select(Job).where(Job.is_active.is_(True)).limit(settings.matching_jobs_per_batch)
+        # Push the not-in-matched_ids filter into SQL so the LIMIT counts only
+        # fresh candidates. Order newest-first so users see recently posted
+        # jobs before backlogged ones (issue #45).
+        candidates_q = (
+            select(Job)
+            .where(Job.is_active.is_(True))
+            .order_by(Job.posted_at.desc().nullslast(), Job.fetched_at.desc())
         )
-        jobs = [j for j in all_jobs_result.scalars().all() if j.id not in matched_ids]
+        if matched_ids:
+            candidates_q = candidates_q.where(Job.id.notin_(matched_ids))
+        candidates_q = candidates_q.limit(settings.matching_jobs_per_batch)
+
+        all_jobs_result = await session.execute(candidates_q)
+        jobs = list(all_jobs_result.scalars().all())
 
     if not jobs:
         return []
