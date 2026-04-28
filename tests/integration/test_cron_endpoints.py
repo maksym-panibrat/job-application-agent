@@ -63,6 +63,10 @@ async def test_cron_sync_returns_structured_summary(client):
     # how many active searches are misconfigured (empty target_company_slugs.greenhouse).
     assert "profiles_without_slugs" in data
     assert isinstance(data["profiles_without_slugs"], int)
+    # total_warnings is a generic dict aggregator — survives addition of new
+    # warning codes from sync_profile (#48).
+    assert "total_warnings" in data
+    assert isinstance(data["total_warnings"], dict)
 
 
 @pytest.mark.asyncio
