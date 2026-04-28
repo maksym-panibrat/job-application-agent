@@ -2,7 +2,7 @@
 
 1. From profile.target_company_slugs.greenhouse, fetch jobs via GreenhouseBoardSource.
 2. Per-source dedup by (title, company).
-3. Upsert + mark stale.
+3. Upsert. Staleness is owned by run_daily_maintenance, not this path.
 """
 
 import re
@@ -11,7 +11,6 @@ import time
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.config import get_settings
 from app.models.user_profile import UserProfile
 from app.services import job_service
 from app.sources.base import JobData, JobSource
@@ -42,7 +41,6 @@ async def sync_profile(
     sources: list[JobSource] | None = None,
 ) -> dict:
     """Run a Greenhouse sync for one profile. Returns a summary dict."""
-    settings = get_settings()
     t0 = time.perf_counter()
 
     slugs = (profile.target_company_slugs or {}).get("greenhouse", [])
@@ -98,7 +96,9 @@ async def sync_profile(
         else:
             updated_count += 1
 
-    stale = await job_service.mark_stale_jobs(settings.job_stale_after_days, session)
+    # Staleness is a global, time-based property handled by run_daily_maintenance;
+    # running it here once per per-profile sync caused jobs from one profile to
+    # flap inactive when another profile synced (issue #49).
 
     warnings: list[str] = []
     if failed_slugs:
@@ -107,7 +107,7 @@ async def sync_profile(
     result = {
         "new_jobs": new_count,
         "updated_jobs": updated_count,
-        "stale_jobs": stale,
+        "stale_jobs": 0,
         "sources": [source_name],
         "warnings": warnings,
         "failed_slugs": failed_slugs,

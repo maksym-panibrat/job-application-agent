@@ -255,6 +255,57 @@ async def test_sync_profile_surfaces_transient_fetch_errors(db_session):
 
 
 @pytest.mark.asyncio
+async def test_sync_profile_does_not_mark_jobs_stale(db_session):
+    """Issue #49: mark_stale_jobs runs in daily maintenance — sync_profile must
+    not duplicate that work (it caused jobs from one profile to flap inactive
+    when another profile synced)."""
+    from datetime import timedelta
+
+    from app.models.user import User
+    from app.services.profile_service import get_or_create_profile
+
+    user = User(id=uuid.uuid4(), email="staleness@test.com")
+    db_session.add(user)
+    await db_session.commit()
+
+    profile = await get_or_create_profile(user.id, db_session)
+    profile.target_company_slugs = {"greenhouse": ["acme"]}
+    db_session.add(profile)
+    await db_session.commit()
+    await db_session.refresh(profile)
+
+    # Pre-seed an active job whose fetched_at is older than the staleness window.
+    # If sync_profile ran mark_stale_jobs it would flip is_active=False; with #49
+    # fixed, this job should remain active until run_daily_maintenance runs.
+    stale_eligible = Job(
+        source="greenhouse_board",
+        external_id="stale-eligible-1",
+        title="Old Job",
+        company_name="Other Co",
+        apply_url="https://x/y",
+        description_md="x",
+        is_active=True,
+        fetched_at=datetime.now(UTC) - timedelta(days=20),
+    )
+    db_session.add(stale_eligible)
+    await db_session.commit()
+
+    mock_source = MagicMock()
+    mock_source.source_name = "greenhouse_board"
+    mock_source.search = AsyncMock(return_value=([make_job_data(external_id="acme-1")], None))
+
+    result = await job_sync_service.sync_profile(profile, db_session, sources=[mock_source])
+
+    # The new acme job should be inserted; the unrelated stale-eligible job
+    # must remain active (sync no longer touches staleness).
+    assert result["new_jobs"] == 1
+    assert result["stale_jobs"] == 0
+
+    refreshed = await db_session.execute(select(Job).where(Job.external_id == "stale-eligible-1"))
+    assert refreshed.scalar_one().is_active is True
+
+
+@pytest.mark.asyncio
 async def test_sync_profile_dedups_within_slug(db_session):
     """Same (title, company) returned twice from one slug is upserted once."""
     from app.models.user import User
