@@ -1,6 +1,5 @@
 """Integration tests for the (Greenhouse-only) job sync pipeline."""
 
-import uuid
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
 
@@ -8,22 +7,9 @@ import pytest
 from sqlmodel import select
 
 from app.models.job import Job
-from app.models.user_profile import UserProfile
 from app.services import job_sync_service
 from app.services.job_service import mark_stale_jobs, upsert_job
 from app.sources.base import JobData
-
-
-def make_profile() -> UserProfile:
-    user_id = uuid.uuid4()
-    return UserProfile(
-        user_id=user_id,
-        full_name="Test User",
-        target_roles=["Backend Engineer"],
-        target_locations=["New York"],
-        target_company_slugs={"greenhouse": ["acme"]},
-        remote_ok=True,
-    )
 
 
 def make_job_data(external_id: str = "job-001", title: str = "Python Engineer") -> JobData:
@@ -83,20 +69,9 @@ async def test_mark_stale_jobs(db_session):
 
 
 @pytest.mark.asyncio
-async def test_sync_profile_with_mocked_source(db_session):
+async def test_sync_profile_with_mocked_source(seeded_profile_factory, db_session):
     """sync_profile fetches per slug, dedups, upserts."""
-    from app.models.user import User
-    from app.services.profile_service import get_or_create_profile
-
-    user = User(id=uuid.uuid4(), email="test@test.com")
-    db_session.add(user)
-    await db_session.commit()
-
-    profile = await get_or_create_profile(user.id, db_session)
-    profile.target_company_slugs = {"greenhouse": ["acme"]}
-    db_session.add(profile)
-    await db_session.commit()
-    await db_session.refresh(profile)
+    profile = await seeded_profile_factory(target_company_slugs={"greenhouse": ["acme"]})
 
     mock_source = MagicMock()
     mock_source.source_name = "greenhouse_board"
@@ -114,20 +89,9 @@ async def test_sync_profile_with_mocked_source(db_session):
 
 
 @pytest.mark.asyncio
-async def test_sync_profile_no_slugs_short_circuits(db_session):
+async def test_sync_profile_no_slugs_short_circuits(seeded_profile_factory, db_session):
     """Profile without target_company_slugs.greenhouse short-circuits without fetching."""
-    from app.models.user import User
-    from app.services.profile_service import get_or_create_profile
-
-    user = User(id=uuid.uuid4(), email="noslugs@test.com")
-    db_session.add(user)
-    await db_session.commit()
-
-    profile = await get_or_create_profile(user.id, db_session)
-    profile.target_company_slugs = {}
-    db_session.add(profile)
-    await db_session.commit()
-    await db_session.refresh(profile)
+    profile = await seeded_profile_factory(target_company_slugs={})
 
     mock_source = MagicMock()
     mock_source.source_name = "greenhouse_board"
@@ -140,41 +104,17 @@ async def test_sync_profile_no_slugs_short_circuits(db_session):
 
 
 @pytest.mark.asyncio
-async def test_sync_profile_no_slugs_returns_warning(db_session):
+async def test_sync_profile_no_slugs_returns_warning(seeded_profile_factory, db_session):
     """Empty greenhouse slug list yields a structured warning so the UI can surface it."""
-    from app.models.user import User
-    from app.services.profile_service import get_or_create_profile
-
-    user = User(id=uuid.uuid4(), email="warn@test.com")
-    db_session.add(user)
-    await db_session.commit()
-
-    profile = await get_or_create_profile(user.id, db_session)
-    profile.target_company_slugs = {}
-    db_session.add(profile)
-    await db_session.commit()
-    await db_session.refresh(profile)
-
+    profile = await seeded_profile_factory(target_company_slugs={})
     result = await job_sync_service.sync_profile(profile, db_session)
-
     assert result.get("warnings") == ["no_target_slugs"]
 
 
 @pytest.mark.asyncio
-async def test_sync_profile_with_slugs_has_no_warnings(db_session):
+async def test_sync_profile_with_slugs_has_no_warnings(seeded_profile_factory, db_session):
     """When the profile has slugs configured, no no_target_slugs warning is surfaced."""
-    from app.models.user import User
-    from app.services.profile_service import get_or_create_profile
-
-    user = User(id=uuid.uuid4(), email="hasslugs@test.com")
-    db_session.add(user)
-    await db_session.commit()
-
-    profile = await get_or_create_profile(user.id, db_session)
-    profile.target_company_slugs = {"greenhouse": ["acme"]}
-    db_session.add(profile)
-    await db_session.commit()
-    await db_session.refresh(profile)
+    profile = await seeded_profile_factory(target_company_slugs={"greenhouse": ["acme"]})
 
     mock_source = MagicMock()
     mock_source.source_name = "greenhouse_board"
@@ -186,22 +126,12 @@ async def test_sync_profile_with_slugs_has_no_warnings(db_session):
 
 
 @pytest.mark.asyncio
-async def test_sync_profile_surfaces_invalid_slug_errors(db_session):
+async def test_sync_profile_surfaces_invalid_slug_errors(seeded_profile_factory, db_session):
     """Issue #47: a typo'd or removed slug must show up as a structured warning
     + a `failed_slugs` list, not silently produce 0 jobs."""
-    from app.models.user import User
-    from app.services.profile_service import get_or_create_profile
     from app.sources.greenhouse_board import InvalidSlugError
 
-    user = User(id=uuid.uuid4(), email="badslug@test.com")
-    db_session.add(user)
-    await db_session.commit()
-
-    profile = await get_or_create_profile(user.id, db_session)
-    profile.target_company_slugs = {"greenhouse": ["good", "bad"]}
-    db_session.add(profile)
-    await db_session.commit()
-    await db_session.refresh(profile)
+    profile = await seeded_profile_factory(target_company_slugs={"greenhouse": ["good", "bad"]})
 
     async def fake_search(query, location, slug=None, **kwargs):
         if slug == "bad":
@@ -223,22 +153,12 @@ async def test_sync_profile_surfaces_invalid_slug_errors(db_session):
 
 
 @pytest.mark.asyncio
-async def test_sync_profile_surfaces_transient_fetch_errors(db_session):
+async def test_sync_profile_surfaces_transient_fetch_errors(seeded_profile_factory, db_session):
     """5xx / network errors are reported as transient (retry next sync), distinguished
     from permanent invalid slugs (#47)."""
-    from app.models.user import User
-    from app.services.profile_service import get_or_create_profile
     from app.sources.greenhouse_board import TransientFetchError
 
-    user = User(id=uuid.uuid4(), email="transient@test.com")
-    db_session.add(user)
-    await db_session.commit()
-
-    profile = await get_or_create_profile(user.id, db_session)
-    profile.target_company_slugs = {"greenhouse": ["flaky"]}
-    db_session.add(profile)
-    await db_session.commit()
-    await db_session.refresh(profile)
+    profile = await seeded_profile_factory(target_company_slugs={"greenhouse": ["flaky"]})
 
     async def fake_search(query, location, slug=None, **kwargs):
         raise TransientFetchError(slug, "503 upstream")
@@ -255,24 +175,13 @@ async def test_sync_profile_surfaces_transient_fetch_errors(db_session):
 
 
 @pytest.mark.asyncio
-async def test_sync_profile_does_not_mark_jobs_stale(db_session):
+async def test_sync_profile_does_not_mark_jobs_stale(seeded_profile_factory, db_session):
     """Issue #49: mark_stale_jobs runs in daily maintenance — sync_profile must
     not duplicate that work (it caused jobs from one profile to flap inactive
     when another profile synced)."""
     from datetime import timedelta
 
-    from app.models.user import User
-    from app.services.profile_service import get_or_create_profile
-
-    user = User(id=uuid.uuid4(), email="staleness@test.com")
-    db_session.add(user)
-    await db_session.commit()
-
-    profile = await get_or_create_profile(user.id, db_session)
-    profile.target_company_slugs = {"greenhouse": ["acme"]}
-    db_session.add(profile)
-    await db_session.commit()
-    await db_session.refresh(profile)
+    profile = await seeded_profile_factory(target_company_slugs={"greenhouse": ["acme"]})
 
     # Pre-seed an active job whose fetched_at is older than the staleness window.
     # If sync_profile ran mark_stale_jobs it would flip is_active=False; with #49
@@ -306,20 +215,9 @@ async def test_sync_profile_does_not_mark_jobs_stale(db_session):
 
 
 @pytest.mark.asyncio
-async def test_sync_profile_dedups_within_slug(db_session):
+async def test_sync_profile_dedups_within_slug(seeded_profile_factory, db_session):
     """Same (title, company) returned twice from one slug is upserted once."""
-    from app.models.user import User
-    from app.services.profile_service import get_or_create_profile
-
-    user = User(id=uuid.uuid4(), email="dedup@test.com")
-    db_session.add(user)
-    await db_session.commit()
-
-    profile = await get_or_create_profile(user.id, db_session)
-    profile.target_company_slugs = {"greenhouse": ["acme"]}
-    db_session.add(profile)
-    await db_session.commit()
-    await db_session.refresh(profile)
+    profile = await seeded_profile_factory(target_company_slugs={"greenhouse": ["acme"]})
 
     duplicate = [
         make_job_data(external_id="job-001"),
