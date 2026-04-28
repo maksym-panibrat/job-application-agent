@@ -107,9 +107,7 @@ async def test_sync_profile_with_mocked_source(db_session):
     assert result["new_jobs"] == 1
     assert result["updated_jobs"] == 0
 
-    jobs_result = await db_session.execute(
-        select(Job).where(Job.source == "greenhouse_board")
-    )
+    jobs_result = await db_session.execute(select(Job).where(Job.source == "greenhouse_board"))
     jobs = jobs_result.scalars().all()
     assert len(jobs) == 1
     assert jobs[0].title == "Python Engineer"
@@ -139,6 +137,52 @@ async def test_sync_profile_no_slugs_short_circuits(db_session):
 
     assert result["new_jobs"] == 0
     mock_source.search.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_sync_profile_no_slugs_returns_warning(db_session):
+    """Empty greenhouse slug list yields a structured warning so the UI can surface it."""
+    from app.models.user import User
+    from app.services.profile_service import get_or_create_profile
+
+    user = User(id=uuid.uuid4(), email="warn@test.com")
+    db_session.add(user)
+    await db_session.commit()
+
+    profile = await get_or_create_profile(user.id, db_session)
+    profile.target_company_slugs = {}
+    db_session.add(profile)
+    await db_session.commit()
+    await db_session.refresh(profile)
+
+    result = await job_sync_service.sync_profile(profile, db_session)
+
+    assert result.get("warnings") == ["no_target_slugs"]
+
+
+@pytest.mark.asyncio
+async def test_sync_profile_with_slugs_has_no_warnings(db_session):
+    """When the profile has slugs configured, no no_target_slugs warning is surfaced."""
+    from app.models.user import User
+    from app.services.profile_service import get_or_create_profile
+
+    user = User(id=uuid.uuid4(), email="hasslugs@test.com")
+    db_session.add(user)
+    await db_session.commit()
+
+    profile = await get_or_create_profile(user.id, db_session)
+    profile.target_company_slugs = {"greenhouse": ["acme"]}
+    db_session.add(profile)
+    await db_session.commit()
+    await db_session.refresh(profile)
+
+    mock_source = MagicMock()
+    mock_source.source_name = "greenhouse_board"
+    mock_source.search = AsyncMock(return_value=([make_job_data()], None))
+
+    result = await job_sync_service.sync_profile(profile, db_session, sources=[mock_source])
+
+    assert "no_target_slugs" not in result.get("warnings", [])
 
 
 @pytest.mark.asyncio

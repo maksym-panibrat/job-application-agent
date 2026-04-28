@@ -3,11 +3,13 @@ Integration test for the onboarding LangGraph agent with a real PostgreSQL check
 """
 
 import uuid
+from unittest.mock import patch
 
 import pytest
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
 from app.agents.onboarding import build_graph
+from app.agents.test_llm import ToolCapableFakeLLM
 from tests.conftest import patch_llm
 
 
@@ -69,6 +71,68 @@ async def test_session_resumes_across_invocations(checkpointer):
         )
 
     assert len(result["messages"]) >= 4
+
+
+class _SpyLLM(ToolCapableFakeLLM):
+    """Records the system message sent to it on each call."""
+
+    captured_system: list[str] = []  # noqa: RUF012  (class-level capture is intentional in tests)
+
+    def _generate(self, messages, stop=None, run_manager=None, **kwargs):
+        for m in messages:
+            if m.__class__.__name__ == "SystemMessage":
+                self.__class__.captured_system.append(str(m.content))
+        return super()._generate(messages, stop=stop, run_manager=run_manager, **kwargs)
+
+
+@pytest.mark.asyncio
+async def test_agent_node_injects_current_profile_snapshot(checkpointer, db_session, asyncpg_url):
+    """The system message sent to the LLM must include a snapshot of the current
+    profile state (so the LLM can tell what's actually saved vs. what it imagined
+    saving — issue #40)."""
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+    from app.models.user import User
+    from app.models.user_profile import UserProfile
+
+    user_id = uuid.uuid4()
+    user = User(id=user_id, email=f"snap-{user_id}@local")
+    db_session.add(user)
+    profile = UserProfile(
+        user_id=user_id,
+        target_roles=["Backend Engineer"],
+        target_company_slugs={"greenhouse": ["stripe", "openai"]},
+    )
+    db_session.add(profile)
+    await db_session.commit()
+    await db_session.refresh(profile)
+    profile_id = str(profile.id)
+
+    # Build a fresh session factory bound to the same test database so the
+    # agent_node DB lookup uses our seeded data.
+    engine = create_async_engine(asyncpg_url, echo=False)
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+
+    spy = _SpyLLM(responses=["What else should we add?"])
+    _SpyLLM.captured_system = []
+    with patch("app.agents.onboarding.get_llm", return_value=spy):
+        graph = build_graph(checkpointer)
+        await graph.ainvoke(
+            {
+                "messages": [{"role": "user", "content": "Hello"}],
+                "profile_id": profile_id,
+                "profile_updates": {},
+            },
+            {"configurable": {"thread_id": profile_id, "db_factory": factory}},
+        )
+    await engine.dispose()
+
+    assert _SpyLLM.captured_system, "Spy LLM never received a system message"
+    system_blob = "\n".join(_SpyLLM.captured_system)
+    assert "Current Profile" in system_blob
+    assert "Backend Engineer" in system_blob
+    assert "stripe" in system_blob
+    assert "openai" in system_blob
 
 
 @pytest.mark.asyncio

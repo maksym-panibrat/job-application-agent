@@ -103,9 +103,11 @@ Company: {job_company}
 Description:
 {job_description}
 
-Write a 250–350 word cover letter in Markdown. Address it to the hiring team at the
-company. Reference 2–3 specific candidate accomplishments that map to the job
-requirements. Skip generic opener phrases like "I am writing to express interest"."""
+Write a 100–140 word cover letter in Markdown. Be punchy and direct — hiring
+managers spend under 30 seconds on each letter. Address it to the hiring team
+at the company. Reference 1–2 specific candidate accomplishments that map to
+the most important job requirements. Skip generic openers like "I am writing
+to express interest" and avoid filler phrases."""
 
 
 async def _load_context(state: GenerationState) -> GenerationState:

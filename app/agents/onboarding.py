@@ -37,23 +37,47 @@ Your goals:
    - Ask for a city or metro area (e.g. "San Francisco Bay Area", "New York", "Austin")
    - OR confirm they want remote-only positions (set remote_ok=true, leave target_locations empty)
    - A vague answer like "open to anything" is not enough — pin down a location or remote-only
-4. Understand their key skills and experience highlights they want to emphasize.
-5. Note any companies or industries to exclude.
-6. Confirm their contact info (LinkedIn, GitHub, portfolio).
+4. Learn which companies' job boards to follow — REQUIRED. Job sourcing is built
+   on Greenhouse public boards, so an empty company list = zero jobs ever. Always
+   ask for at least one target company, even if the user did not volunteer any.
+   Offer concrete suggestions to make the ask actionable, e.g. stripe, openai,
+   anthropic, datadog, figma, notion, vercel, airtable. Store the slugs as
+   {"greenhouse": ["slug1", "slug2"]} in target_company_slugs. Slugs are
+   lowercase, no spaces (boards.greenhouse.io/{slug}). Confirm any slug that is
+   not obvious.
+5. Understand their key skills and experience highlights they want to emphasize.
+6. Note any companies or industries to exclude.
+7. Confirm their contact info (LinkedIn, GitHub, portfolio).
 
 Ask one or two questions at a time. Be conversational and concise.
-When you have enough information to update the profile, call the `save_profile_updates` tool.
-You can call it multiple times as you learn more.
 
-Do not consider the profile search-ready until target_locations is set OR remote_ok is true.
+# Mandatory tool-call discipline
 
-Once the profile feels complete, summarize what you've captured and tell the user they can
-update preferences anytime by chatting here.
+You MUST call the `save_profile_updates` tool BEFORE acknowledging any profile change
+in your reply. If the user states a preference, correction, or new value for any
+profile field — roles, seniority, location, remote_ok, search_keywords, target
+companies, exclusions, or contact info — you MUST invoke `save_profile_updates`
+in the same turn that you confirm the change.
 
-Target companies: If the user names specific companies they want to follow, ask them for
-the Greenhouse board slug (visible at boards.greenhouse.io/{slug}). Store as
-{"greenhouse": ["slug1", "slug2"]} in target_company_slugs. Common slugs are lowercase,
-no spaces (e.g., stripe, airbnb, openai). Ask for confirmation if the slug is not obvious."""
+NEVER claim a change is saved if no tool call was made in this turn. Phrases like
+"I've updated", "I've saved", "I've adjusted", "I've corrected", or "Done" are
+forbidden unless the corresponding tool call was actually issued. If you are
+unsure what is currently saved, prefer over-saving (re-issue the tool call)
+over under-saving — the tool is idempotent.
+
+You can call `save_profile_updates` multiple times as you learn more.
+
+# Search-ready gate
+
+Do not consider the profile search-ready until ALL of the following hold:
+  - target_locations is set OR remote_ok is true, AND
+  - target_company_slugs.greenhouse contains at least one slug.
+
+A profile that satisfies only the location gate but has zero greenhouse slugs
+will produce zero job matches forever — finish the slug ask before wrapping up.
+
+Once the profile is search-ready, summarize what you've captured and tell the
+user they can update preferences anytime by chatting here."""
 
 PROFILE_SCALAR_FIELDS = frozenset(
     {
@@ -80,6 +104,71 @@ class OnboardingState(TypedDict):
     profile_id: str
     profile_updates: dict
     resume_md: str | None
+
+
+def _format_current_profile(data: dict) -> str:
+    """Render a compact, LLM-readable snapshot of the current saved profile state.
+
+    Empty/None fields are rendered explicitly as "(none)" so the LLM can tell
+    the difference between unset and a value it might have hallucinated saving.
+    """
+
+    def _val(v):
+        if v is None:
+            return "(none)"
+        if isinstance(v, list):
+            return ", ".join(str(x) for x in v) if v else "(none)"
+        if isinstance(v, dict):
+            return ", ".join(f"{k}={v}" for k, v in v.items()) if v else "(none)"
+        if isinstance(v, bool):
+            return "true" if v else "false"
+        s = str(v).strip()
+        return s if s else "(none)"
+
+    greenhouse_slugs = (data.get("target_company_slugs") or {}).get("greenhouse", [])
+    lines = [
+        "## Current Profile (ground truth from the database)",
+        f"- full_name: {_val(data.get('full_name'))}",
+        f"- target_roles: {_val(data.get('target_roles'))}",
+        f"- seniority: {_val(data.get('seniority'))}",
+        f"- target_locations: {_val(data.get('target_locations'))}",
+        f"- remote_ok: {_val(data.get('remote_ok'))}",
+        f"- search_keywords: {_val(data.get('search_keywords'))}",
+        f"- target_company_slugs.greenhouse: {_val(greenhouse_slugs)}",
+    ]
+    return "\n".join(lines)
+
+
+async def _fetch_profile_snapshot(state: dict, config: RunnableConfig) -> dict | None:
+    """Load the profile row referenced by state['profile_id'] and return its
+    relevant fields as a plain dict. Returns None when profile_id or db_factory
+    is missing (e.g. legacy tests that don't wire either)."""
+    profile_id_str = state.get("profile_id")
+    if not profile_id_str:
+        return None
+    db_factory = (config or {}).get("configurable", {}).get("db_factory")
+    if db_factory is None:
+        return None
+    try:
+        profile_uuid = uuid.UUID(profile_id_str)
+    except (ValueError, TypeError):
+        return None
+
+    from app.models.user_profile import UserProfile
+
+    async with db_factory() as session:
+        profile = await session.get(UserProfile, profile_uuid)
+        if profile is None:
+            return None
+        return {
+            "full_name": profile.full_name,
+            "target_roles": list(profile.target_roles or []),
+            "seniority": profile.seniority,
+            "target_locations": list(profile.target_locations or []),
+            "remote_ok": profile.remote_ok,
+            "search_keywords": list(profile.search_keywords or []),
+            "target_company_slugs": dict(profile.target_company_slugs or {}),
+        }
 
 
 def get_llm():
@@ -121,6 +210,15 @@ def build_graph(checkpointer: AsyncPostgresSaver) -> StateGraph:
         resume_md = state.get("resume_md")
 
         system_content = SYSTEM_PROMPT
+
+        # Inject the live profile snapshot so the LLM has ground truth on every
+        # turn — prevents the "I've already saved that" hallucination that drove
+        # issue #40. Re-fetch from the DB on every call so newly persisted
+        # tool-call updates show up immediately on the next turn.
+        profile_data = await _fetch_profile_snapshot(state, config)
+        if profile_data is not None:
+            system_content += "\n\n" + _format_current_profile(profile_data)
+
         if resume_md:
             system_content += f"\n\n## User's Current Resume\n{resume_md}"
 

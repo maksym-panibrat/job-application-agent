@@ -54,3 +54,15 @@ async def test_document_has_required_fields():
     assert doc["doc_type"] == "cover_letter"
     assert len(doc["content_md"]) > 30
     assert doc["generation_model"]
+
+
+def test_cover_letter_prompt_targets_concise_length():
+    """Prompt instructs the LLM to write a concise letter (≤140 words),
+    not the previous 250–350 word default that produced unreadable output."""
+    from app.agents.generation_agent import COVER_LETTER_PROMPT
+
+    # Stale 250-350 word target must be gone
+    assert "250" not in COVER_LETTER_PROMPT
+    assert "350" not in COVER_LETTER_PROMPT
+    # New concise target present
+    assert "140" in COVER_LETTER_PROMPT
