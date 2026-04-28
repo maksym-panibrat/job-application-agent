@@ -6,6 +6,7 @@ with per-test schema teardown to keep tests isolated.
 """
 
 import uuid
+from datetime import UTC, datetime
 
 import jwt
 import pytest
@@ -15,6 +16,7 @@ from testcontainers.postgres import PostgresContainer
 
 import app.models  # noqa: F401 — registers all SQLModel tables with metadata
 from app.config import get_settings
+from app.models.job import Job
 from app.models.user import User
 from app.models.user_profile import UserProfile
 
@@ -105,3 +107,83 @@ async def auth_headers(seeded_user):
         algorithm="HS256",
     )
     return {"Authorization": f"Bearer {token}"}
+
+
+@pytest.fixture
+async def seeded_profile(db_session):
+    """Persisted User + UserProfile, returns the profile.
+
+    Sensible defaults for tests that exercise downstream services. For tests
+    that need different profile attributes (slug list, target_roles, etc.)
+    use seeded_profile_factory instead.
+    """
+    user_id = uuid.uuid4()
+    user = User(id=user_id, email=f"test-{user_id}@local")
+    db_session.add(user)
+    profile = UserProfile(
+        user_id=user_id,
+        email=user.email,
+        full_name="Test User",
+        base_resume_md="# Test User\n\nSoftware engineer with 5 years experience.",
+        target_roles=["Software Engineer"],
+    )
+    db_session.add(profile)
+    await db_session.commit()
+    await db_session.refresh(profile)
+    return profile
+
+
+@pytest.fixture
+async def seeded_profile_factory(db_session):
+    """Returns an async callable that creates a UserProfile with custom fields.
+
+    Use when a test needs multiple profiles or non-default attributes (e.g.
+    target_company_slugs={"greenhouse": [...]} for sync tests).
+    """
+
+    async def _make(**overrides):
+        user_id = uuid.uuid4()
+        user = User(id=user_id, email=f"test-{user_id}@local")
+        db_session.add(user)
+        defaults = {
+            "user_id": user_id,
+            "email": user.email,
+            "full_name": "Test User",
+            "target_roles": ["Software Engineer"],
+        }
+        defaults.update(overrides)
+        profile = UserProfile(**defaults)
+        db_session.add(profile)
+        await db_session.commit()
+        await db_session.refresh(profile)
+        return profile
+
+    return _make
+
+
+@pytest.fixture
+async def seeded_job_factory(db_session):
+    """Returns an async callable that creates a persisted Job row.
+
+    Defaults: source='greenhouse_board', random external_id, "Software Engineer"
+    title at "Acme Corp". Pass kwargs to override any field.
+    """
+
+    async def _make(**overrides):
+        defaults = {
+            "source": "greenhouse_board",
+            "external_id": str(uuid.uuid4()),
+            "title": "Software Engineer",
+            "company_name": "Acme Corp",
+            "apply_url": "https://example.com/apply",
+            "description_md": "A great engineering role.",
+            "fetched_at": datetime.now(UTC),
+        }
+        defaults.update(overrides)
+        job = Job(**defaults)
+        db_session.add(job)
+        await db_session.commit()
+        await db_session.refresh(job)
+        return job
+
+    return _make
