@@ -51,6 +51,12 @@ export default function Matches() {
         </div>
       )}
 
+      {sync.isError && (
+        <div className="mb-4 p-3 bg-red-50 text-red-700 text-sm rounded-md">
+          {(sync.error as Error)?.message ?? 'Sync failed.'}
+        </div>
+      )}
+
       {isLoading ? (
         <div className="grid gap-3">
           {Array.from({ length: 6 }).map((_, i) => <SkeletonCard key={i} />)}

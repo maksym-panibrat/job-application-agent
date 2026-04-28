@@ -97,7 +97,16 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   })
   if (!res.ok) {
     const text = await res.text()
-    throw new Error(`${res.status}: ${text}`)
+    let detail: string | null = null
+    try {
+      const parsed = JSON.parse(text)
+      if (parsed && typeof parsed.detail === 'string') {
+        detail = parsed.detail
+      }
+    } catch {
+      // body wasn't JSON; fall through to raw text
+    }
+    throw new Error(detail ?? `${res.status}: ${text}`)
   }
   return res.json()
 }

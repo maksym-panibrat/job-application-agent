@@ -14,6 +14,10 @@ from app.services.rate_limit_service import check_daily_quota
 log = structlog.get_logger()
 router = APIRouter(prefix="/api/jobs", tags=["jobs"])
 
+# Daily ceiling on user-initiated /api/jobs/sync calls. Previous value of 1
+# made the dashboard button unusable after the first click of the day.
+MANUAL_SYNC_DAILY_LIMIT = 25
+
 
 @router.post("/sync")
 async def trigger_sync(
@@ -28,7 +32,7 @@ async def trigger_sync(
     In prod: would run via scheduler.
     """
     if settings.environment == "production":
-        await check_daily_quota(profile.user_id, "manual_sync", 1, session)
+        await check_daily_quota(profile.user_id, "manual_sync", MANUAL_SYNC_DAILY_LIMIT, session)
     result = await job_sync_service.sync_profile(profile, session)
 
     # After sync, score new jobs
