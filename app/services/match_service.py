@@ -108,10 +108,20 @@ async def score_and_match(
         )
         matched_ids = {row[0] for row in matched_result.all()}
 
-        all_jobs_result = await session.execute(
-            select(Job).where(Job.is_active.is_(True)).limit(settings.matching_jobs_per_batch)
+        # Push the not-in-matched_ids filter into SQL so the LIMIT counts only
+        # fresh candidates. Order newest-first so users see recently posted
+        # jobs before backlogged ones (issue #45).
+        candidates_q = (
+            select(Job)
+            .where(Job.is_active.is_(True))
+            .order_by(Job.posted_at.desc().nullslast(), Job.fetched_at.desc())
         )
-        jobs = [j for j in all_jobs_result.scalars().all() if j.id not in matched_ids]
+        if matched_ids:
+            candidates_q = candidates_q.where(Job.id.notin_(matched_ids))
+        candidates_q = candidates_q.limit(settings.matching_jobs_per_batch)
+
+        all_jobs_result = await session.execute(candidates_q)
+        jobs = list(all_jobs_result.scalars().all())
 
     if not jobs:
         return []
@@ -167,6 +177,17 @@ async def score_and_match(
         )
         app = app_result.scalar_one_or_none()
         if not app:
+            continue
+
+        # score=None means scoring was skipped (rate limit / quota / transient).
+        # Leave match_score NULL so the Application is re-eligible on the next
+        # sync instead of being permanently auto_rejected at 0.0 (issue #46).
+        if score_result.score is None:
+            await log.awarning(
+                "match.scoring_skipped",
+                application_id=score_result.application_id,
+                rationale=score_result.rationale[:200],
+            )
             continue
 
         # Always persist scores for auditability

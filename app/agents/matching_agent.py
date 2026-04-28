@@ -35,7 +35,7 @@ def truncate_description(desc: str, max_chars: int = MAX_JOB_DESC_CHARS) -> str:
 
 class ScoreResult(BaseModel):
     application_id: str
-    score: float  # 0.0 – 1.0
+    score: float | None  # 0.0 – 1.0; None signals scoring was skipped (retry next sync)
     rationale: str
     strengths: list[str]
     gaps: list[str]
@@ -154,11 +154,13 @@ def build_graph() -> StateGraph:
                     break
                 except BudgetExhausted:
                     log.warning("match.budget_exhausted_skip", title=job["title"])
+                    # score=None so the Application is re-eligible next sync
+                    # instead of being permanently auto_rejected at 0.0.
                     return {
                         "scores": [
                             ScoreResult(
                                 application_id=job["application_id"],
-                                score=0.0,
+                                score=None,
                                 rationale="Skipped: LLM quota exhausted",
                                 strengths=[],
                                 gaps=[],
@@ -179,7 +181,7 @@ def build_graph() -> StateGraph:
                             "scores": [
                                 ScoreResult(
                                     application_id=job["application_id"],
-                                    score=0.0,
+                                    score=None,
                                     rationale="Skipped: API rate limit exceeded after retries",
                                     strengths=[],
                                     gaps=[],

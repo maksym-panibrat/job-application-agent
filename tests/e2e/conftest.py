@@ -75,6 +75,8 @@ async def test_app(asyncpg_url, psycopg_url, monkeypatch):
     monkeypatch.setenv("REMOTEOK_ENABLED", "false")
     monkeypatch.setenv("ARBEITNOW_ENABLED", "false")
     monkeypatch.setenv("GREENHOUSE_BOARD_ENABLED", "false")
+    # Deterministic cron secret so /internal/cron/* tests don't pick up a local .env value.
+    monkeypatch.setenv("CRON_SHARED_SECRET", "dev-cron-secret")
 
     # Reset settings singleton so the env vars above take effect
     import app.config as cfg

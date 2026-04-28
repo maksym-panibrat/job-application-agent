@@ -62,9 +62,7 @@ async def test_sync_creates_jobs_in_db(test_app, monkeypatch):
     jobs = [_make_job_data(i) for i in range(3)]
     mock_source = _mock_greenhouse_source(jobs)
 
-    monkeypatch.setattr(
-        "app.services.job_sync_service.GreenhouseBoardSource", lambda: mock_source
-    )
+    monkeypatch.setattr("app.services.job_sync_service.GreenhouseBoardSource", lambda: mock_source)
     monkeypatch.setattr("app.api.jobs._score_after_sync", AsyncMock())
 
     resp = await test_app.post("/api/jobs/sync")
@@ -100,9 +98,7 @@ async def test_resync_is_idempotent(test_app, monkeypatch):
     jobs = [_make_job_data(i) for i in range(3)]
     mock_source = _mock_greenhouse_source(jobs)
 
-    monkeypatch.setattr(
-        "app.services.job_sync_service.GreenhouseBoardSource", lambda: mock_source
-    )
+    monkeypatch.setattr("app.services.job_sync_service.GreenhouseBoardSource", lambda: mock_source)
     monkeypatch.setattr("app.api.jobs._score_after_sync", AsyncMock())
 
     # First sync
@@ -122,9 +118,7 @@ async def test_resync_is_idempotent(test_app, monkeypatch):
 
     factory = get_session_factory()
     async with factory() as session:
-        result = await session.execute(
-            select(Job).where(Job.source == "greenhouse_board")
-        )
+        result = await session.execute(select(Job).where(Job.source == "greenhouse_board"))
         db_jobs = list(result.scalars().all())
 
     assert len(db_jobs) == 3
@@ -148,9 +142,7 @@ async def test_posted_at_timezone_roundtrip(test_app, monkeypatch):
     jobs = [_make_job_data(0, posted_at=aware_posted_at)]
     mock_source = _mock_greenhouse_source(jobs)
 
-    monkeypatch.setattr(
-        "app.services.job_sync_service.GreenhouseBoardSource", lambda: mock_source
-    )
+    monkeypatch.setattr("app.services.job_sync_service.GreenhouseBoardSource", lambda: mock_source)
     monkeypatch.setattr("app.api.jobs._score_after_sync", AsyncMock())
 
     resp = await test_app.post("/api/jobs/sync")
@@ -163,9 +155,7 @@ async def test_posted_at_timezone_roundtrip(test_app, monkeypatch):
 
     factory = get_session_factory()
     async with factory() as session:
-        result = await session.execute(
-            select(Job).where(Job.source == "greenhouse_board")
-        )
+        result = await session.execute(select(Job).where(Job.source == "greenhouse_board"))
         job = result.scalar_one()
 
     assert job.posted_at is not None
@@ -176,8 +166,10 @@ async def test_posted_at_timezone_roundtrip(test_app, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_stale_job_marking(test_app, monkeypatch):
-    """
-    Jobs not refreshed within stale_after_days are marked is_active=False on next sync.
+    """Backdated jobs are marked is_active=False by daily maintenance.
+
+    Per #49, staleness is owned by run_daily_maintenance — not sync_profile —
+    to avoid one profile's sync flapping another profile's jobs inactive.
     """
     await test_app.patch(
         "/api/profile",
@@ -185,8 +177,6 @@ async def test_stale_job_marking(test_app, monkeypatch):
     )
 
     all_jobs = [_make_job_data(0), _make_job_data(1)]
-
-    # First sync: both jobs appear
     monkeypatch.setattr(
         "app.services.job_sync_service.GreenhouseBoardSource",
         lambda: _mock_greenhouse_source(all_jobs),
@@ -196,7 +186,7 @@ async def test_stale_job_marking(test_app, monkeypatch):
     resp = await test_app.post("/api/jobs/sync")
     assert resp.json()["new_jobs"] == 2
 
-    # Backdate job #0's fetched_at so it looks stale
+    # Backdate job #0's fetched_at past the staleness window
     from app.database import get_session_factory
     from app.models.job import Job
 
@@ -215,13 +205,12 @@ async def test_stale_job_marking(test_app, monkeypatch):
         await session.commit()
         stale_job_id = stale_job.id
 
-    # Second sync: only job #1 returned — job #0 is NOT refreshed, so mark_stale picks it up
-    monkeypatch.setattr(
-        "app.services.job_sync_service.GreenhouseBoardSource",
-        lambda: _mock_greenhouse_source([all_jobs[1]]),
+    # Trigger the daily-maintenance cron — the new owner of staleness (#49).
+    # Default cron secret in dev/test env is "dev-cron-secret" (app/config.py).
+    resp2 = await test_app.post(
+        "/internal/cron/maintenance",
+        headers={"X-Cron-Secret": "dev-cron-secret"},
     )
-
-    resp2 = await test_app.post("/api/jobs/sync")
     assert resp2.status_code == 200
     assert resp2.json()["stale_jobs"] >= 1
 

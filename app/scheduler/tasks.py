@@ -29,10 +29,10 @@ async def run_job_sync() -> dict:
         profiles = result.scalars().all()
 
     profiles_synced = 0
-    profiles_without_slugs = 0
     total_new = 0
     total_updated = 0
     total_stale = 0
+    total_warnings: dict[str, int] = {}
 
     for profile in profiles:
         try:
@@ -42,15 +42,19 @@ async def run_job_sync() -> dict:
                 total_new += sync_result.get("new_jobs", 0)
                 total_updated += sync_result.get("updated_jobs", 0)
                 total_stale += sync_result.get("stale_jobs", 0)
-                if "no_target_slugs" in sync_result.get("warnings", []):
-                    profiles_without_slugs += 1
+                # Generic aggregation — counts every warning code emitted by
+                # sync_profile, so new codes surface automatically (#48).
+                for w in sync_result.get("warnings", []):
+                    total_warnings[w] = total_warnings.get(w, 0) + 1
                 await match_service.score_and_match(profile, session)
         except Exception as exc:
             await log.aexception("scheduler.sync_error", profile_id=str(profile.id), error=str(exc))
 
     return {
         "profiles_synced": profiles_synced,
-        "profiles_without_slugs": profiles_without_slugs,
+        # Back-compat field; total_warnings["no_target_slugs"] is the canonical source.
+        "profiles_without_slugs": total_warnings.get("no_target_slugs", 0),
+        "total_warnings": total_warnings,
         "total_new_jobs": total_new,
         "total_updated_jobs": total_updated,
         "total_stale_jobs": total_stale,

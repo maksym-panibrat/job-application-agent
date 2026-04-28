@@ -72,15 +72,17 @@ async def test_greenhouse_board_two_slugs_called_independently():
 
 
 @pytest.mark.asyncio
-async def test_greenhouse_board_404_returns_empty():
+async def test_greenhouse_board_404_raises_invalid_slug():
+    """404 from Greenhouse means the slug doesn't exist — surface this so the
+    caller can warn the user (issue #47). Previously silently returned []."""
+    from app.sources.greenhouse_board import InvalidSlugError
+
     source = GreenhouseBoardSource()
 
     with respx.mock:
         respx.get(f"{GREENHOUSE_BOARDS_BASE}/bad-slug/jobs").mock(return_value=httpx.Response(404))
-        jobs, cursor = await source.search("", None, slug="bad-slug")
-
-    assert jobs == []
-    assert cursor is None
+        with pytest.raises(InvalidSlugError):
+            await source.search("", None, slug="bad-slug")
 
 
 @pytest.mark.asyncio
@@ -122,14 +124,71 @@ async def test_greenhouse_board_remote_location():
 
 
 @pytest.mark.asyncio
-async def test_greenhouse_board_connection_error_returns_empty():
+async def test_greenhouse_board_connection_error_raises_transient():
+    """Network errors are transient — surface so the caller can retry next sync (#47)."""
+    from app.sources.greenhouse_board import TransientFetchError
+
     source = GreenhouseBoardSource()
 
     with respx.mock:
         respx.get(f"{GREENHOUSE_BOARDS_BASE}/bad-slug/jobs").mock(
             side_effect=httpx.ConnectError("connection refused")
         )
-        jobs, cursor = await source.search("", None, slug="bad-slug")
+        with pytest.raises(TransientFetchError):
+            await source.search("", None, slug="bad-slug")
 
-    assert jobs == []
-    assert cursor is None
+
+@pytest.mark.asyncio
+async def test_greenhouse_board_converts_html_content_to_markdown():
+    """Issue #51: Greenhouse `content` is HTML; we should store Markdown so the
+    field name matches reality and the matching LLM doesn't waste tokens on tags."""
+    source = GreenhouseBoardSource()
+
+    fixture = {
+        "jobs": [
+            {
+                "id": 4000010,
+                "title": "Backend Engineer",
+                "location": {"name": "Remote"},
+                "content": (
+                    "<h1>About the role</h1>"
+                    "<p>You will <strong>scale</strong> our systems.</p>"
+                    "<ul><li>Python</li><li>Postgres</li></ul>"
+                ),
+                "absolute_url": "https://boards.greenhouse.io/stripe/jobs/4000010",
+                "updated_at": "2026-04-01T10:00:00Z",
+            }
+        ]
+    }
+
+    with respx.mock:
+        respx.get(f"{GREENHOUSE_BOARDS_BASE}/stripe/jobs").mock(
+            return_value=httpx.Response(200, json=fixture)
+        )
+        jobs, _ = await source.search("", None, slug="stripe")
+
+    assert len(jobs) == 1
+    desc = jobs[0].description_md or ""
+    assert "<p>" not in desc
+    assert "<h1>" not in desc
+    assert "<li>" not in desc
+    assert "<strong>" not in desc
+    # Plain content should still be present
+    assert "About the role" in desc
+    assert "Python" in desc
+    assert "Postgres" in desc
+
+
+@pytest.mark.asyncio
+async def test_greenhouse_board_5xx_raises_transient():
+    """5xx from Greenhouse is transient — distinguish from 404 (#47)."""
+    from app.sources.greenhouse_board import TransientFetchError
+
+    source = GreenhouseBoardSource()
+
+    with respx.mock:
+        respx.get(f"{GREENHOUSE_BOARDS_BASE}/stripe/jobs").mock(
+            return_value=httpx.Response(503, text="service unavailable")
+        )
+        with pytest.raises(TransientFetchError):
+            await source.search("", None, slug="stripe")
