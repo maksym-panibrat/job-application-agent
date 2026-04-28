@@ -59,6 +59,10 @@ async def test_cron_sync_returns_structured_summary(client):
     assert data["status"] == "ok"
     assert isinstance(data["profiles_synced"], int)
     assert isinstance(data["duration_ms"], int)
+    # profiles_without_slugs is always reported so the operator can see at a glance
+    # how many active searches are misconfigured (empty target_company_slugs.greenhouse).
+    assert "profiles_without_slugs" in data
+    assert isinstance(data["profiles_without_slugs"], int)
 
 
 @pytest.mark.asyncio

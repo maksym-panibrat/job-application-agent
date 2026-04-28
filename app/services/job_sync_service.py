@@ -1,8 +1,8 @@
 """Greenhouse-public-board sync. Single source.
 
-  1. From profile.target_company_slugs.greenhouse, fetch jobs via GreenhouseBoardSource.
-  2. Per-source dedup by (title, company).
-  3. Upsert + mark stale.
+1. From profile.target_company_slugs.greenhouse, fetch jobs via GreenhouseBoardSource.
+2. Per-source dedup by (title, company).
+3. Upsert + mark stale.
 """
 
 import re
@@ -49,6 +49,7 @@ async def sync_profile(
             "updated_jobs": 0,
             "stale_jobs": 0,
             "sources": ["greenhouse_board"],
+            "warnings": ["no_target_slugs"],
         }
 
     source = sources[0] if sources else GreenhouseBoardSource()
