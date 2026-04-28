@@ -179,6 +179,17 @@ async def score_and_match(
         if not app:
             continue
 
+        # score=None means scoring was skipped (rate limit / quota / transient).
+        # Leave match_score NULL so the Application is re-eligible on the next
+        # sync instead of being permanently auto_rejected at 0.0 (issue #46).
+        if score_result.score is None:
+            await log.awarning(
+                "match.scoring_skipped",
+                application_id=score_result.application_id,
+                rationale=score_result.rationale[:200],
+            )
+            continue
+
         # Always persist scores for auditability
         app.match_score = score_result.score
         app.match_rationale = score_result.rationale

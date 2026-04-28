@@ -152,6 +152,52 @@ async def test_list_applications_ordering(db_session):
 
 
 @pytest.mark.asyncio
+async def test_score_and_match_does_not_persist_none_scores(db_session):
+    """Issue #46: scoring failures (rate limits, quota) should NOT poison the
+    pool. When matching_agent returns score=None, score_and_match must leave
+    match_score NULL so the Application is re-eligible on the next sync."""
+    from unittest.mock import AsyncMock, patch
+
+    from app.agents.matching_agent import ScoreResult
+
+    profile = await _seed_profile(db_session)
+    job = await _seed_job(db_session, title="Will fail to score")
+
+    # Patch the matching graph to return a "scoring skipped" ScoreResult
+    # (score=None) instead of a real LLM-derived score.
+    fake_graph = AsyncMock()
+
+    async def fake_ainvoke(state, config=None):
+        app_id = state["jobs"][0]["application_id"]
+        return {
+            "scores": [
+                ScoreResult(
+                    application_id=app_id,
+                    score=None,
+                    rationale="Skipped: API rate limit exceeded after retries",
+                    strengths=[],
+                    gaps=[],
+                )
+            ]
+        }
+
+    fake_graph.ainvoke = fake_ainvoke
+
+    with patch("app.agents.matching_agent.build_graph", return_value=fake_graph):
+        await score_and_match(profile, db_session, jobs=[job])
+
+    result = await db_session.execute(
+        select(Application).where(Application.profile_id == profile.id)
+    )
+    apps = result.scalars().all()
+    assert len(apps) == 1
+    # Failed-scoring rows must not be marked auto_rejected; match_score stays None
+    # so the next sync's matched_ids filter does NOT exclude this Application.
+    assert apps[0].match_score is None
+    assert apps[0].status != "auto_rejected"
+
+
+@pytest.mark.asyncio
 async def test_score_and_match_picks_unscored_jobs_when_pool_is_largely_scored(db_session):
     """
     Issue #45: matching used to LIMIT before filtering out already-scored jobs,
