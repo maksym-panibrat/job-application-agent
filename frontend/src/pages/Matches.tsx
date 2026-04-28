@@ -1,6 +1,8 @@
+import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import { MatchCard } from '../components/MatchCard'
+import { computeRefetchInterval, POST_SYNC_WINDOW_MS } from './refetchInterval'
 
 function SkeletonCard() {
   return (
@@ -15,16 +17,20 @@ function SkeletonCard() {
 
 export default function Matches() {
   const qc = useQueryClient()
+  const [postSyncUntilMs, setPostSyncUntilMs] = useState<number | null>(null)
 
   const { data: apps, isLoading } = useQuery({
     queryKey: ['applications'],
     queryFn: () => api.listApplications({ status: 'pending_review' }),
-    refetchInterval: 10000,
+    refetchInterval: () => computeRefetchInterval(postSyncUntilMs),
   })
 
   const sync = useMutation({
     mutationFn: api.triggerSync,
     onSuccess: () => {
+      // Background scoring runs ~30s for a 20-job batch — poll aggressively
+      // for a minute so freshly scored matches surface without a manual reload.
+      setPostSyncUntilMs(Date.now() + POST_SYNC_WINDOW_MS)
       setTimeout(() => qc.invalidateQueries({ queryKey: ['applications'] }), 3000)
     },
   })
