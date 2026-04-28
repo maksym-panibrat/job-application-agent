@@ -8,7 +8,11 @@ import pytest
 from sqlmodel import select
 
 from app.models.application import Application
-from app.services.match_service import list_applications, score_and_match
+from app.services.match_service import (
+    get_or_create_application,
+    list_applications,
+    score_and_match,
+)
 from tests.conftest import patch_llm
 
 
@@ -208,6 +212,35 @@ async def test_score_and_match_picks_unscored_jobs_when_pool_is_largely_scored(
         f"but got {len(new_job_ids)} new applications. "
         "The LIMIT is being applied before the matched_ids filter."
     )
+
+
+@pytest.mark.asyncio
+async def test_get_or_create_application_is_idempotent(
+    seeded_profile, seeded_job_factory, db_session
+):
+    """Second call with the same (job_id, profile_id) returns None instead of
+    a duplicate Application — protects the unique constraint and makes
+    score_and_match safe to re-run."""
+    job = await seeded_job_factory()
+
+    first = await get_or_create_application(job.id, seeded_profile.id, db_session)
+    assert first is not None
+
+    second = await get_or_create_application(job.id, seeded_profile.id, db_session)
+    assert second is None
+
+    rows = (
+        (
+            await db_session.execute(
+                select(Application).where(
+                    Application.job_id == job.id, Application.profile_id == seeded_profile.id
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert len(rows) == 1
 
 
 @pytest.mark.asyncio
