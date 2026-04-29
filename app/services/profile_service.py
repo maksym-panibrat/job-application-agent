@@ -254,3 +254,18 @@ async def upsert_work_experience(
         await session.refresh(existing)
         return existing
     return await add_work_experience(profile_id, exp_data, session)
+
+
+def seed_defaults_if_empty(profile) -> bool:
+    """If profile has no greenhouse slugs, seed the first 5 from the curated catalog.
+    Returns True if seeded, False if no-op. Mutates profile in place; caller commits."""
+    from app.data.default_slugs import DEFAULT_SLUGS
+
+    existing = (profile.target_company_slugs or {}).get("greenhouse", [])
+    if existing:
+        return False
+    profile.target_company_slugs = {
+        **(profile.target_company_slugs or {}),
+        "greenhouse": DEFAULT_SLUGS[:5],
+    }
+    return True
