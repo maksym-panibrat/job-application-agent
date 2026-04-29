@@ -108,10 +108,11 @@ def upgrade() -> None:
         """
         INSERT INTO slug_fetches (source, slug)
         SELECT DISTINCT 'greenhouse_board', jsonb_array_elements_text(
-            COALESCE(target_company_slugs->'greenhouse', '[]'::jsonb)
+            target_company_slugs->'greenhouse'
         )
         FROM user_profiles
         WHERE search_active = true
+          AND jsonb_typeof(target_company_slugs->'greenhouse') = 'array'
         ON CONFLICT (source, slug) DO NOTHING
         """
     )
