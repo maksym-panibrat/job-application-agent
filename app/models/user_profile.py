@@ -59,6 +59,13 @@ class UserProfile(SQLModel, table=True):
     search_expires_at: datetime | None = Field(
         default=None, sa_column=Column(sa.DateTime(timezone=True), nullable=True)
     )
+    last_sync_requested_at: datetime | None = Field(
+        default=None, sa_column=Column(sa.DateTime(timezone=True), nullable=True)
+    )
+    last_sync_completed_at: datetime | None = Field(
+        default=None, sa_column=Column(sa.DateTime(timezone=True), nullable=True)
+    )
+    last_sync_summary: dict | None = Field(default=None, sa_column=Column(JSONB, nullable=True))
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(UTC),
         sa_column=Column(sa.DateTime(timezone=True), nullable=False),
