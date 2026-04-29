@@ -87,6 +87,17 @@ export interface AppStatus {
   resumes_at: string | null
 }
 
+export interface SyncStatus {
+  state: 'idle' | 'syncing' | 'matching'
+  slugs_total: number
+  slugs_pending: number
+  matches_pending: number
+  last_sync_requested_at: string | null
+  last_sync_completed_at: string | null
+  last_sync_summary: { matched_now?: number } | null
+  invalid_slugs: string[]
+}
+
 async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const token = sessionStorage.getItem('access_token')
   const headers: Record<string, string> = { 'Content-Type': 'application/json' }
@@ -140,10 +151,16 @@ export const api = {
 
   // Jobs
   triggerSync: () =>
-    apiFetch<{ status: string; new_jobs: number; updated_jobs: number; stale_jobs: number }>(
-      '/api/jobs/sync',
-      { method: 'POST' }
-    ),
+    apiFetch<{
+      status: string
+      queued_slugs: string[]
+      matched_now: number
+      seeded_defaults: boolean
+    }>('/api/jobs/sync', { method: 'POST' }),
+
+  // Sync status (Task 19)
+  getSyncStatus: () =>
+    apiFetch<SyncStatus>('/api/sync/status'),
 
   // Applications
   listApplications: (params?: { status?: string; min_score?: number; limit?: number }) => {
