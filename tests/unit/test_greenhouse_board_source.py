@@ -192,3 +192,45 @@ async def test_greenhouse_board_5xx_raises_transient():
         )
         with pytest.raises(TransientFetchError):
             await source.search("", None, slug="stripe")
+
+
+@pytest.mark.asyncio
+async def test_validate_slug_returns_true_on_200():
+    source = GreenhouseBoardSource()
+    with respx.mock:
+        respx.get(f"{GREENHOUSE_BOARDS_BASE}/airbnb").mock(
+            return_value=httpx.Response(200, json={"name": "Airbnb", "content": "<p/>"})
+        )
+        assert await source.validate("airbnb") is True
+
+
+@pytest.mark.asyncio
+async def test_validate_slug_returns_false_on_404():
+    source = GreenhouseBoardSource()
+    with respx.mock:
+        respx.get(f"{GREENHOUSE_BOARDS_BASE}/openai").mock(
+            return_value=httpx.Response(404, json={"message": "not found"})
+        )
+        assert await source.validate("openai") is False
+
+
+@pytest.mark.asyncio
+async def test_validate_slug_returns_false_on_5xx():
+    """Transient errors should fail-closed for validate (don't add a slug we can't verify)."""
+    source = GreenhouseBoardSource()
+    with respx.mock:
+        respx.get(f"{GREENHOUSE_BOARDS_BASE}/flaky").mock(return_value=httpx.Response(503))
+        assert await source.validate("flaky") is False
+
+
+@pytest.mark.asyncio
+async def test_uses_shared_client_when_provided():
+    """When called with a shared client, no per-call client is created."""
+    source = GreenhouseBoardSource()
+    async with httpx.AsyncClient() as client:
+        with respx.mock:
+            respx.get(f"{GREENHOUSE_BOARDS_BASE}/stripe/jobs").mock(
+                return_value=httpx.Response(200, json=STRIPE_JOB_FIXTURE)
+            )
+            jobs, _ = await source.search("", None, slug="stripe", client=client)
+    assert len(jobs) == 1
