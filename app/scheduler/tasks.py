@@ -249,3 +249,69 @@ async def run_sync_queue(*, max_slugs: int = 64, deadline_seconds: int = 240) ->
     async with factory() as session:
         remaining = await slug_registry_service.pending_count(session)
     return {**counts, "remaining": remaining}
+
+
+async def run_match_queue(*, batch_size: int = 30, deadline_seconds: int = 240) -> dict:
+    """Drain pending_match applications. One LangGraph batch per profile per tick
+    (the agent fans out internally). Per-tick deadline keeps us under Cloud Run's
+    300s wall."""
+    import time
+
+    from app.database import get_session_factory
+    from app.models.application import Application
+    from app.models.job import Job
+    from app.models.user_profile import UserProfile
+    from app.services import match_queue_service
+    from app.services.match_service import score_and_match
+
+    factory = get_session_factory()
+    deadline = time.monotonic() + deadline_seconds
+    succeeded = failed = 0
+
+    async with factory() as session:
+        batch = await match_queue_service.next_batch(session, limit=batch_size)
+    if not batch:
+        return {"attempted": 0, "succeeded": 0, "failed": 0}
+    attempted = len(batch)
+
+    # Group by profile_id; one LangGraph invocation per profile
+    by_profile: dict = {}
+    for app in batch:
+        by_profile.setdefault(app.profile_id, []).append(app)
+
+    for profile_id, apps in by_profile.items():
+        if time.monotonic() > deadline:
+            break
+        async with factory() as session:
+            profile = (
+                await session.execute(select(UserProfile).where(UserProfile.id == profile_id))
+            ).scalar_one()
+            jobs = list(
+                (await session.execute(select(Job).where(Job.id.in_([a.job_id for a in apps]))))
+                .scalars()
+                .all()
+            )
+
+            try:
+                await score_and_match(profile, session, jobs=jobs)
+            except Exception as exc:
+                await log.aexception("match_queue.batch_error", error=str(exc))
+                for a in apps:
+                    await match_queue_service.mark_attempt_failed(a.id, session)
+                failed += len(apps)
+                continue
+
+            for a in apps:
+                # If it has a score now, mark done. If still no score (rate-limited),
+                # increment attempts; will retry next tick.
+                refreshed = (
+                    await session.execute(select(Application).where(Application.id == a.id))
+                ).scalar_one()
+                if refreshed.match_score is not None or refreshed.status == "auto_rejected":
+                    await match_queue_service.mark_done(refreshed.id, session)
+                    succeeded += 1
+                else:
+                    await match_queue_service.mark_attempt_failed(refreshed.id, session)
+                    failed += 1
+
+    return {"attempted": attempted, "succeeded": succeeded, "failed": failed}
