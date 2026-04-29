@@ -7,6 +7,7 @@ import httpx
 import markdownify
 import structlog
 
+from app.data.slug_company import slug_to_company_name
 from app.sources.base import JobData, JobSource
 
 GREENHOUSE_BOARDS_BASE = "https://boards-api.greenhouse.io/v1/boards"
@@ -54,8 +55,6 @@ class GreenhouseBoardSource(JobSource):
         apply_url = item.get("absolute_url", "")
         if not apply_url:
             return None
-        from app.data.slug_company import slug_to_company_name
-
         company_name = slug_to_company_name(slug)
         location_obj = item.get("location") or {}
         location = location_obj.get("name") or None
@@ -84,7 +83,7 @@ class GreenhouseBoardSource(JobSource):
         url = f"{GREENHOUSE_BOARDS_BASE}/{slug}"
         try:
             if client is not None:
-                resp = await client.get(url, timeout=DEFAULT_TIMEOUT)
+                resp = await client.get(url)
             else:
                 async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as c:
                     resp = await c.get(url)
@@ -102,7 +101,7 @@ class GreenhouseBoardSource(JobSource):
         params = {"content": "true"}
         try:
             if client is not None:
-                response = await client.get(url, params=params, timeout=DEFAULT_TIMEOUT)
+                response = await client.get(url, params=params)
             else:
                 async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as c:
                     response = await c.get(url, params=params)
