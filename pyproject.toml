@@ -54,4 +54,5 @@ select = ["E", "F", "I", "UP"]
 asyncio_mode = "auto"
 markers = [
     "live_api: marks tests as making real external API calls (deselect with '-m not live_api')",
+    "nightly: live external API checks; run only on the nightly CI job",
 ]
