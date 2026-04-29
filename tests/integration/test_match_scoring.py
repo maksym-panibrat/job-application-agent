@@ -440,3 +440,60 @@ async def test_score_and_match_flips_match_status_to_matched(db_session):
     assert refreshed.match_status == "matched"
     assert refreshed.match_queued_at is None
     assert refreshed.match_claimed_at is None
+
+
+@pytest.mark.asyncio
+async def test_score_cached_skips_jobs_with_fresh_match_claim(db_session):
+    """If an Application is currently claimed by run_match_queue (fresh
+    match_claimed_at), score_cached must not pick its job again — otherwise
+    we'd double-score and waste an LLM call."""
+    from app.models.user import User
+    from app.services.profile_service import get_or_create_profile
+
+    user = User(
+        id=uuid.uuid4(),
+        email="t@t.com",
+        is_active=True,
+        is_verified=True,
+        is_superuser=False,
+        hashed_password="",
+    )
+    db_session.add(user)
+    await db_session.commit()
+    profile = await get_or_create_profile(user.id, db_session)
+    profile.target_company_slugs = {"greenhouse": ["airbnb"]}
+    db_session.add(profile)
+    await db_session.commit()
+    await db_session.refresh(profile)
+
+    job = Job(
+        source="greenhouse_board",
+        external_id="r-1",
+        title="Eng",
+        company_name="Airbnb",
+        apply_url="https://x",
+        is_active=True,
+    )
+    db_session.add(job)
+    await db_session.commit()
+    await db_session.refresh(job)
+
+    # Simulate the cron worker having claimed this Application 10 seconds ago
+    app = Application(
+        job_id=job.id,
+        profile_id=profile.id,
+        match_status="pending_match",
+        match_queued_at=datetime.now(UTC),
+        match_claimed_at=datetime.now(UTC),  # fresh lease
+    )
+    db_session.add(app)
+    await db_session.commit()
+
+    # score_cached must skip this job (no LangGraph invocation)
+    fake_graph = MagicMock()
+    fake_graph.ainvoke = AsyncMock(return_value={"scores": []})
+    with patch("app.agents.matching_agent.build_graph", return_value=fake_graph):
+        result = await match_service.score_cached(profile, db_session, cap=20)
+
+    assert result == []
+    fake_graph.ainvoke.assert_not_called()

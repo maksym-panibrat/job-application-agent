@@ -4,6 +4,7 @@ Match service — scores jobs against a profile and creates Application rows.
 
 import time
 import uuid
+from datetime import UTC, datetime, timedelta
 
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -255,13 +256,24 @@ async def score_cached(
         return []
     company_names = [slug_to_company_name(s) for s in slugs]
 
-    matched_result = await session.execute(
+    # Exclude jobs that are either already scored OR currently leased by the
+    # cron worker (run_match_queue). Without the lease check, a fresh
+    # "Sync now" can race with the */15 cron and score the same Application
+    # twice in parallel — wasting Gemini budget and racing the final write.
+    # The 300s window matches match_queue_service.next_batch's lease.
+    lease_cutoff = datetime.now(UTC) - timedelta(seconds=300)
+    excluded_result = await session.execute(
         select(Application.job_id).where(
             Application.profile_id == profile.id,
-            Application.match_score.isnot(None),
+            (Application.match_score.isnot(None))
+            | (
+                (Application.match_status == "pending_match")
+                & (Application.match_claimed_at.is_not(None))
+                & (Application.match_claimed_at >= lease_cutoff)
+            ),
         )
     )
-    matched_ids = {row[0] for row in matched_result.all()}
+    excluded_ids = {row[0] for row in excluded_result.all()}
 
     q = (
         select(Job)
@@ -272,8 +284,8 @@ async def score_cached(
         )
         .order_by(Job.posted_at.desc().nullslast(), Job.fetched_at.desc())
     )
-    if matched_ids:
-        q = q.where(Job.id.notin_(matched_ids))
+    if excluded_ids:
+        q = q.where(Job.id.notin_(excluded_ids))
     q = q.limit(cap)
     jobs_result = await session.execute(q)
     jobs = list(jobs_result.scalars().all())
