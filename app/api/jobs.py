@@ -1,7 +1,8 @@
 """Jobs sync and query endpoints."""
 
 import structlog
-from fastapi import APIRouter, BackgroundTasks, Depends
+from fastapi import APIRouter, Depends, status
+from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_profile
@@ -19,35 +20,15 @@ router = APIRouter(prefix="/api/jobs", tags=["jobs"])
 MANUAL_SYNC_DAILY_LIMIT = 25
 
 
-@router.post("/sync")
+@router.post("/sync", status_code=status.HTTP_202_ACCEPTED)
 async def trigger_sync(
-    background_tasks: BackgroundTasks,
     profile: UserProfile = Depends(get_current_profile),
     session: AsyncSession = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ):
-    """
-    Manually trigger a job sync for the current user.
-    In dev mode: runs inline and returns results.
-    In prod: would run via scheduler.
-    """
+    """Manual user-initiated sync: enqueues stale slugs + scores cached jobs.
+    Returns 202 immediately. Background fetch + match catches up via cron."""
     if settings.environment == "production":
         await check_daily_quota(profile.user_id, "manual_sync", MANUAL_SYNC_DAILY_LIMIT, session)
     result = await job_sync_service.sync_profile(profile, session)
-
-    # After sync, score new jobs
-    background_tasks.add_task(_score_after_sync, profile.user_id)
-
-    return {"status": "synced", **result}
-
-
-async def _score_after_sync(profile_id):
-    """Background task: score jobs after sync completes."""
-    from app.database import get_session_factory
-    from app.services.match_service import score_and_match
-    from app.services.profile_service import get_or_create_profile
-
-    factory = get_session_factory()
-    async with factory() as session:
-        profile = await get_or_create_profile(profile_id, session)
-        await score_and_match(profile, session)
+    return JSONResponse(status_code=202, content=result)
