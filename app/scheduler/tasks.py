@@ -7,7 +7,7 @@ Three tasks:
   run_daily_maintenance — staleness cleanup + search auto-pause
 """
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import structlog
 from sqlmodel import select
@@ -159,3 +159,93 @@ async def run_daily_maintenance() -> dict:
         "searches_paused": len(expired_profiles),
         "applications_trimmed": trimmed,
     }
+
+
+async def run_sync_queue(*, max_slugs: int = 64, deadline_seconds: int = 240) -> dict:
+    """Drain the slug fetch queue. Per-tick deadline keeps us under Cloud Run's
+    300s wall. Anything not finished is left for the next tick.
+
+    NOTE: http2=True is intentionally NOT set on the httpx client — the `h2`
+    package is not a project dependency. Falls back to HTTP/1.1.
+    """
+    import asyncio
+    import time
+
+    import httpx
+
+    from app.database import get_session_factory
+    from app.services import job_service, match_queue_service, slug_registry_service
+    from app.sources.greenhouse_board import (
+        DEFAULT_TIMEOUT,
+        GreenhouseBoardSource,
+        InvalidSlugError,
+        TransientFetchError,
+    )
+
+    factory = get_session_factory()
+    deadline = time.monotonic() + deadline_seconds
+    counts = {"fetched": 0, "invalid": 0, "transient": 0, "skipped_deadline": 0}
+
+    async with factory() as session:
+        claimed = await slug_registry_service.next_pending(session, limit=max_slugs)
+    if not claimed:
+        return {**counts, "remaining": 0}
+
+    async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as client:
+        source = GreenhouseBoardSource()
+        sem = asyncio.Semaphore(8)
+
+        async def _one(row):
+            if time.monotonic() > deadline:
+                counts["skipped_deadline"] += 1
+                return
+            async with sem:
+                if time.monotonic() > deadline:
+                    counts["skipped_deadline"] += 1
+                    return
+                # Compute `since`: existing slug → last_fetched_at - 1h overlap;
+                # new slug (last_fetched_at IS NULL) → now - 14d.
+                since = (
+                    row.last_fetched_at - timedelta(hours=1)
+                    if row.last_fetched_at is not None
+                    else datetime.now(UTC) - timedelta(days=14)
+                )
+                try:
+                    jobs = await source.fetch_jobs(row.slug, since=since, client=client)
+                except InvalidSlugError as exc:
+                    async with factory() as s:
+                        await slug_registry_service.mark_fetched(
+                            row.source, row.slug, "invalid", s, error=str(exc)
+                        )
+                    counts["invalid"] += 1
+                    return
+                except TransientFetchError as exc:
+                    async with factory() as s:
+                        await slug_registry_service.mark_fetched(
+                            row.source, row.slug, "transient_error", s, error=str(exc)
+                        )
+                    counts["transient"] += 1
+                    return
+
+                async with factory() as s:
+                    new_count = 0
+                    for jd in jobs:
+                        job, created = await job_service.upsert_job(jd, row.source, s)
+                        if created:
+                            new_count += 1
+                            await match_queue_service.enqueue_for_interested_profiles(job, s)
+                    await slug_registry_service.mark_fetched(row.source, row.slug, "ok", s)
+                    await log.ainfo(
+                        "slug_fetch.ok",
+                        source=row.source,
+                        slug=row.slug,
+                        new_jobs=new_count,
+                        total_jobs=len(jobs),
+                    )
+                    counts["fetched"] += 1
+
+        await asyncio.gather(*(_one(r) for r in claimed), return_exceptions=False)
+
+    async with factory() as session:
+        remaining = await slug_registry_service.pending_count(session)
+    return {**counts, "remaining": remaining}
