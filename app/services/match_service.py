@@ -99,7 +99,13 @@ async def score_and_match(
     profile_text = format_profile_text(profile, skills, experiences)
 
     if jobs is None:
-        # Fetch active jobs already scored for this profile (null score = incomplete, re-score)
+        from app.data.slug_company import slug_to_company_name
+
+        slugs = (profile.target_company_slugs or {}).get("greenhouse", []) or []
+        if not slugs:
+            return []
+        company_names = [slug_to_company_name(s) for s in slugs]
+
         matched_result = await session.execute(
             select(Application.job_id).where(
                 Application.profile_id == profile.id,
@@ -108,12 +114,13 @@ async def score_and_match(
         )
         matched_ids = {row[0] for row in matched_result.all()}
 
-        # Push the not-in-matched_ids filter into SQL so the LIMIT counts only
-        # fresh candidates. Order newest-first so users see recently posted
-        # jobs before backlogged ones (issue #45).
         candidates_q = (
             select(Job)
-            .where(Job.is_active.is_(True))
+            .where(
+                Job.is_active.is_(True),
+                Job.source == "greenhouse_board",
+                Job.company_name.in_(company_names),
+            )
             .order_by(Job.posted_at.desc().nullslast(), Job.fetched_at.desc())
         )
         if matched_ids:
