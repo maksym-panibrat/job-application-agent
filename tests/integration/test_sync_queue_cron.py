@@ -67,6 +67,29 @@ async def test_run_sync_queue_fetches_claimed_slugs_and_enqueues_matches(db_sess
 
 
 @pytest.mark.asyncio
+async def test_run_job_sync_bulk_enqueues_for_active_profiles(db_session):
+    """The 6h /internal/cron/sync becomes a bulk-enqueue: it does not fetch directly
+    but seeds the slug_fetches queue for every active profile's stale slugs."""
+    from app.scheduler.tasks import run_job_sync
+
+    await _seed_profile(db_session, "airbnb", "stripe")
+    p_inactive = await _seed_profile(db_session, "notion")
+    p_inactive.search_active = False
+    db_session.add(p_inactive)
+    await db_session.commit()
+
+    summary = await run_job_sync()
+    assert summary["profiles_enqueued"] == 1
+    assert summary["slugs_enqueued"] == 2
+    # `run_job_sync` commits via a separate session; drop in-memory cache so the
+    # pending_count reflects the worker-committed state.
+    db_session.expire_all()
+    # airbnb + stripe queued (notion skipped because profile is inactive)
+    pending = await slug_registry_service.pending_count(db_session)
+    assert pending == 2
+
+
+@pytest.mark.asyncio
 async def test_run_sync_queue_marks_invalid_after_2_404s(db_session):
     profile = await _seed_profile(db_session, "openai")
     await slug_registry_service.enqueue_stale(profile, db_session, ttl_hours=6)

@@ -16,48 +16,27 @@ log = structlog.get_logger()
 
 
 async def run_job_sync() -> dict:
-    """Sync jobs for all users with active search. Returns a summary dict."""
+    """Bulk-enqueue stale slugs for every active profile. The actual fetch
+    happens in run_sync_queue; this is just the scheduled "wake up and sweep" pass."""
     from app.database import get_session_factory
     from app.models.user_profile import UserProfile
-    from app.services import job_sync_service, match_service
+    from app.services import slug_registry_service
 
     factory = get_session_factory()
+    profiles_enqueued = 0
+    slugs_enqueued = 0
     async with factory() as session:
         result = await session.execute(
             select(UserProfile).where(UserProfile.search_active.is_(True))
         )
-        profiles = result.scalars().all()
-
-    profiles_synced = 0
-    total_new = 0
-    total_updated = 0
-    total_stale = 0
-    total_warnings: dict[str, int] = {}
-
-    for profile in profiles:
-        try:
-            async with factory() as session:
-                sync_result = await job_sync_service.sync_profile(profile, session)
-                profiles_synced += 1
-                total_new += sync_result.get("new_jobs", 0)
-                total_updated += sync_result.get("updated_jobs", 0)
-                total_stale += sync_result.get("stale_jobs", 0)
-                # Generic aggregation — counts every warning code emitted by
-                # sync_profile, so new codes surface automatically (#48).
-                for w in sync_result.get("warnings", []):
-                    total_warnings[w] = total_warnings.get(w, 0) + 1
-                await match_service.score_and_match(profile, session)
-        except Exception as exc:
-            await log.aexception("scheduler.sync_error", profile_id=str(profile.id), error=str(exc))
-
+        for profile in result.scalars().all():
+            queued = await slug_registry_service.enqueue_stale(profile, session, ttl_hours=6)
+            if queued:
+                profiles_enqueued += 1
+                slugs_enqueued += len(queued)
     return {
-        "profiles_synced": profiles_synced,
-        # Back-compat field; total_warnings["no_target_slugs"] is the canonical source.
-        "profiles_without_slugs": total_warnings.get("no_target_slugs", 0),
-        "total_warnings": total_warnings,
-        "total_new_jobs": total_new,
-        "total_updated_jobs": total_updated,
-        "total_stale_jobs": total_stale,
+        "profiles_enqueued": profiles_enqueued,
+        "slugs_enqueued": slugs_enqueued,
     }
 
 
