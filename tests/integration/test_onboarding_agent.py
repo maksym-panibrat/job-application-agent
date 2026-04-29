@@ -135,6 +135,45 @@ async def test_agent_node_injects_current_profile_snapshot(checkpointer, db_sess
     assert "openai" in system_blob
 
 
+async def _make_profile(db_session):
+    """Create a real User + UserProfile pair, satisfying the FK constraint."""
+    from app.models.user import User
+    from app.models.user_profile import UserProfile
+
+    user_id = uuid.uuid4()
+    user = User(id=user_id, email=f"slug-test-{user_id}@local")
+    db_session.add(user)
+    profile = UserProfile(user_id=user_id)
+    db_session.add(profile)
+    await db_session.commit()
+    await db_session.refresh(profile)
+    return profile
+
+
+@pytest.mark.asyncio
+async def test_onboarding_filters_invalid_slugs(db_session, monkeypatch):
+    """The onboarding agent must call validate_slug for each inferred slug
+    and persist only the ones that exist on Greenhouse."""
+    from app.services import slug_registry_service
+
+    seen = []
+
+    async def fake_validate(source, slug, session):
+        seen.append(slug)
+        return slug != "openai"  # openai is dead; everything else valid
+
+    monkeypatch.setattr(slug_registry_service, "validate_slug", fake_validate)
+
+    from app.agents.onboarding import persist_inferred_slugs
+
+    profile = await _make_profile(db_session)
+    await persist_inferred_slugs(profile, ["airbnb", "openai", "stripe"], db_session)
+    await db_session.refresh(profile)
+
+    assert profile.target_company_slugs["greenhouse"] == ["airbnb", "stripe"]
+    assert "openai" in seen
+
+
 @pytest.mark.asyncio
 async def test_different_thread_ids_are_isolated(checkpointer):
     thread_a = str(uuid.uuid4())
