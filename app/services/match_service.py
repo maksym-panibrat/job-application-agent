@@ -203,6 +203,12 @@ async def score_and_match(
         app.match_strengths = score_result.strengths
         app.match_gaps = score_result.gaps
 
+        # Flip the match-queue lifecycle out of pending_match so the cron
+        # worker (run_match_queue) doesn't re-claim and re-score this row.
+        app.match_status = "matched"
+        app.match_queued_at = None
+        app.match_claimed_at = None
+
         passed = score_result.score >= settings.match_score_threshold
         if not passed:
             app.status = "auto_rejected"

@@ -367,3 +367,76 @@ async def test_score_cached_only_uses_existing_jobs(db_session):
     with patch("app.agents.matching_agent.build_graph", return_value=fake_graph):
         result = await match_service.score_cached(profile, db_session, cap=20)
     assert isinstance(result, list)
+
+
+@pytest.mark.asyncio
+async def test_score_and_match_flips_match_status_to_matched(db_session):
+    """After score_and_match persists a score, the Application must transition
+    out of pending_match so run_match_queue doesn't re-score it."""
+    from app.agents.matching_agent import ScoreResult
+    from app.models.application import Application
+    from app.models.user import User
+
+    user = User(
+        id=uuid.uuid4(),
+        email="t@t.com",
+        is_active=True,
+        is_verified=True,
+        is_superuser=False,
+        hashed_password="",
+    )
+    db_session.add(user)
+    profile = UserProfile(
+        user_id=user.id,
+        target_company_slugs={"greenhouse": ["airbnb"]},
+    )
+    db_session.add(profile)
+    job = Job(
+        source="greenhouse_board",
+        external_id="m-1",
+        title="Eng",
+        company_name="Airbnb",
+        apply_url="https://x",
+        is_active=True,
+    )
+    db_session.add(job)
+    await db_session.commit()
+    await db_session.refresh(job)
+    await db_session.refresh(profile)
+
+    # Pre-create an Application in pending_match state (mimicking enqueue_for_interested_profiles)
+    app = Application(
+        job_id=job.id,
+        profile_id=profile.id,
+        match_status="pending_match",
+        match_queued_at=datetime.now(UTC),
+    )
+    db_session.add(app)
+    await db_session.commit()
+    await db_session.refresh(app)
+
+    # Patch the LangGraph to return a score for this application
+    fake_graph = MagicMock()
+    fake_graph.ainvoke = AsyncMock(
+        return_value={
+            "scores": [
+                ScoreResult(
+                    application_id=str(app.id),
+                    score=0.85,
+                    rationale="great fit",
+                    strengths=["python"],
+                    gaps=[],
+                )
+            ]
+        }
+    )
+    with patch("app.agents.matching_agent.build_graph", return_value=fake_graph):
+        await match_service.score_and_match(profile, db_session, jobs=[job])
+
+    refreshed = (
+        await db_session.execute(sa.select(Application).where(Application.id == app.id))
+    ).scalar_one()
+    assert refreshed.match_score == 0.85
+    assert refreshed.match_status == "matched"
+    assert refreshed.match_queued_at is None
+    assert refreshed.match_claimed_at is None
