@@ -89,8 +89,9 @@ async def lifespan(app: FastAPI):
     # Init LangGraph checkpointer (psycopg v3, separate pool from SQLAlchemy asyncpg)
     psycopg_uri = str(settings.database_url).replace("+asyncpg", "")
     # setup() runs CREATE INDEX CONCURRENTLY which cannot run inside a pipeline,
-    # so we run it once on a plain connection before opening the pipeline saver.
+    # so we run it once on a plain connection before opening the runtime pool.
     from psycopg.errors import DuplicateTable
+    from psycopg_pool import AsyncConnectionPool
 
     async with AsyncPostgresSaver.from_conn_string(psycopg_uri) as setup_checkpointer:
         try:
@@ -98,8 +99,20 @@ async def lifespan(app: FastAPI):
         except DuplicateTable:
             pass  # checkpoint tables already exist from a previous deploy
         # all other exceptions propagate and fail lifespan — loud failure at startup
-    async with AsyncPostgresSaver.from_conn_string(psycopg_uri, pipeline=True) as checkpointer:
-        app.state.checkpointer = checkpointer
+
+    # Use a connection pool with check_connection so dead connections (Neon's
+    # idle timeout closes them while a Cloud Run instance is dormant) are
+    # replaced transparently. Without this, every chat request after ~5min idle
+    # fails with psycopg.OperationalError("the connection is closed") for the
+    # remaining lifetime of the instance.
+    async with AsyncConnectionPool(
+        psycopg_uri,
+        min_size=1,
+        max_size=4,
+        open=False,
+        check=AsyncConnectionPool.check_connection,
+    ) as pool:
+        app.state.checkpointer = AsyncPostgresSaver(pool)
         await log.ainfo("checkpointer.ready")
 
         yield
