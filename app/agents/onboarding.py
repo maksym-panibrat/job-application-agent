@@ -24,7 +24,8 @@ from typing_extensions import TypedDict
 
 from app.agents.llm_safe import safe_ainvoke
 from app.config import get_settings
-from app.services import profile_service
+from app.models.user_profile import UserProfile
+from app.services import profile_service, slug_registry_service
 
 log = structlog.get_logger()
 
@@ -139,6 +140,28 @@ def _format_current_profile(data: dict) -> str:
     return "\n".join(lines)
 
 
+async def persist_inferred_slugs(profile, slugs: list[str], session) -> list[str]:
+    """Validate each slug against Greenhouse before persisting.
+
+    Returns the list of slugs that survived validation. The profile's
+    target_company_slugs["greenhouse"] is replaced with that list and
+    committed. Slugs that fail validate_slug (e.g. 404s) are dropped so
+    the sync queue never sees a non-existent board.
+    """
+    valid: list[str] = []
+    for s in slugs:
+        if await slug_registry_service.validate_slug("greenhouse_board", s, session):
+            valid.append(s)
+    profile.target_company_slugs = {
+        **(profile.target_company_slugs or {}),
+        "greenhouse": valid,
+    }
+    session.add(profile)
+    await session.commit()
+    await session.refresh(profile)
+    return valid
+
+
 async def _fetch_profile_snapshot(state: dict, config: RunnableConfig) -> dict | None:
     """Load the profile row referenced by state['profile_id'] and return its
     relevant fields as a plain dict. Returns None when profile_id or db_factory
@@ -153,8 +176,6 @@ async def _fetch_profile_snapshot(state: dict, config: RunnableConfig) -> dict |
         profile_uuid = uuid.UUID(profile_id_str)
     except (ValueError, TypeError):
         return None
-
-    from app.models.user_profile import UserProfile
 
     async with db_factory() as session:
         profile = await session.get(UserProfile, profile_uuid)
@@ -279,6 +300,12 @@ def build_graph(checkpointer: AsyncPostgresSaver) -> StateGraph:
                 skills = list(updates.pop("skills", None) or [])
                 experiences = list(updates.pop("work_experiences", None) or [])
 
+                # target_company_slugs needs per-slug validation against
+                # Greenhouse before persisting; route it through the dedicated
+                # helper instead of letting profile_service.update_profile blob
+                # the LLM-inferred dict in unchecked.
+                slug_payload = updates.pop("target_company_slugs", None)
+
                 # Update flat profile fields (only recognised fields)
                 flat = {k: v for k, v in updates.items() if k in PROFILE_SCALAR_FIELDS}
                 if flat:
@@ -289,6 +316,23 @@ def build_graph(checkpointer: AsyncPostgresSaver) -> StateGraph:
                             "onboarding.process_tool_results.update_failed",
                             error=str(exc),
                         )
+
+                if isinstance(slug_payload, dict):
+                    inferred = slug_payload.get("greenhouse") or []
+                    if isinstance(inferred, list) and inferred:
+                        profile = await session.get(UserProfile, profile_uuid)
+                        if profile is not None:
+                            try:
+                                await persist_inferred_slugs(
+                                    profile,
+                                    [str(s) for s in inferred if isinstance(s, str)],
+                                    session,
+                                )
+                            except Exception as exc:
+                                await log.awarning(
+                                    "onboarding.process_tool_results.slug_validate_failed",
+                                    error=str(exc),
+                                )
 
                 for skill in skills:
                     if not isinstance(skill, dict) or not skill.get("name"):

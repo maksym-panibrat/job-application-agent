@@ -2,14 +2,15 @@ name: Cron
 
 on:
   schedule:
-    - cron: '0 */4 * * *'
-    - cron: '*/10 * * * *'
-    - cron: '0 3 * * *'
+    - cron: '0 */6 * * *'      # bulk-enqueue stale slugs
+    - cron: '*/10 * * * *'     # generation queue (existing)
+    - cron: '0 3 * * *'        # daily maintenance (existing)
+    - cron: '*/15 * * * *'     # process sync + match queues (new)
   workflow_dispatch:
 
 jobs:
   sync:
-    if: github.event.schedule == '0 */4 * * *' || github.event_name == 'workflow_dispatch'
+    if: github.event.schedule == '0 */6 * * *' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - name: Trigger job sync
@@ -62,6 +63,42 @@ jobs:
           echo "$body"
           [ "$code" -lt 400 ] || exit 1
 
+  process-sync-queue:
+    if: github.event.schedule == '*/15 * * * *' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger sync queue drain
+        env:
+          CLOUD_RUN_URL: ${{ secrets.CLOUD_RUN_URL }}
+          CRON_SHARED_SECRET: ${{ secrets.CRON_SHARED_SECRET }}
+        run: |
+          response=$(curl -s -w "\n%{http_code}" -X POST \
+            -H "X-Cron-Secret: $CRON_SHARED_SECRET" \
+            "$CLOUD_RUN_URL/internal/cron/process-sync-queue")
+          body=$(echo "$response" | head -n -1)
+          code=$(echo "$response" | tail -n 1)
+          echo "HTTP $code"
+          echo "$body"
+          [ "$code" -lt 400 ] || exit 1
+
+  process-match-queue:
+    if: github.event.schedule == '*/15 * * * *' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger match queue drain
+        env:
+          CLOUD_RUN_URL: ${{ secrets.CLOUD_RUN_URL }}
+          CRON_SHARED_SECRET: ${{ secrets.CRON_SHARED_SECRET }}
+        run: |
+          response=$(curl -s -w "\n%{http_code}" -X POST \
+            -H "X-Cron-Secret: $CRON_SHARED_SECRET" \
+            "$CLOUD_RUN_URL/internal/cron/process-match-queue")
+          body=$(echo "$response" | head -n -1)
+          code=$(echo "$response" | tail -n 1)
+          echo "HTTP $code"
+          echo "$body"
+          [ "$code" -lt 400 ] || exit 1
+
   # When any scheduled cron job fails, open (or bump) a single tracking issue
   # so recurring failures don't sit unnoticed in the Actions tab. GitHub's
   # default workflow-failure email is easy to miss; a pinned issue is not.
@@ -70,8 +107,8 @@ jobs:
   # 10 minutes for ~3 hours (prod schema drift, commit 28e5ce5) before the
   # operator noticed. This step makes that lag minutes, not hours.
   alert-on-failure:
-    needs: [sync, generation-queue, maintenance]
-    if: always() && (needs.sync.result == 'failure' || needs.generation-queue.result == 'failure' || needs.maintenance.result == 'failure')
+    needs: [sync, generation-queue, maintenance, process-sync-queue, process-match-queue]
+    if: always() && (needs.sync.result == 'failure' || needs.generation-queue.result == 'failure' || needs.maintenance.result == 'failure' || needs.process-sync-queue.result == 'failure' || needs.process-match-queue.result == 'failure')
     runs-on: ubuntu-latest
     permissions:
       issues: write
@@ -81,7 +118,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          FAILED_JOBS: "sync=${{ needs.sync.result }} generation-queue=${{ needs.generation-queue.result }} maintenance=${{ needs.maintenance.result }}"
+          FAILED_JOBS: "sync=${{ needs.sync.result }} generation-queue=${{ needs.generation-queue.result }} maintenance=${{ needs.maintenance.result }} process-sync-queue=${{ needs.process-sync-queue.result }} process-match-queue=${{ needs.process-match-queue.result }}"
         run: |
           set -euo pipefail
           title="[cron] scheduled job failing"

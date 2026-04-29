@@ -90,6 +90,20 @@ async def cron_generation_queue(request: Request):
     return await _run_cron("generation_queue", task)
 
 
+@router.post("/process-sync-queue", dependencies=[Depends(verify_secret)])
+async def cron_process_sync_queue():
+    from app.scheduler.tasks import run_sync_queue
+
+    return await _run_cron("process_sync_queue", run_sync_queue)
+
+
+@router.post("/process-match-queue", dependencies=[Depends(verify_secret)])
+async def cron_process_match_queue():
+    from app.scheduler.tasks import run_match_queue
+
+    return await _run_cron("process_match_queue", run_match_queue)
+
+
 @router.post("/maintenance", dependencies=[Depends(verify_secret)])
 async def cron_maintenance():
     return await _run_cron("maintenance", run_daily_maintenance)

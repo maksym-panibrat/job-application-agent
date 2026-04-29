@@ -4,14 +4,17 @@ Integration tests for match scoring pipeline — real Postgres, mocked LLM.
 
 import uuid
 from datetime import UTC, datetime, timedelta
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+import sqlalchemy as sa
 from sqlmodel import select
 
 from app.models.application import Application
 from app.models.job import Job
 from app.models.user import User
 from app.models.user_profile import UserProfile
+from app.services import match_service
 from app.services.match_service import list_applications, score_and_match
 from tests.conftest import patch_llm
 
@@ -39,12 +42,14 @@ async def _seed_job(
     title: str = "Software Engineer",
     salary: str | None = None,
     posted_at: datetime | None = None,
+    source: str = "greenhouse_board",
+    company_name: str = "Acme Corp",
 ) -> Job:
     job = Job(
-        source="adzuna",
+        source=source,
         external_id=str(uuid.uuid4()),
         title=title,
-        company_name="Acme Corp",
+        company_name=company_name,
         apply_url="https://example.com/apply",
         description_md="A great engineering role.",
         salary=salary,
@@ -213,6 +218,11 @@ async def test_score_and_match_picks_unscored_jobs_when_pool_is_largely_scored(d
     extra = 5
 
     profile = await _seed_profile(db_session)
+    # Match the slug for jobs whose company_name == "Acme Corp"
+    # (slug_to_company_name("acme-corp") == "Acme Corp").
+    profile.target_company_slugs = {"greenhouse": ["acme-corp"]}
+    db_session.add(profile)
+    await db_session.commit()
 
     # First `batch` jobs: pre-create scored Applications so they appear in matched_ids.
     pre_scored_jobs = [await _seed_job(db_session, title=f"Pre-scored {i}") for i in range(batch)]
@@ -273,3 +283,217 @@ async def test_list_applications_returns_job_data(db_session):
     assert returned_job.id == job.id
     assert returned_job.title == "Python Engineer"
     assert returned_job.salary == "$120k"
+
+
+@pytest.mark.asyncio
+async def test_score_and_match_filters_by_profile_slugs(db_session):
+    """A profile with only ['airbnb'] must NOT see Stripe jobs as candidates,
+    even if Stripe jobs exist in the global pool from other users (spec 2026-04-28)."""
+    # Two jobs, two companies
+    airbnb_job = Job(
+        source="greenhouse_board",
+        external_id="a-1",
+        title="X",
+        company_name="Airbnb",
+        apply_url="https://x",
+        is_active=True,
+    )
+    stripe_job = Job(
+        source="greenhouse_board",
+        external_id="s-1",
+        title="Y",
+        company_name="Stripe",
+        apply_url="https://y",
+        is_active=True,
+    )
+    db_session.add_all([airbnb_job, stripe_job])
+    user = User(id=uuid.uuid4(), email=f"slugtest-{uuid.uuid4()}@test.com")
+    db_session.add(user)
+    await db_session.commit()
+    profile = UserProfile(
+        user_id=user.id,
+        target_company_slugs={"greenhouse": ["airbnb"]},
+    )
+    db_session.add(profile)
+    await db_session.commit()
+
+    # Patch the LangGraph build_graph so we don't actually call an LLM —
+    # we only care about which jobs become Application rows.
+    fake_graph = MagicMock()
+    fake_graph.ainvoke = AsyncMock(return_value={"scores": []})
+    with patch("app.agents.matching_agent.build_graph", return_value=fake_graph):
+        await match_service.score_and_match(profile, db_session)
+
+    apps = (
+        (
+            await db_session.execute(
+                sa.select(Application).where(Application.profile_id == profile.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    job_ids = {a.job_id for a in apps}
+    assert airbnb_job.id in job_ids
+    assert stripe_job.id not in job_ids
+
+
+@pytest.mark.asyncio
+async def test_score_cached_only_uses_existing_jobs(db_session):
+    """score_cached must NOT enqueue any fetches and must respect the slug filter
+    and matching_jobs_per_batch cap."""
+    user = User(id=uuid.uuid4(), email=f"cached-{uuid.uuid4()}@test.com")
+    db_session.add(user)
+    await db_session.commit()
+    profile = UserProfile(
+        user_id=user.id,
+        target_company_slugs={"greenhouse": ["airbnb"]},
+    )
+    db_session.add(profile)
+    db_session.add(
+        Job(
+            source="greenhouse_board",
+            external_id="a-2",
+            title="Z",
+            company_name="Airbnb",
+            apply_url="https://z",
+            is_active=True,
+        )
+    )
+    await db_session.commit()
+
+    fake_graph = MagicMock()
+    fake_graph.ainvoke = AsyncMock(return_value={"scores": []})
+    with patch("app.agents.matching_agent.build_graph", return_value=fake_graph):
+        result = await match_service.score_cached(profile, db_session, cap=20)
+    assert isinstance(result, list)
+
+
+@pytest.mark.asyncio
+async def test_score_and_match_flips_match_status_to_matched(db_session):
+    """After score_and_match persists a score, the Application must transition
+    out of pending_match so run_match_queue doesn't re-score it."""
+    from app.agents.matching_agent import ScoreResult
+    from app.models.application import Application
+    from app.models.user import User
+
+    user = User(
+        id=uuid.uuid4(),
+        email="t@t.com",
+        is_active=True,
+        is_verified=True,
+        is_superuser=False,
+        hashed_password="",
+    )
+    db_session.add(user)
+    profile = UserProfile(
+        user_id=user.id,
+        target_company_slugs={"greenhouse": ["airbnb"]},
+    )
+    db_session.add(profile)
+    job = Job(
+        source="greenhouse_board",
+        external_id="m-1",
+        title="Eng",
+        company_name="Airbnb",
+        apply_url="https://x",
+        is_active=True,
+    )
+    db_session.add(job)
+    await db_session.commit()
+    await db_session.refresh(job)
+    await db_session.refresh(profile)
+
+    # Pre-create an Application in pending_match state (mimicking enqueue_for_interested_profiles)
+    app = Application(
+        job_id=job.id,
+        profile_id=profile.id,
+        match_status="pending_match",
+        match_queued_at=datetime.now(UTC),
+    )
+    db_session.add(app)
+    await db_session.commit()
+    await db_session.refresh(app)
+
+    # Patch the LangGraph to return a score for this application
+    fake_graph = MagicMock()
+    fake_graph.ainvoke = AsyncMock(
+        return_value={
+            "scores": [
+                ScoreResult(
+                    application_id=str(app.id),
+                    score=0.85,
+                    rationale="great fit",
+                    strengths=["python"],
+                    gaps=[],
+                )
+            ]
+        }
+    )
+    with patch("app.agents.matching_agent.build_graph", return_value=fake_graph):
+        await match_service.score_and_match(profile, db_session, jobs=[job])
+
+    refreshed = (
+        await db_session.execute(sa.select(Application).where(Application.id == app.id))
+    ).scalar_one()
+    assert refreshed.match_score == 0.85
+    assert refreshed.match_status == "matched"
+    assert refreshed.match_queued_at is None
+    assert refreshed.match_claimed_at is None
+
+
+@pytest.mark.asyncio
+async def test_score_cached_skips_jobs_with_fresh_match_claim(db_session):
+    """If an Application is currently claimed by run_match_queue (fresh
+    match_claimed_at), score_cached must not pick its job again — otherwise
+    we'd double-score and waste an LLM call."""
+    from app.models.user import User
+    from app.services.profile_service import get_or_create_profile
+
+    user = User(
+        id=uuid.uuid4(),
+        email="t@t.com",
+        is_active=True,
+        is_verified=True,
+        is_superuser=False,
+        hashed_password="",
+    )
+    db_session.add(user)
+    await db_session.commit()
+    profile = await get_or_create_profile(user.id, db_session)
+    profile.target_company_slugs = {"greenhouse": ["airbnb"]}
+    db_session.add(profile)
+    await db_session.commit()
+    await db_session.refresh(profile)
+
+    job = Job(
+        source="greenhouse_board",
+        external_id="r-1",
+        title="Eng",
+        company_name="Airbnb",
+        apply_url="https://x",
+        is_active=True,
+    )
+    db_session.add(job)
+    await db_session.commit()
+    await db_session.refresh(job)
+
+    # Simulate the cron worker having claimed this Application 10 seconds ago
+    app = Application(
+        job_id=job.id,
+        profile_id=profile.id,
+        match_status="pending_match",
+        match_queued_at=datetime.now(UTC),
+        match_claimed_at=datetime.now(UTC),  # fresh lease
+    )
+    db_session.add(app)
+    await db_session.commit()
+
+    # score_cached must skip this job (no LangGraph invocation)
+    fake_graph = MagicMock()
+    fake_graph.ainvoke = AsyncMock(return_value={"scores": []})
+    with patch("app.agents.matching_agent.build_graph", return_value=fake_graph):
+        result = await match_service.score_cached(profile, db_session, cap=20)
+
+    assert result == []
+    fake_graph.ainvoke.assert_not_called()

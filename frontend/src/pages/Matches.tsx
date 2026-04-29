@@ -2,6 +2,8 @@ import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import { MatchCard } from '../components/MatchCard'
+import { SyncStatusChip } from '../components/SyncStatusChip'
+import { InvalidSlugsNotice } from '../components/InvalidSlugsNotice'
 import { computeRefetchInterval, POST_SYNC_WINDOW_MS } from './refetchInterval'
 
 function SkeletonCard() {
@@ -35,6 +37,8 @@ export default function Matches() {
     },
   })
 
+  const refetchMatches = () => qc.invalidateQueries({ queryKey: ['applications'] })
+
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
@@ -42,18 +46,26 @@ export default function Matches() {
           <h1 className="text-xl font-bold text-gray-900">Job Matches</h1>
           <p className="text-sm text-gray-500 mt-0.5">{apps?.length ?? 0} pending review</p>
         </div>
-        <button
-          onClick={() => sync.mutate()}
-          disabled={sync.isPending}
-          className="px-3 py-1.5 text-sm font-medium bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 transition-colors"
-        >
-          {sync.isPending ? 'Syncing...' : 'Sync jobs'}
-        </button>
+        <div className="flex items-center gap-3">
+          <SyncStatusChip onIdle={refetchMatches} />
+          <button
+            onClick={() => sync.mutate()}
+            disabled={sync.isPending}
+            className="px-3 py-1.5 text-sm font-medium bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 transition-colors"
+          >
+            {sync.isPending ? 'Syncing...' : 'Sync jobs'}
+          </button>
+        </div>
+      </div>
+
+      <div className="mb-4">
+        <InvalidSlugsNotice />
       </div>
 
       {sync.data && (
         <div className="mb-4 p-3 bg-green-50 text-green-700 text-sm rounded-md">
-          Sync complete: {sync.data.new_jobs} new jobs, {sync.data.updated_jobs} updated
+          Searching now. {sync.data.matched_now} matches from cache, {sync.data.queued_slugs.length} boards queued.
+          New matches will appear in a couple minutes.
         </div>
       )}
 

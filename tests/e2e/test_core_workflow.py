@@ -1,42 +1,13 @@
 """
-E2E tests — core job application workflow:
-  upload resume → sync → match → generate → review → dismiss
+E2E tests — core API surface: health, profile, resume upload, dismiss, pause.
+
+Sync/match scenarios live in tests/integration/test_sync_queue_cron.py,
+test_match_queue_cron.py, test_jobs_endpoint.py, and test_sync_status_endpoint.py.
 """
 
 import io
-from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-
-from app.sources.base import JobData
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
-def _make_job_data(idx: int = 0) -> JobData:
-    return JobData(
-        external_id=f"test-job-{idx:03d}",
-        title=f"Senior Python Engineer #{idx}",
-        company_name="Acme Corp",
-        location="New York",
-        apply_url=f"https://boards.greenhouse.io/acme/jobs/{idx}",
-        description_md="We need a Python expert for distributed systems work.",
-    )
-
-
-def _mock_greenhouse_source(jobs: list[JobData]) -> MagicMock:
-    """Mock GreenhouseBoardSource — returns the given jobs from search()."""
-    source = MagicMock()
-    source.source_name = "greenhouse_board"
-    source.search = AsyncMock(return_value=(jobs, None))
-    return source
-
-
-# ---------------------------------------------------------------------------
-# Tests
-# ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
@@ -84,56 +55,6 @@ async def test_update_profile(test_app):
     # Verify the update persisted
     get_resp = await test_app.get("/api/profile")
     assert "Backend Engineer" in get_resp.json()["target_roles"]
-
-
-@pytest.mark.asyncio
-async def test_job_sync_with_mocked_source(test_app, monkeypatch):
-    """
-    POST /api/jobs/sync → syncs jobs from mocked GreenhouseBoardSource → new jobs returned.
-    The background scoring task is also mocked to avoid LLM calls.
-    """
-    # Set target_company_slugs so sync_profile doesn't early-return
-    await test_app.patch(
-        "/api/profile",
-        json={"target_company_slugs": {"greenhouse": ["acme"]}},
-    )
-
-    jobs = [_make_job_data(i) for i in range(3)]
-    mock_source = _mock_greenhouse_source(jobs)
-
-    monkeypatch.setattr(
-        "app.services.job_sync_service.GreenhouseBoardSource", lambda: mock_source
-    )
-    monkeypatch.setattr("app.api.jobs._score_after_sync", AsyncMock())
-
-    resp = await test_app.post("/api/jobs/sync")
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data["new_jobs"] == 3
-    assert data["updated_jobs"] == 0
-
-
-@pytest.mark.asyncio
-async def test_sync_then_list_applications_empty_without_scoring(test_app, monkeypatch):
-    """After sync (no scoring), applications list is empty."""
-    await test_app.patch(
-        "/api/profile",
-        json={"target_company_slugs": {"greenhouse": ["acme"]}},
-    )
-
-    jobs = [_make_job_data()]
-    mock_source = _mock_greenhouse_source(jobs)
-
-    monkeypatch.setattr(
-        "app.services.job_sync_service.GreenhouseBoardSource", lambda: mock_source
-    )
-    monkeypatch.setattr("app.api.jobs._score_after_sync", AsyncMock())
-
-    await test_app.post("/api/jobs/sync")
-
-    resp = await test_app.get("/api/applications")
-    assert resp.status_code == 200
-    assert resp.json() == []  # no Applications created until scoring runs
 
 
 @pytest.mark.asyncio

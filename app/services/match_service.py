@@ -4,6 +4,7 @@ Match service — scores jobs against a profile and creates Application rows.
 
 import time
 import uuid
+from datetime import UTC, datetime, timedelta
 
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -99,7 +100,13 @@ async def score_and_match(
     profile_text = format_profile_text(profile, skills, experiences)
 
     if jobs is None:
-        # Fetch active jobs already scored for this profile (null score = incomplete, re-score)
+        from app.data.slug_company import slug_to_company_name
+
+        slugs = (profile.target_company_slugs or {}).get("greenhouse", []) or []
+        if not slugs:
+            return []
+        company_names = [slug_to_company_name(s) for s in slugs]
+
         matched_result = await session.execute(
             select(Application.job_id).where(
                 Application.profile_id == profile.id,
@@ -108,12 +115,13 @@ async def score_and_match(
         )
         matched_ids = {row[0] for row in matched_result.all()}
 
-        # Push the not-in-matched_ids filter into SQL so the LIMIT counts only
-        # fresh candidates. Order newest-first so users see recently posted
-        # jobs before backlogged ones (issue #45).
         candidates_q = (
             select(Job)
-            .where(Job.is_active.is_(True))
+            .where(
+                Job.is_active.is_(True),
+                Job.source == "greenhouse_board",
+                Job.company_name.in_(company_names),
+            )
             .order_by(Job.posted_at.desc().nullslast(), Job.fetched_at.desc())
         )
         if matched_ids:
@@ -196,6 +204,12 @@ async def score_and_match(
         app.match_strengths = score_result.strengths
         app.match_gaps = score_result.gaps
 
+        # Flip the match-queue lifecycle out of pending_match so the cron
+        # worker (run_match_queue) doesn't re-claim and re-score this row.
+        app.match_status = "matched"
+        app.match_queued_at = None
+        app.match_claimed_at = None
+
         passed = score_result.score >= settings.match_score_threshold
         if not passed:
             app.status = "auto_rejected"
@@ -220,6 +234,64 @@ async def score_and_match(
         duration_ms=int((time.perf_counter() - t0) * 1000),
     )
     return scored_apps
+
+
+async def score_cached(
+    profile: UserProfile,
+    session: AsyncSession,
+    *,
+    cap: int | None = None,
+) -> list[Application]:
+    """Variant of score_and_match that scores at most `cap` already-cached jobs.
+    No fetches, no slug-pool growth. Used by the instant-feedback path of POST /api/jobs/sync."""
+    from app.config import get_settings
+
+    settings = get_settings()
+    cap = cap if cap is not None else settings.matching_jobs_per_batch
+
+    from app.data.slug_company import slug_to_company_name
+
+    slugs = (profile.target_company_slugs or {}).get("greenhouse", []) or []
+    if not slugs:
+        return []
+    company_names = [slug_to_company_name(s) for s in slugs]
+
+    # Exclude jobs that are either already scored OR currently leased by the
+    # cron worker (run_match_queue). Without the lease check, a fresh
+    # "Sync now" can race with the */15 cron and score the same Application
+    # twice in parallel — wasting Gemini budget and racing the final write.
+    # The 300s window matches match_queue_service.next_batch's lease.
+    lease_cutoff = datetime.now(UTC) - timedelta(seconds=300)
+    excluded_result = await session.execute(
+        select(Application.job_id).where(
+            Application.profile_id == profile.id,
+            (Application.match_score.isnot(None))
+            | (
+                (Application.match_status == "pending_match")
+                & (Application.match_claimed_at.is_not(None))
+                & (Application.match_claimed_at >= lease_cutoff)
+            ),
+        )
+    )
+    excluded_ids = {row[0] for row in excluded_result.all()}
+
+    q = (
+        select(Job)
+        .where(
+            Job.is_active.is_(True),
+            Job.source == "greenhouse_board",
+            Job.company_name.in_(company_names),
+        )
+        .order_by(Job.posted_at.desc().nullslast(), Job.fetched_at.desc())
+    )
+    if excluded_ids:
+        q = q.where(Job.id.notin_(excluded_ids))
+    q = q.limit(cap)
+    jobs_result = await session.execute(q)
+    jobs = list(jobs_result.scalars().all())
+    if not jobs:
+        return []
+    return await score_and_match(profile, session, jobs=jobs)
 
 
 async def list_applications(
