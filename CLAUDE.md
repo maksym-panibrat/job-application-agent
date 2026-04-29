@@ -12,9 +12,7 @@ uv run uvicorn app.main:app --reload --port 8000
 cd frontend && npm install && npm run dev   # :5173, proxies /api + /health to :8000
 ```
 
-No tracked `.env.example`. Required env: `DATABASE_URL`, `GOOGLE_API_KEY`. Full list: `app/config.py::Settings`.
-
-`AUTH_ENABLED=false` (default) treats every request as a single hardcoded user (`app/api/deps.py::SINGLE_USER_ID`).
+Required env: `DATABASE_URL`, `GOOGLE_API_KEY`. Full list: `app/config.py::Settings`.
 
 **Migrations**: always use `make migrate ARGS="..."` (or `uv run python scripts/alembic_safe.py ...`), never plain `alembic`. The wrapper blocks write commands (`upgrade` / `downgrade` / `stamp` / `merge` / `revision --autogenerate`) against non-local hosts unless `I_KNOW_ITS_PROD=1` is set. Prod migrations belong to the `migrate` CI job (`.github/workflows/ci.yml`), not a dev laptop — running `alembic upgrade head` against Neon locally is the exact outage mode of commit 28e5ce5 (schema ahead of deployed code → every `select(Application)` 500s).
 
@@ -42,13 +40,6 @@ Onboarding (`app/agents/onboarding.py`) is the only agent that uses `AsyncPostgr
 - SQLModel does NOT auto-detect ARRAY/JSONB — use explicit `sa_column=Column(ARRAY(...))` / `sa_column=Column(JSONB)`.
 - Register new models in `app/models/__init__.py` so `alembic/env.py` sees them.
 - Neon: `sslmode` / `channel_binding` are stripped from `DATABASE_URL` in `alembic/env.py` and `app/database.py`; `ssl=True` is passed as a `connect_arg` instead.
-
-### Job sourcing
-
-- New listing source: implement `JobSource` ABC (`app/sources/base.py`), register in `app/services/job_sync_service.py`, add an enable flag on `Settings`.
-- **Never** pass `"Remote"` as Adzuna's `where=` param — strip it from `target_locations` first.
-- `JobSearchCache` dedupes Adzuna calls within 24h.
-- `supports_api_apply = True` only when a Greenhouse public board token is extractable (`app/sources/ats_detection.py`); everything else falls back to opening the apply URL.
 
 ### Rate limiting
 
