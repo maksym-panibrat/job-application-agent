@@ -21,6 +21,15 @@ class Application(SQLModel, table=True):
     # Values: none, pending, generating, awaiting_review, ready, failed
     generation_status: str = "none"
     generation_attempts: int = 0
+    # Match queue lifecycle: pending_match → matched / error
+    match_status: str = "pending_match"
+    match_attempts: int = 0
+    match_queued_at: datetime | None = Field(
+        default=None, sa_column=Column(sa.DateTime(timezone=True), nullable=True)
+    )
+    match_claimed_at: datetime | None = Field(
+        default=None, sa_column=Column(sa.DateTime(timezone=True), nullable=True)
+    )
     match_score: float | None = None
     match_rationale: str | None = None
     match_strengths: list[str] = Field(default_factory=list, sa_column=Column(ARRAY(sa.String)))
