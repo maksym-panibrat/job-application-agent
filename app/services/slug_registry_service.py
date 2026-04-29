@@ -141,6 +141,7 @@ async def next_pending(
         )
         .order_by(SlugFetch.queued_at)
         .limit(limit)
+        .with_for_update(skip_locked=True)
     )
     rows = list(result.scalars().all())
     now = datetime.now(UTC)
