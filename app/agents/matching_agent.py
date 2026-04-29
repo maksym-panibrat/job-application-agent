@@ -146,7 +146,7 @@ def build_graph() -> StateGraph:
             if backoff:
                 await asyncio.sleep(backoff)
             async with semaphore:
-                await asyncio.sleep(1.5)  # throttle: ~2 req/s per slot
+                await asyncio.sleep(0.5)  # throttle: ~6 req/s per slot
                 try:
                     result = await safe_ainvoke(
                         llm, [HumanMessage(content=prompt)], config=run_config

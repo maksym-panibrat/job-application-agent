@@ -5,7 +5,7 @@ on:
     - cron: '0 */6 * * *'      # bulk-enqueue stale slugs
     - cron: '*/10 * * * *'     # generation queue (existing)
     - cron: '0 3 * * *'        # daily maintenance (existing)
-    - cron: '*/15 * * * *'     # process sync + match queues (new)
+    - cron: '*/5 * * * *'      # process sync + match queues
   workflow_dispatch:
 
 jobs:
@@ -64,7 +64,7 @@ jobs:
           [ "$code" -lt 400 ] || exit 1
 
   process-sync-queue:
-    if: github.event.schedule == '*/15 * * * *' || github.event_name == 'workflow_dispatch'
+    if: github.event.schedule == '*/5 * * * *' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - name: Trigger sync queue drain
@@ -82,7 +82,7 @@ jobs:
           [ "$code" -lt 400 ] || exit 1
 
   process-match-queue:
-    if: github.event.schedule == '*/15 * * * *' || github.event_name == 'workflow_dispatch'
+    if: github.event.schedule == '*/5 * * * *' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - name: Trigger match queue drain
