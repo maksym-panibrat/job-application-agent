@@ -24,7 +24,7 @@ class Settings(BaseSettings):
     langsmith_tracing: bool = False
     langsmith_api_key: SecretStr | None = None
     langsmith_project: str = "job-application-agent"
-    job_stale_after_days: int = 14
+    job_stale_after_days: int = 21
     log_level: str = "INFO"
     matching_max_concurrency: int = 2
     matching_jobs_per_batch: int = 20
