@@ -77,9 +77,12 @@ async def update_profile(
     settings: Settings = Depends(get_settings),
 ):
     if settings.environment == "production":
+        # 30/hr — abuse cap, not a usability cap. The previous 5/hr was hostile to
+        # real users (typo edits hit it) and reliably broke smoke-prod whenever
+        # >2 deploys landed within an hour (smoke makes 2 PATCHes per run).
         await check_rate_limit(
             key=f"profile_edit:{profile.user_id}",
-            limit=5,
+            limit=30,
             window_seconds=3600,
             session=session,
         )
