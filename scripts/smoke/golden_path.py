@@ -847,6 +847,18 @@ async def step10_cleanup(
     if verbose:
         _verbose_log(label, "PATCH", url, r.status_code, body)
 
+    # /api/profile PATCH is rate-limited to 5/hr/user in prod
+    # (app/api/profile.py). Several deploys in <1 hr will trip this on the
+    # idempotent teardown — accept it as soft-pass rather than fail the whole
+    # smoke run. Step 4's round-trip assertion is what guards the real
+    # behaviour; this step only resets state for the next run.
+    if r.status_code == 429:
+        return True, {
+            "step": 10,
+            "teardown": "skipped — rate-limited (5/hr); next smoke run will reset",
+            "soft_pass": True,
+        }
+
     if r.status_code not in (200, 204):
         return False, {
             "step": 10,
