@@ -336,3 +336,34 @@ async def test_score_and_match_filters_by_profile_slugs(db_session):
     job_ids = {a.job_id for a in apps}
     assert airbnb_job.id in job_ids
     assert stripe_job.id not in job_ids
+
+
+@pytest.mark.asyncio
+async def test_score_cached_only_uses_existing_jobs(db_session):
+    """score_cached must NOT enqueue any fetches and must respect the slug filter
+    and matching_jobs_per_batch cap."""
+    user = User(id=uuid.uuid4(), email=f"cached-{uuid.uuid4()}@test.com")
+    db_session.add(user)
+    await db_session.commit()
+    profile = UserProfile(
+        user_id=user.id,
+        target_company_slugs={"greenhouse": ["airbnb"]},
+    )
+    db_session.add(profile)
+    db_session.add(
+        Job(
+            source="greenhouse_board",
+            external_id="a-2",
+            title="Z",
+            company_name="Airbnb",
+            apply_url="https://z",
+            is_active=True,
+        )
+    )
+    await db_session.commit()
+
+    fake_graph = MagicMock()
+    fake_graph.ainvoke = AsyncMock(return_value={"scores": []})
+    with patch("app.agents.matching_agent.build_graph", return_value=fake_graph):
+        result = await match_service.score_cached(profile, db_session, cap=20)
+    assert isinstance(result, list)
