@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import { MatchCard } from '../components/MatchCard'
 import { SyncStatusChip } from '../components/SyncStatusChip'
+import { InvalidSlugsNotice } from '../components/InvalidSlugsNotice'
 import { computeRefetchInterval, POST_SYNC_WINDOW_MS } from './refetchInterval'
 
 function SkeletonCard() {
@@ -55,6 +56,10 @@ export default function Matches() {
             {sync.isPending ? 'Syncing...' : 'Sync jobs'}
           </button>
         </div>
+      </div>
+
+      <div className="mb-4">
+        <InvalidSlugsNotice />
       </div>
 
       {sync.data && (
