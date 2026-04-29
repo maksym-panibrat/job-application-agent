@@ -92,6 +92,33 @@ async def test_sync_profile_returns_202_shape_and_enqueues_stale_slugs(db_sessio
 
 
 @pytest.mark.asyncio
+async def test_sync_profile_prunes_invalid_slugs_from_profile(db_session):
+    """sync_profile removes slugs from profile.target_company_slugs.greenhouse
+    when their SlugFetch row is marked is_invalid=True. The banner that says
+    "we removed [slugs]" was lying — this test pins the new behaviour."""
+    from app.models.slug_fetch import SlugFetch
+    from app.models.user import User
+    from app.services.profile_service import get_or_create_profile
+
+    user = User(id=uuid.uuid4(), email="t@t.com")
+    db_session.add(user)
+    await db_session.commit()
+    profile = await get_or_create_profile(user.id, db_session)
+    profile.target_company_slugs = {"greenhouse": ["airbnb", "deadcorp", "stripe"]}
+    db_session.add(profile)
+    db_session.add(SlugFetch(source="greenhouse_board", slug="deadcorp", is_invalid=True))
+    await db_session.commit()
+    await db_session.refresh(profile)
+
+    result = await job_sync_service.sync_profile(profile, db_session)
+
+    assert result["pruned_slugs"] == ["deadcorp"]
+    assert "deadcorp" not in result["queued_slugs"]
+    await db_session.refresh(profile)
+    assert profile.target_company_slugs["greenhouse"] == ["airbnb", "stripe"]
+
+
+@pytest.mark.asyncio
 async def test_sync_profile_seeds_defaults_when_empty(db_session):
     from app.models.user import User
     from app.services.profile_service import get_or_create_profile
