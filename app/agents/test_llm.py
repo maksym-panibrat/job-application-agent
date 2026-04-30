@@ -12,7 +12,9 @@ _DEFAULT_RESPONSES: dict[str, list[str]] = {
         '{"target_title": "Software Engineer", "location": "Remote"}',
     ],
     "matching": [
-        '{"score": 0.75, "rationale": "Good match", "strengths": ["Python"], "gaps": ["Go"]}',
+        '{"score": 0.75, "summary": "Backend role, Python+FastAPI, remote.", '
+        '"rationale": "Stack fits; no Go", "strengths": ["Python 5+ yrs"], '
+        '"gaps": ["No Go experience"]}',
     ],
     "generation": [
         "Dear Hiring Team,\n\nI bring strong Python and FastAPI experience tailored "

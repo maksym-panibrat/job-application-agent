@@ -3,7 +3,9 @@ Matching agent — LangGraph StateGraph with Send-based fan-out.
 
 Graph: load_context → fan_out (Send) → score_job (×N parallel) → persist_results
 
-Uses Flash for cost efficiency.
+Uses Flash for cost efficiency. Prompt is split into a stable SystemMessage
+(grading rubric + output rules — Gemini implicit cache prefix) and a
+per-call HumanMessage carrying the profile and the job-specific content.
 """
 
 import asyncio
@@ -11,7 +13,7 @@ import operator
 from typing import Annotated
 
 import structlog
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.tools import tool
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langgraph.graph import END, StateGraph
@@ -36,9 +38,10 @@ def truncate_description(desc: str, max_chars: int = MAX_JOB_DESC_CHARS) -> str:
 class ScoreResult(BaseModel):
     application_id: str
     score: float | None  # 0.0 – 1.0; None signals scoring was skipped (retry next sync)
-    rationale: str
-    strengths: list[str]
-    gaps: list[str]
+    summary: str = ""  # ≤12 words; UI display
+    rationale: str  # ≤20 words; audit only
+    strengths: list[str]  # 1-3 JD-met items
+    gaps: list[str]  # 1-3 missing/weak items
 
     @field_validator("strengths", "gaps", mode="before")
     @classmethod
@@ -56,6 +59,8 @@ class JobContext(TypedDict):
     application_id: str
     title: str
     company: str
+    location: str | None
+    workplace_type: str | None
     description: str
 
 
@@ -83,20 +88,35 @@ def get_llm():
     )
 
 
-SCORING_PROMPT = """\
-You are a job application screener. Rate how well this candidate profile matches the job.
+SCORING_SYSTEM_PROMPT = """\
+Score how the candidate profile matches the job (0.0-1.0).
 
-CANDIDATE PROFILE:
+Grading:
+- 0.9-1.0: meets all required + most preferred
+- 0.7-0.89: meets all required, some preferred gaps
+- 0.5-0.69: meets most required, notable gaps
+- 0.3-0.49: meets some required, major gaps
+- 0.0-0.29: fundamental mismatch
+
+Location:
+- JD location is in candidate locations OR (JD remote AND candidate remote): not a gap.
+- Otherwise: hard gap, e.g., "Onsite Seattle, candidate based in CA".
+- Never say "may require clarification" or "depends". Decide.
+
+Output (call record_score):
+- summary: <=12 words. The JOB: level, stack, mode. No prose.
+- strengths: 1-3 JD requirements the candidate meets. <=8 words each. No filler.
+- gaps: 1-3 weak/missing JD requirements. <=8 words each. No filler.
+- rationale: <=20 words. Why this score (audit)."""
+
+
+SCORING_USER_TEMPLATE = """\
+PROFILE:
 {profile_text}
 
-JOB POSTING:
-Title: {title}
-Company: {company}
-Description:
-{description}
-
-Score the match from 0.0 to 1.0 (1.0 = perfect match).
-Call the record_score tool with your assessment."""
+JOB: {title} @ {company}
+Location: {location} · {workplace_type}
+{description}"""
 
 
 def build_graph() -> StateGraph:
@@ -106,6 +126,7 @@ def build_graph() -> StateGraph:
     @tool
     def record_score(
         score: float,
+        summary: str,
         rationale: str,
         strengths: list[str],
         gaps: list[str],
@@ -127,10 +148,12 @@ def build_graph() -> StateGraph:
 
     async def score_job_node(state: SingleJobState) -> dict:
         job = state["job"]
-        prompt = SCORING_PROMPT.format(
+        user_prompt = SCORING_USER_TEMPLATE.format(
             profile_text=state["profile_text"],
             title=job["title"],
             company=job["company"],
+            location=job.get("location") or "unspecified",
+            workplace_type=job.get("workplace_type") or "unspecified",
             description=truncate_description(job["description"]),
         )
         run_config = {
@@ -139,8 +162,8 @@ def build_graph() -> StateGraph:
         }
         # Retry loop: handle transient API rate limit errors with backoff.
         # BudgetExhausted (monthly quota) is NOT retried — it is caught and
-        # converted to score=0.0 so the entire matching run is not aborted.
-        # Falls back to score=0.0 after exhausting retries for transient errors.
+        # converted to score=None so the entire matching run is not aborted.
+        # Falls back to score=None after exhausting retries for transient errors.
         backoffs = [10, 30]
         for attempt, backoff in enumerate([0] + backoffs):
             if backoff:
@@ -149,18 +172,22 @@ def build_graph() -> StateGraph:
                 await asyncio.sleep(0.5)  # throttle: ~6 req/s per slot
                 try:
                     result = await safe_ainvoke(
-                        llm, [HumanMessage(content=prompt)], config=run_config
+                        llm,
+                        [
+                            SystemMessage(content=SCORING_SYSTEM_PROMPT),
+                            HumanMessage(content=user_prompt),
+                        ],
+                        config=run_config,
                     )
                     break
                 except BudgetExhausted:
                     log.warning("match.budget_exhausted_skip", title=job["title"])
-                    # score=None so the Application is re-eligible next sync
-                    # instead of being permanently auto_rejected at 0.0.
                     return {
                         "scores": [
                             ScoreResult(
                                 application_id=job["application_id"],
                                 score=None,
+                                summary="",
                                 rationale="Skipped: LLM quota exhausted",
                                 strengths=[],
                                 gaps=[],
@@ -182,6 +209,7 @@ def build_graph() -> StateGraph:
                                 ScoreResult(
                                     application_id=job["application_id"],
                                     score=None,
+                                    summary="",
                                     rationale="Skipped: API rate limit exceeded after retries",
                                     strengths=[],
                                     gaps=[],
@@ -196,6 +224,7 @@ def build_graph() -> StateGraph:
         score_result = ScoreResult(
             application_id=job["application_id"],
             score=float(args.get("score", 0.0)),
+            summary=args.get("summary", ""),
             rationale=args.get("rationale", ""),
             strengths=args.get("strengths", []),
             gaps=args.get("gaps", []),
