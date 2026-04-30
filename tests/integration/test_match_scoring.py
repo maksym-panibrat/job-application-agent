@@ -497,3 +497,38 @@ async def test_score_cached_skips_jobs_with_fresh_match_claim(db_session):
 
     assert result == []
     fake_graph.ainvoke.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_score_and_match_persists_summary_and_uses_location(db_session):
+    """Scored Application gets match_summary populated and rationale stays for audit."""
+    profile = await _seed_profile(db_session)
+    job = Job(
+        source="greenhouse_board",
+        external_id=str(uuid.uuid4()),
+        title="Senior Backend Engineer",
+        company_name="Test Co",
+        location="Berlin, Germany",
+        workplace_type="hybrid",
+        description_md="<p>5+ yrs Python required.</p>",
+        description_clean="5+ yrs Python required.",
+        apply_url="https://example.com/apply/ms",
+    )
+    db_session.add(job)
+    await db_session.commit()
+    await db_session.refresh(job)
+
+    responses = [
+        '{"score": 0.85, "summary": "Senior backend, Python, hybrid Berlin.", '
+        '"rationale": "Strong stack fit", "strengths": ["5+ yrs Python"], '
+        '"gaps": ["Hybrid Berlin, candidate based in CA"]}'
+    ]
+    with patch_llm("app.agents.matching_agent", responses):
+        await score_and_match(profile, db_session, jobs=[job])
+
+    result = await db_session.execute(select(Application).where(Application.job_id == job.id))
+    app = result.scalar_one()
+    assert app.match_summary == "Senior backend, Python, hybrid Berlin."
+    assert app.match_rationale == "Strong stack fit"
+    assert app.match_score == 0.85
+    assert "Hybrid Berlin" in (app.match_gaps or [""])[0]

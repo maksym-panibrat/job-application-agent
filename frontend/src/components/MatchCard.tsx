@@ -78,8 +78,8 @@ export function MatchCard({ app }: { app: Application }) {
         </div>
       </div>
 
-      {app.match_rationale && (
-        <p className="mt-3 text-sm text-gray-600 line-clamp-2">{app.match_rationale}</p>
+      {app.match_summary && (
+        <p className="mt-3 text-sm text-gray-600">{app.match_summary}</p>
       )}
 
       {(app.match_strengths?.length > 0 || app.match_gaps?.length > 0) && (

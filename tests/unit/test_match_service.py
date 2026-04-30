@@ -260,3 +260,59 @@ async def test_per_job_logging_emitted():
     assert ev["score"] == 0.75
     assert ev["passed"] is True
     assert "rationale" in ev
+
+
+# ---------------------------------------------------------------------------
+# format_profile_text — Locations line is unconditional
+# ---------------------------------------------------------------------------
+
+from app.services.match_service import format_profile_text  # noqa: E402
+
+
+def _profile(target_locations=None, remote_ok=False, full_name=None, seniority=None):
+    p = MagicMock()
+    p.target_locations = target_locations or []
+    p.remote_ok = remote_ok
+    p.full_name = full_name
+    p.seniority = seniority
+    p.target_roles = []
+    p.base_resume_md = None
+    return p
+
+
+def test_profile_text_includes_locations_with_cities_and_remote():
+    p = _profile(target_locations=["San Francisco", "San Jose"], remote_ok=True)
+    text = format_profile_text(p, skills=[], experiences=[])
+    assert "Target locations: San Francisco, San Jose" in text
+    assert "Open to remote: yes" in text
+
+
+def test_profile_text_includes_locations_with_cities_no_remote():
+    p = _profile(target_locations=["New York"], remote_ok=False)
+    text = format_profile_text(p, skills=[], experiences=[])
+    assert "Target locations: New York" in text
+    assert "Open to remote: no" in text
+
+
+def test_profile_text_remote_only_renders_explicit_none():
+    p = _profile(target_locations=[], remote_ok=True)
+    text = format_profile_text(p, skills=[], experiences=[])
+    assert "Target locations: (none)" in text
+    assert "Open to remote: yes" in text
+
+
+def test_profile_text_no_remote_no_locations_still_renders():
+    """Profile w/ neither cities nor remote still emits the line; LLM never infers."""
+    p = _profile(target_locations=[], remote_ok=False)
+    text = format_profile_text(p, skills=[], experiences=[])
+    assert "Target locations: (none)" in text
+    assert "Open to remote: no" in text
+
+
+def test_profile_text_handles_none_target_locations():
+    """Defensive guard: target_locations=None shouldn't crash; treated as empty list."""
+    p = _profile(target_locations=[], remote_ok=False)
+    p.target_locations = None  # bypass _profile()'s `or []`
+    text = format_profile_text(p, skills=[], experiences=[])
+    assert "Target locations: (none)" in text
+    assert "Open to remote: no" in text

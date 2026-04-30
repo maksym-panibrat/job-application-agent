@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
 from app.models.job import Job
+from app.services.html_cleaner import clean_html_to_markdown
 from app.sources.base import JobData
 
 
@@ -13,6 +14,7 @@ async def upsert_job(job_data: JobData, source: str, session: AsyncSession) -> t
     """
     Insert or update a job. Returns (job, created).
     On conflict (source + external_id): update title, description, is_active, fetched_at.
+    description_clean is recomputed from description_md on every write.
     """
     result = await session.execute(
         select(Job).where(
@@ -22,10 +24,13 @@ async def upsert_job(job_data: JobData, source: str, session: AsyncSession) -> t
     )
     existing = result.scalar_one_or_none()
 
+    cleaned = clean_html_to_markdown(job_data.description_md)
+
     if existing:
         existing.title = job_data.title
         existing.company_name = job_data.company_name
         existing.description_md = job_data.description_md
+        existing.description_clean = cleaned
         existing.salary = job_data.salary
         existing.contract_type = job_data.contract_type
         existing.apply_url = job_data.apply_url
@@ -46,6 +51,7 @@ async def upsert_job(job_data: JobData, source: str, session: AsyncSession) -> t
         location=job_data.location,
         workplace_type=job_data.workplace_type,
         description_md=job_data.description_md,
+        description_clean=cleaned,
         salary=job_data.salary,
         contract_type=job_data.contract_type,
         apply_url=job_data.apply_url,

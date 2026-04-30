@@ -24,7 +24,11 @@ def format_profile_text(
     skills: list[Skill],
     experiences: list[WorkExperience],
 ) -> str:
-    """Render profile as markdown text for LLM consumption."""
+    """Render profile as markdown text for LLM consumption.
+
+    Always emits a 'Locations:' line so the matching LLM never has to
+    infer the candidate's location stance from the absence of a field.
+    """
     lines = []
     if profile.full_name:
         lines.append(f"# {profile.full_name}")
@@ -32,8 +36,12 @@ def format_profile_text(
         lines.append(f"Seniority: {profile.seniority}")
     if profile.target_roles:
         lines.append(f"Target roles: {', '.join(profile.target_roles)}")
-    if profile.remote_ok:
-        lines.append("Open to remote: yes")
+
+    locs = list(profile.target_locations or [])
+    locs_str = ", ".join(locs) if locs else "(none)"
+    remote_str = "yes" if profile.remote_ok else "no"
+    lines.append(f"Target locations: {locs_str}")
+    lines.append(f"Open to remote: {remote_str}")
 
     if skills:
         lines.append("\n## Skills")
@@ -156,7 +164,9 @@ async def score_and_match(
                     "application_id": str(app.id),
                     "title": job.title,
                     "company": job.company_name,
-                    "description": job.description_md or "",
+                    "location": job.location,
+                    "workplace_type": job.workplace_type,
+                    "description": job.description_clean or job.description_md or "",
                 }
             )
             job_map[str(app.id)] = job
@@ -200,6 +210,7 @@ async def score_and_match(
 
         # Always persist scores for auditability
         app.match_score = score_result.score
+        app.match_summary = score_result.summary
         app.match_rationale = score_result.rationale
         app.match_strengths = score_result.strengths
         app.match_gaps = score_result.gaps
@@ -222,6 +233,7 @@ async def score_and_match(
             application_id=score_result.application_id,
             score=round(score_result.score, 3),
             passed=passed,
+            summary=score_result.summary[:200],
             rationale=score_result.rationale[:200],
         )
 

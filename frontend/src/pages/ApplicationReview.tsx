@@ -221,7 +221,7 @@ export default function ApplicationReview() {
         {app.match_score != null && (
           <div className="mt-4 p-3 bg-gray-50 rounded-md text-sm text-gray-700">
             <span className="font-medium">{Math.round(app.match_score * 100)}% match: </span>
-            {app.match_rationale}
+            {app.match_summary}
           </div>
         )}
       </div>

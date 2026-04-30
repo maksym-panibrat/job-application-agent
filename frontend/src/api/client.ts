@@ -59,6 +59,7 @@ export interface Application {
   status: string
   generation_status: string
   match_score: number | null
+  match_summary: string | null
   match_rationale: string | null
   match_strengths: string[]
   match_gaps: string[]

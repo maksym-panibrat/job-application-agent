@@ -13,7 +13,8 @@ function makeApp(overrides: Partial<Application> = {}): Application {
     status: 'pending_review',
     generation_status: 'none',
     match_score: 0.85,
-    match_rationale: 'Strong Python background matches the role requirements.',
+    match_summary: 'Backend role, Python+FastAPI, remote.',
+    match_rationale: 'Strong stack fit',
     match_strengths: ['Python', 'FastAPI'],
     match_gaps: ['Go experience'],
     created_at: new Date().toISOString(),
@@ -57,6 +58,12 @@ describe('MatchCard', () => {
     renderCard(makeApp())
     expect(screen.getByText('Python, FastAPI')).toBeInTheDocument()
     expect(screen.getByText(/Go experience/)).toBeInTheDocument()
+  })
+
+  it('renders the match summary and not the rationale', () => {
+    renderCard(makeApp())
+    expect(screen.getByText('Backend role, Python+FastAPI, remote.')).toBeInTheDocument()
+    expect(screen.queryByText('Strong stack fit')).not.toBeInTheDocument()
   })
 
   it('review link points to /matches/app-1', () => {

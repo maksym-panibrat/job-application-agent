@@ -31,7 +31,8 @@ class Application(SQLModel, table=True):
         default=None, sa_column=Column(sa.DateTime(timezone=True), nullable=True)
     )
     match_score: float | None = None
-    match_rationale: str | None = None
+    match_summary: str | None = None  # 1-line job summary (UI). Single-writer: matching agent.
+    match_rationale: str | None = None  # short audit-only rationale (not surfaced in UI).
     match_strengths: list[str] = Field(default_factory=list, sa_column=Column(ARRAY(sa.String)))
     match_gaps: list[str] = Field(default_factory=list, sa_column=Column(ARRAY(sa.String)))
     applied_at: datetime | None = Field(
