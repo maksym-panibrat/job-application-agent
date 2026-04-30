@@ -1654,7 +1654,7 @@ If everything passes, the branch is ready for PR.
    - `rationale` field exceeding ~30 words (cap is 20; small overage is fine, large is not)
    - Spike in `match.rate_limit_skip` (would indicate the new prompt's input bloated despite design)
 
-3. Follow-up PR (separate, low priority): rename `Job.description_md` → `Job.description_html`. Pure refactor — column rename + update all references. Not bundled in this PR to keep the migration scope minimal.
+3. Follow-up PR (separate, low priority): rename `Job.description_md` → `Job.description_html`. Pure refactor — column rename + update all references. Not bundled in this PR to keep the migration scope minimal. **Bundle with this fix:** delete `app/sources/greenhouse_board.py::_html_to_markdown` and pass raw HTML through to `description_md`. Today, Greenhouse rows go HTML → markdownify (in source) → BeautifulSoup+markdownify (in `clean_html_to_markdown`), producing escaped-markdown noise (`\*\*Python\*\*`, setext headings preserved) AND bypassing the BS decompose defense against `<script>` inner-text leaks. The matching agent (Tasks 7/8) tolerates this — it can still parse the content — but the cleaner can't deliver its full contract until the upstream pre-conversion is removed. Frontend `ApplicationReview.tsx`'s `<pre>{job.description_md}</pre>` block must switch to `description_clean` at the same time, or the user will see raw HTML tags.
 
 ---
 
