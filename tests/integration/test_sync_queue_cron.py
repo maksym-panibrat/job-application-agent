@@ -90,6 +90,26 @@ async def test_run_job_sync_bulk_enqueues_for_active_profiles(db_session):
 
 
 @pytest.mark.asyncio
+async def test_run_job_sync_prunes_invalid_slugs_for_active_profiles(db_session):
+    """The 6h /internal/cron/sync now also prunes is_invalid=True slugs from
+    each active profile (closes the gap where prune only ran on user-initiated
+    sync, never on the cron sweep)."""
+    from app.models.slug_fetch import SlugFetch
+    from app.scheduler.tasks import run_job_sync
+
+    profile = await _seed_profile(db_session, "airbnb", "deadcorp", "stripe")
+    db_session.add(SlugFetch(source="greenhouse_board", slug="deadcorp", is_invalid=True))
+    await db_session.commit()
+
+    summary = await run_job_sync()
+
+    assert summary["slugs_pruned"] == 1
+    db_session.expire_all()
+    await db_session.refresh(profile)
+    assert profile.target_company_slugs["greenhouse"] == ["airbnb", "stripe"]
+
+
+@pytest.mark.asyncio
 async def test_run_sync_queue_marks_invalid_after_2_404s(db_session):
     profile = await _seed_profile(db_session, "openai")
     await slug_registry_service.enqueue_stale(profile, db_session, ttl_hours=6)
