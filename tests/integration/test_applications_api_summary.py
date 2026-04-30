@@ -5,7 +5,6 @@ import uuid
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from app.main import app as fastapi_app
 from app.models.application import Application
 from app.models.job import Job
 
@@ -13,6 +12,12 @@ from app.models.job import Job
 @pytest.mark.asyncio
 async def test_list_endpoint_includes_match_summary(db_session, auth_headers, seeded_user):
     """List endpoint returns match_summary alongside score/strengths/gaps."""
+    # Deferred import: app/main.py:143 calls get_settings() at import time which
+    # requires DATABASE_URL. The patch_settings autouse fixture sets it during
+    # test setup, but module-level imports run during pytest collection — before
+    # any fixture. Matches the pattern in test_apply_lifecycle.py:20 et al.
+    from app.main import app as fastapi_app
+
     _user, profile = seeded_user
 
     job = Job(
