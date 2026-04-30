@@ -235,7 +235,7 @@ async def run_sync_queue(*, max_slugs: int = 64, deadline_seconds: int = 240) ->
     return {**counts, "remaining": remaining}
 
 
-async def run_match_queue(*, batch_size: int = 30, deadline_seconds: int = 240) -> dict:
+async def run_match_queue(*, batch_size: int = 100, deadline_seconds: int = 240) -> dict:
     """Drain pending_match applications. One LangGraph batch per profile per tick
     (the agent fans out internally). Per-tick deadline keeps us under Cloud Run's
     300s wall."""
