@@ -138,3 +138,70 @@ async def test_sync_profile_seeds_defaults_when_empty(db_session):
     assert len(result["queued_slugs"]) == 5
     await db_session.refresh(profile)
     assert len(profile.target_company_slugs["greenhouse"]) == 5
+
+
+@pytest.mark.asyncio
+async def test_upsert_job_populates_description_clean(db_session):
+    """upsert_job should compute description_clean from raw HTML description_md."""
+    raw = "<h2>About</h2><ul><li><strong>Python</strong></li></ul>"
+    data = JobData(
+        external_id="ext-clean-1",
+        title="Test Engineer",
+        company_name="Test Co",
+        location="Remote",
+        workplace_type="remote",
+        description_md=raw,
+        salary=None,
+        contract_type=None,
+        apply_url="https://example.com/apply/1",
+        posted_at=None,
+    )
+    job, created = await upsert_job(data, "greenhouse_board", db_session)
+    assert created is True
+    assert job.description_clean is not None
+    assert "## About" in job.description_clean
+    assert "**Python**" in job.description_clean
+    assert "<h2>" not in job.description_clean
+
+
+@pytest.mark.asyncio
+async def test_upsert_job_recomputes_description_clean_on_update(db_session):
+    """Re-upserting an existing job recomputes description_clean."""
+    data = JobData(
+        external_id="ext-clean-2",
+        title="Test Engineer",
+        company_name="Test Co",
+        location=None,
+        workplace_type=None,
+        description_md="<p>v1</p>",
+        salary=None,
+        contract_type=None,
+        apply_url="https://example.com/apply/2",
+        posted_at=None,
+    )
+    await upsert_job(data, "greenhouse_board", db_session)
+
+    data.description_md = "<p>v2 updated</p>"
+    job, created = await upsert_job(data, "greenhouse_board", db_session)
+    assert created is False
+    assert "v2 updated" in (job.description_clean or "")
+    assert "v1" not in (job.description_clean or "")
+
+
+@pytest.mark.asyncio
+async def test_upsert_job_handles_none_description(db_session):
+    """A job with no description should store description_clean='' (or None — both safe)."""
+    data = JobData(
+        external_id="ext-clean-3",
+        title="Title only",
+        company_name="Test Co",
+        location=None,
+        workplace_type=None,
+        description_md=None,
+        salary=None,
+        contract_type=None,
+        apply_url="https://example.com/apply/3",
+        posted_at=None,
+    )
+    job, _ = await upsert_job(data, "greenhouse_board", db_session)
+    assert job.description_clean in ("", None)
