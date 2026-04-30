@@ -16,27 +16,32 @@ log = structlog.get_logger()
 
 
 async def run_job_sync() -> dict:
-    """Bulk-enqueue stale slugs for every active profile. The actual fetch
-    happens in run_sync_queue; this is just the scheduled "wake up and sweep" pass."""
+    """Bulk-sync every active profile via sync_profile (same path the user
+    triggers from the UI). The actual fetch happens in run_sync_queue; this
+    is the scheduled "wake up, prune dead slugs, enqueue stale ones, score
+    cached jobs" sweep."""
     from app.database import get_session_factory
     from app.models.user_profile import UserProfile
-    from app.services import slug_registry_service
+    from app.services.job_sync_service import sync_profile
 
     factory = get_session_factory()
     profiles_enqueued = 0
     slugs_enqueued = 0
+    slugs_pruned = 0
     async with factory() as session:
         result = await session.execute(
             select(UserProfile).where(UserProfile.search_active.is_(True))
         )
         for profile in result.scalars().all():
-            queued = await slug_registry_service.enqueue_stale(profile, session, ttl_hours=6)
-            if queued:
+            summary = await sync_profile(profile, session)
+            if summary["queued_slugs"]:
                 profiles_enqueued += 1
-                slugs_enqueued += len(queued)
+                slugs_enqueued += len(summary["queued_slugs"])
+            slugs_pruned += len(summary.get("pruned_slugs", []))
     return {
         "profiles_enqueued": profiles_enqueued,
         "slugs_enqueued": slugs_enqueued,
+        "slugs_pruned": slugs_pruned,
     }
 
 
