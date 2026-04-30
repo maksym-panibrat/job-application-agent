@@ -24,7 +24,11 @@ def format_profile_text(
     skills: list[Skill],
     experiences: list[WorkExperience],
 ) -> str:
-    """Render profile as markdown text for LLM consumption."""
+    """Render profile as markdown text for LLM consumption.
+
+    Always emits a 'Locations:' line so the matching LLM never has to
+    infer the candidate's location stance from the absence of a field.
+    """
     lines = []
     if profile.full_name:
         lines.append(f"# {profile.full_name}")
@@ -32,8 +36,11 @@ def format_profile_text(
         lines.append(f"Seniority: {profile.seniority}")
     if profile.target_roles:
         lines.append(f"Target roles: {', '.join(profile.target_roles)}")
-    if profile.remote_ok:
-        lines.append("Open to remote: yes")
+
+    locs = list(profile.target_locations or [])
+    locs_str = ", ".join(locs) if locs else "(none)"
+    remote_str = "yes" if profile.remote_ok else "no"
+    lines.append(f"Locations: {locs_str}; remote: {remote_str}")
 
     if skills:
         lines.append("\n## Skills")
