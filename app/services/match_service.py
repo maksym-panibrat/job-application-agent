@@ -164,7 +164,9 @@ async def score_and_match(
                     "application_id": str(app.id),
                     "title": job.title,
                     "company": job.company_name,
-                    "description": job.description_md or "",
+                    "location": job.location,
+                    "workplace_type": job.workplace_type,
+                    "description": job.description_clean or job.description_md or "",
                 }
             )
             job_map[str(app.id)] = job
@@ -208,6 +210,7 @@ async def score_and_match(
 
         # Always persist scores for auditability
         app.match_score = score_result.score
+        app.match_summary = score_result.summary
         app.match_rationale = score_result.rationale
         app.match_strengths = score_result.strengths
         app.match_gaps = score_result.gaps
