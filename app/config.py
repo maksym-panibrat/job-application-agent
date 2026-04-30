@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     langsmith_project: str = "job-application-agent"
     job_stale_after_days: int = 21
     log_level: str = "INFO"
-    matching_max_concurrency: int = 2
+    matching_max_concurrency: int = 8
     matching_jobs_per_batch: int = 20
 
     cors_allowed_origins: list[str] = ["http://localhost:5173", "http://localhost:3000"]
