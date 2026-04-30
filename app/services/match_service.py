@@ -233,6 +233,7 @@ async def score_and_match(
             application_id=score_result.application_id,
             score=round(score_result.score, 3),
             passed=passed,
+            summary=score_result.summary[:200],
             rationale=score_result.rationale[:200],
         )
 
