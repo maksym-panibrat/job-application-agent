@@ -1,10 +1,10 @@
 """Backfill script populates description_clean for rows where it's NULL."""
 
 import pytest
-from scripts.backfill_job_description_clean import run_backfill
 from sqlmodel import select
 
 from app.models.job import Job
+from scripts.backfill_job_description_clean import run_backfill
 
 
 @pytest.mark.asyncio
@@ -52,4 +52,4 @@ async def test_backfill_populates_null_rows(db_session):
     assert by_id["bf-2"].description_clean == "already-set"  # untouched
     # bf-3: description_md is NULL — backfill writes '' so NOT NULL anymore
     assert by_id["bf-3"].description_clean == ""
-    assert processed >= 2
+    assert processed == 2  # bf-1 (HTML→md) + bf-3 (NULL→""); bf-2 already-set is filtered out

@@ -10,6 +10,7 @@ import argparse
 import asyncio
 
 import structlog
+from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
@@ -21,7 +22,15 @@ log = structlog.get_logger()
 
 
 async def run_backfill(batch_size: int, session: AsyncSession) -> tuple[int, int]:
-    """Process all NULL description_clean rows in batches. Returns (processed, skipped)."""
+    """Process all NULL description_clean rows in batches. Returns (processed, skipped).
+
+    `skipped` is always 0 — kept in the signature for backward compatibility.
+    The cleaner is deterministic and can't raise in practice (BS html.parser is
+    lenient, markdownify is lenient, regex runs on a string), so fail-fast is
+    correct for this one-off script. Concurrent writes from the live sync
+    worker are handled by a guarded UPDATE: if `upsert_job` set the column
+    between our SELECT and UPDATE, the WHERE clause skips the row silently.
+    """
     processed = 0
     skipped = 0
     while True:
@@ -32,13 +41,13 @@ async def run_backfill(batch_size: int, session: AsyncSession) -> tuple[int, int
         if not rows:
             break
         for job in rows:
-            try:
-                job.description_clean = clean_html_to_markdown(job.description_md)
-                session.add(job)
-                processed += 1
-            except Exception as exc:
-                await log.aerror("backfill.row_failed", external_id=job.external_id, error=str(exc))
-                skipped += 1
+            cleaned = clean_html_to_markdown(job.description_md)
+            await session.execute(
+                update(Job)
+                .where(Job.id == job.id, Job.description_clean.is_(None))
+                .values(description_clean=cleaned)
+            )
+            processed += 1
         await session.commit()
         await log.ainfo("backfill.batch", processed=processed, skipped=skipped)
     return processed, skipped
