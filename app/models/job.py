@@ -16,6 +16,7 @@ class Job(SQLModel, table=True):
     location: str | None = None
     workplace_type: str | None = None  # remote, hybrid, onsite
     description_md: str | None = None
+    description_clean: str | None = None  # markdown, populated at ingestion by html_cleaner
     salary: str | None = None
     contract_type: str | None = None
     apply_url: str
