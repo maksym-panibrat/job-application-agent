@@ -7,6 +7,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 import structlog
+from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
@@ -17,6 +18,39 @@ from app.models.user_profile import Skill, UserProfile, WorkExperience
 from app.services import profile_service
 
 log = structlog.get_logger()
+
+
+async def mark_for_rescore(profile_id: uuid.UUID, session: AsyncSession) -> int:
+    """Flip eligible scored applications back to pending_match so the cron re-scores
+    them with the current matching prompt. Returns the number of rows affected.
+
+    Eligibility: status IN ('pending_review', 'auto_rejected') AND match_score IS NOT NULL.
+    Leaves dismissed/applied (user decisions) and already-pending_match rows untouched.
+    """
+    now = datetime.now(UTC)
+    result = await session.execute(
+        update(Application)
+        .where(
+            Application.profile_id == profile_id,
+            Application.status.in_(("pending_review", "auto_rejected")),
+            Application.match_score.isnot(None),
+        )
+        .values(
+            match_status="pending_match",
+            match_queued_at=now,
+            match_claimed_at=None,
+            match_attempts=0,
+            match_score=None,
+            match_summary=None,
+            match_rationale=None,
+            match_strengths=[],
+            match_gaps=[],
+            status="pending_review",
+            updated_at=now,
+        )
+    )
+    await session.commit()
+    return result.rowcount or 0
 
 
 def format_profile_text(

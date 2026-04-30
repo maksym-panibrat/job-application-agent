@@ -11,7 +11,7 @@ from app.api.deps import get_current_profile
 from app.config import Settings, get_settings
 from app.database import get_db
 from app.models.user_profile import UserProfile
-from app.services import profile_service
+from app.services import match_service, profile_service
 from app.services.rate_limit_service import check_daily_quota, check_rate_limit
 
 log = structlog.get_logger()
@@ -155,6 +155,32 @@ async def upload_resume(
         "extraction_status": extraction_status,
         "message": "Resume uploaded successfully.",
     }
+
+
+@router.post("/rematch")
+async def rematch_profile(
+    profile: UserProfile = Depends(get_current_profile),
+    session: AsyncSession = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+):
+    """Re-queue all eligible scored applications for re-scoring with the current
+    matching prompt. Eligible = status IN (pending_review, auto_rejected) AND
+    match_score IS NOT NULL. Dismissed/applied rows are user decisions and stay.
+
+    Use after a prompt iteration or scoring-rubric change. The match-queue cron
+    drains pending_match rows on its next tick (~5 min)."""
+    if settings.environment == "production":
+        # 6/hr — re-scoring N applications consumes N LLM calls and is the
+        # most expensive profile-scoped action. Lower than profile_edit (30/hr).
+        await check_rate_limit(
+            key=f"profile_rematch:{profile.user_id}",
+            limit=6,
+            window_seconds=3600,
+            session=session,
+        )
+    reset = await match_service.mark_for_rescore(profile.id, session)
+    await log.ainfo("profile.rematch", profile_id=str(profile.id), reset=reset)
+    return {"reset": reset}
 
 
 @router.patch("/search")
