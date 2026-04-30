@@ -40,7 +40,8 @@ def format_profile_text(
     locs = list(profile.target_locations or [])
     locs_str = ", ".join(locs) if locs else "(none)"
     remote_str = "yes" if profile.remote_ok else "no"
-    lines.append(f"Locations: {locs_str}; remote: {remote_str}")
+    lines.append(f"Target locations: {locs_str}")
+    lines.append(f"Open to remote: {remote_str}")
 
     if skills:
         lines.append("\n## Skills")
