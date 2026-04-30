@@ -117,6 +117,7 @@ async def seed_test_data(
                 status="pending_review",
                 generation_status="ready",
                 match_score=0.87,
+                match_summary="Senior backend role, Python+FastAPI, remote.",
                 match_rationale="Strong Python and backend experience aligns well.",
                 match_strengths=["Python expertise", "FastAPI", "PostgreSQL"],
                 match_gaps=[],
