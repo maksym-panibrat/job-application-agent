@@ -90,6 +90,51 @@ async def test_run_job_sync_bulk_enqueues_for_active_profiles(db_session):
 
 
 @pytest.mark.asyncio
+async def test_run_job_sync_does_not_synchronously_score_cached_jobs(db_session):
+    """The 6h /internal/cron/sync must NOT call score_cached. Bulk cron has no UI
+    to give "instant feedback" to and runs against N profiles inside Cloud Run's
+    300s wall — synchronous LLM scoring blew that budget (HTTP 504, issue #70).
+    score_and_match belongs in run_match_queue (every 5min, deadline-bounded)."""
+    from app.scheduler.tasks import run_job_sync
+
+    profile = await _seed_profile(db_session, "airbnb")
+    profile_id = profile.id
+    job = Job(
+        source="greenhouse_board",
+        external_id="9001",
+        title="Backend Engineer",
+        company_name=slug_to_company_name("airbnb"),
+        apply_url="https://boards.greenhouse.io/airbnb/jobs/9001",
+        description_clean="job",
+    )
+    db_session.add(job)
+    await db_session.commit()
+
+    summary = await run_job_sync()
+
+    # Cron pass should enqueue the slug but not score the cached job.
+    assert summary["slugs_enqueued"] == 1
+    # `run_job_sync` commits via a separate session; drop in-memory cache so we
+    # re-read the worker-committed state.
+    db_session.expire_all()
+    scores = (
+        (
+            await db_session.execute(
+                sa.select(Application.match_score).where(Application.profile_id == profile_id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    # Either zero Application rows (score_cached never ran, so never created one),
+    # or rows exist with match_score=None. Both prove no LLM scoring happened.
+    assert all(s is None for s in scores), (
+        f"run_job_sync invoked synchronous LLM scoring (match_scores={scores!r}); "
+        "this is the regression that caused the recurring 504 in /internal/cron/sync."
+    )
+
+
+@pytest.mark.asyncio
 async def test_run_job_sync_prunes_invalid_slugs_for_active_profiles(db_session):
     """The 6h /internal/cron/sync now also prunes is_invalid=True slugs from
     each active profile (closes the gap where prune only ran on user-initiated
