@@ -57,7 +57,20 @@ async def _prune_invalid_slugs(profile: UserProfile, session: AsyncSession) -> l
     return sorted(invalid)
 
 
-async def sync_profile(profile: UserProfile, session: AsyncSession) -> dict:
+async def sync_profile(
+    profile: UserProfile,
+    session: AsyncSession,
+    *,
+    score_cached_jobs: bool = True,
+) -> dict:
+    # `score_cached_jobs=True` is the user-triggered "instant feedback" path
+    # (POST /api/jobs/sync) — score up to N already-cached jobs synchronously
+    # so the UI has something to show before run_match_queue ticks.
+    # The 6h bulk cron must pass `False`: it has no UI to feed back to and
+    # runs across N profiles inside Cloud Run's 300s wall — synchronous LLM
+    # scoring there blew that budget (HTTP 504, issue #70 / regression in
+    # commit 191df6a). Matching for cron-discovered jobs is owned by
+    # run_match_queue (every 5min, deadline-bounded).
     settings = get_settings()
     seeded = seed_defaults_if_empty(profile)
     if seeded:
@@ -69,9 +82,12 @@ async def sync_profile(profile: UserProfile, session: AsyncSession) -> dict:
         await session.commit()
 
     queued = await slug_registry_service.enqueue_stale(profile, session, ttl_hours=6)
-    matched = await match_service.score_cached(
-        profile, session, cap=settings.matching_jobs_per_batch
-    )
+    if score_cached_jobs:
+        matched = await match_service.score_cached(
+            profile, session, cap=settings.matching_jobs_per_batch
+        )
+    else:
+        matched = []
 
     summary = {
         "queued_slugs": queued,

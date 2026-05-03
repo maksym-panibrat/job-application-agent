@@ -33,7 +33,11 @@ async def run_job_sync() -> dict:
             select(UserProfile).where(UserProfile.search_active.is_(True))
         )
         for profile in result.scalars().all():
-            summary = await sync_profile(profile, session)
+            # score_cached_jobs=False: bulk cron must not synchronously LLM-score
+            # — Cloud Run's 300s wall vs. multi-profile fan-out caused the
+            # recurring HTTP 504 in /internal/cron/sync (issue #70). Matching
+            # is owned by run_match_queue.
+            summary = await sync_profile(profile, session, score_cached_jobs=False)
             if summary["queued_slugs"]:
                 profiles_enqueued += 1
                 slugs_enqueued += len(summary["queued_slugs"])
@@ -235,10 +239,23 @@ async def run_sync_queue(*, max_slugs: int = 64, deadline_seconds: int = 240) ->
     return {**counts, "remaining": remaining}
 
 
-async def run_match_queue(*, batch_size: int = 100, deadline_seconds: int = 240) -> dict:
+async def run_match_queue(
+    *,
+    batch_size: int = 100,
+    deadline_seconds: int = 240,
+    max_per_profile: int = 30,
+) -> dict:
     """Drain pending_match applications. One LangGraph batch per profile per tick
     (the agent fans out internally). Per-tick deadline keeps us under Cloud Run's
-    300s wall."""
+    300s wall.
+
+    `max_per_profile` caps how many jobs a single profile can own in one
+    score_and_match call. Without it, batch_size=100 concentrated on one
+    profile + slow Gemini latency can exceed the 240s deadline before any
+    inter-profile loop check runs (one-off HTTP 504 in
+    /internal/cron/process-match-queue, 2026-05-02). Apps over the cap stay
+    pending_match with claimed_at set; the 300s lease in next_batch makes
+    them re-eligible the tick after."""
     import time
 
     from app.database import get_session_factory
@@ -250,12 +267,12 @@ async def run_match_queue(*, batch_size: int = 100, deadline_seconds: int = 240)
 
     factory = get_session_factory()
     deadline = time.monotonic() + deadline_seconds
-    succeeded = failed = 0
+    succeeded = failed = deferred = 0
 
     async with factory() as session:
         batch = await match_queue_service.next_batch(session, limit=batch_size)
     if not batch:
-        return {"attempted": 0, "succeeded": 0, "failed": 0}
+        return {"attempted": 0, "succeeded": 0, "failed": 0, "deferred": 0}
     attempted = len(batch)
 
     # Group by profile_id; one LangGraph invocation per profile
@@ -265,13 +282,23 @@ async def run_match_queue(*, batch_size: int = 100, deadline_seconds: int = 240)
 
     for profile_id, apps in by_profile.items():
         if time.monotonic() > deadline:
-            break
+            deferred += len(apps)
+            continue
+        # Slice per-profile to bound one score_and_match call's wall time.
+        # Apps beyond the cap remain claimed (lease set by next_batch); they
+        # become re-eligible after the 300s lease expires (~next tick).
+        apps_this_tick = apps[:max_per_profile]
+        deferred += len(apps) - len(apps_this_tick)
         async with factory() as session:
             profile = (
                 await session.execute(select(UserProfile).where(UserProfile.id == profile_id))
             ).scalar_one()
             jobs = list(
-                (await session.execute(select(Job).where(Job.id.in_([a.job_id for a in apps]))))
+                (
+                    await session.execute(
+                        select(Job).where(Job.id.in_([a.job_id for a in apps_this_tick]))
+                    )
+                )
                 .scalars()
                 .all()
             )
@@ -280,12 +307,12 @@ async def run_match_queue(*, batch_size: int = 100, deadline_seconds: int = 240)
                 await score_and_match(profile, session, jobs=jobs)
             except Exception as exc:
                 await log.aexception("match_queue.batch_error", error=str(exc))
-                for a in apps:
+                for a in apps_this_tick:
                     await match_queue_service.mark_attempt_failed(a.id, session)
-                failed += len(apps)
+                failed += len(apps_this_tick)
                 continue
 
-            for a in apps:
+            for a in apps_this_tick:
                 # If it has a score now, mark done. If still no score (rate-limited),
                 # increment attempts; will retry next tick.
                 refreshed = (
@@ -298,4 +325,9 @@ async def run_match_queue(*, batch_size: int = 100, deadline_seconds: int = 240)
                     await match_queue_service.mark_attempt_failed(refreshed.id, session)
                     failed += 1
 
-    return {"attempted": attempted, "succeeded": succeeded, "failed": failed}
+    return {
+        "attempted": attempted,
+        "succeeded": succeeded,
+        "failed": failed,
+        "deferred": deferred,
+    }
