@@ -147,6 +147,79 @@ async def test_run_match_queue_releases_leases_without_failing_attempts_on_budge
 
 
 @pytest.mark.asyncio
+async def test_run_match_queue_uses_settings_for_default_caps(db_session, monkeypatch):
+    """Defaults for max_per_profile and deadline_seconds come from Settings
+    (#77) — env vars `MATCHING_MAX_PER_PROFILE_PER_TICK` and
+    `MATCHING_TICK_DEADLINE_SECONDS` tune behaviour without a redeploy."""
+    import app.config as cfg
+
+    # Reset the settings singleton so the monkeypatched env vars take effect
+    monkeypatch.setattr(cfg, "_settings", None)
+    monkeypatch.setenv("MATCHING_MAX_PER_PROFILE_PER_TICK", "2")
+
+    profile = await _seed_profile(db_session, "airbnb")
+    profile_id = profile.id
+
+    jobs = []
+    for i in range(5):
+        job = Job(
+            source="greenhouse_board",
+            external_id=f"settings-{i}",
+            title=f"Engineer {i}",
+            company_name=slug_to_company_name("airbnb"),
+            apply_url=f"https://x/{i}",
+            is_active=True,
+        )
+        db_session.add(job)
+        jobs.append(job)
+    await db_session.commit()
+    for j in jobs:
+        await db_session.refresh(j)
+        await match_queue_service.enqueue_for_interested_profiles(j, db_session)
+
+    fake_graph = MagicMock()
+
+    async def fake_invoke(state, config=None):
+        from app.agents.matching_agent import ScoreResult
+
+        return {
+            "scores": [
+                ScoreResult(
+                    application_id=jc["application_id"],
+                    score=0.9,
+                    summary="ok",
+                    rationale="ok",
+                    strengths=[],
+                    gaps=[],
+                )
+                for jc in state["jobs"]
+            ]
+        }
+
+    fake_graph.ainvoke = fake_invoke
+
+    with patch("app.agents.matching_agent.build_graph", return_value=fake_graph):
+        # No explicit max_per_profile: should pull `2` from MATCHING_MAX_PER_PROFILE_PER_TICK
+        result = await run_match_queue()
+
+    db_session.expire_all()
+    matched = (
+        (
+            await db_session.execute(
+                sa.select(Application).where(
+                    Application.profile_id == profile_id,
+                    Application.match_status == "matched",
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert len(matched) == 2, f"settings-driven cap=2 should mean 2 scored, got {len(matched)}"
+    assert result["deferred"] == 3, f"expected 3 deferred, got {result}"
+
+
+@pytest.mark.asyncio
 async def test_run_match_queue_caps_jobs_per_profile_per_tick(db_session):
     """A single profile must not own more than `max_per_profile` jobs in one
     score_and_match call. With batch_size=100 concentrated on one profile and
