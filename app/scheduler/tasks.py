@@ -16,13 +16,18 @@ log = structlog.get_logger()
 
 
 async def run_job_sync() -> dict:
-    """Bulk-sync every active profile via sync_profile (same path the user
-    triggers from the UI). The actual fetch happens in run_sync_queue; this
-    is the scheduled "wake up, prune dead slugs, enqueue stale ones, score
-    cached jobs" sweep."""
+    """Bulk sweep: prune invalid slugs + enqueue stale slugs for every active
+    profile. The actual fetch happens in run_sync_queue; matching for
+    cron-discovered jobs happens in run_match_queue.
+
+    Cron MUST go through prune_and_enqueue (not sync_profile) — synchronous
+    LLM scoring across N profiles inside Cloud Run's 300s wall caused the
+    recurring HTTP 504 in /internal/cron/sync (issue #70). The two-function
+    split was finalised in #80.
+    """
     from app.database import get_session_factory
     from app.models.user_profile import UserProfile
-    from app.services.job_sync_service import sync_profile
+    from app.services.job_sync_service import prune_and_enqueue
 
     factory = get_session_factory()
     profiles_enqueued = 0
@@ -33,15 +38,11 @@ async def run_job_sync() -> dict:
             select(UserProfile).where(UserProfile.search_active.is_(True))
         )
         for profile in result.scalars().all():
-            # score_cached_jobs=False: bulk cron must not synchronously LLM-score
-            # — Cloud Run's 300s wall vs. multi-profile fan-out caused the
-            # recurring HTTP 504 in /internal/cron/sync (issue #70). Matching
-            # is owned by run_match_queue.
-            summary = await sync_profile(profile, session, score_cached_jobs=False)
+            summary = await prune_and_enqueue(profile, session)
             if summary["queued_slugs"]:
                 profiles_enqueued += 1
                 slugs_enqueued += len(summary["queued_slugs"])
-            slugs_pruned += len(summary.get("pruned_slugs", []))
+            slugs_pruned += len(summary["pruned_slugs"])
     return {
         "profiles_enqueued": profiles_enqueued,
         "slugs_enqueued": slugs_enqueued,
