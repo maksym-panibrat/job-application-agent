@@ -53,6 +53,8 @@ Matching agent uses `asyncio.Semaphore` + 1.5s sleep + 10s/30s exponential backo
 
 No in-process scheduler. `app/scheduler/tasks.py` is invoked via `POST /internal/cron/{sync,generation-queue,maintenance}` with `X-Cron-Secret`, triggered by `.github/workflows/cron.yml`.
 
+**Cron-incident PR convention**: when a PR fixes a cron failure, reference the persistent tracking issue with `re #N` / `relates to #N` — **never** `closes #N` / `fixes #N`. The alert-on-failure workflow now reopens-and-comments on the most recent matching issue regardless of state (after #78), so closing it is harmless — but the explicit form keeps history clean and matches the long-lived-tracker intent. The original churn (#70 → #72 on 2026-05-04 from a `closes #70`) is what motivates this.
+
 ### Generation contract
 
 `generate_materials()` (`app/services/application_service.py`) runs the cover-letter graph synchronously and returns the saved `GeneratedDocument`. The HTTP entrypoint is `POST /api/applications/{id}/cover-letter` — the request blocks for the duration of the LLM call (≈10–30s) and there is no background task, no checkpointer, no interrupt, and no `/resume` endpoint. Valid `generation_status` values: `none · generating · ready · failed`. Single-writer rule: `generate_materials` owns the status writes (`generating` → `ready`/`failed`); the API route does nothing but await it.
