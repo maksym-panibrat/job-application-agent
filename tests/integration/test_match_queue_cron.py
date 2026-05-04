@@ -82,6 +82,71 @@ async def test_run_match_queue_drains_pending(db_session):
 
 
 @pytest.mark.asyncio
+async def test_run_match_queue_releases_leases_without_failing_attempts_on_budget(db_session):
+    """When score_and_match raises BudgetExhausted (Gemini quota gone), the
+    match queue must NOT mark every claimed app as failed. That's how a brief
+    credit outage silently moves perfectly good pending_match apps to
+    match_status='error' (#74). Instead: clear claimed_at to release the lease,
+    leave attempts unchanged. Next tick re-claims naturally once budget restores."""
+    from datetime import UTC, datetime
+
+    from app.agents.llm_safe import BudgetExhausted
+
+    profile = await _seed_profile(db_session, "airbnb")
+    profile_id = profile.id
+
+    jobs = []
+    for i in range(3):
+        job = Job(
+            source="greenhouse_board",
+            external_id=f"budget-{i}",
+            title=f"Engineer {i}",
+            company_name=slug_to_company_name("airbnb"),
+            apply_url=f"https://x/{i}",
+            is_active=True,
+        )
+        db_session.add(job)
+        jobs.append(job)
+    await db_session.commit()
+    for j in jobs:
+        await db_session.refresh(j)
+        await match_queue_service.enqueue_for_interested_profiles(j, db_session)
+
+    resumes_at = datetime(2026, 6, 1, tzinfo=UTC)
+
+    async def _raise_budget(*args, **kwargs):
+        raise BudgetExhausted(resumes_at)
+
+    with patch("app.services.match_service.score_and_match", side_effect=_raise_budget):
+        result = await run_match_queue()
+
+    db_session.expire_all()
+    apps = (
+        (
+            await db_session.execute(
+                sa.select(Application).where(Application.profile_id == profile_id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert len(apps) == 3
+    for app in apps:
+        assert app.match_status == "pending_match", (
+            f"budget-exhausted apps must NOT flip to error: status={app.match_status}"
+        )
+        assert app.match_attempts == 0, (
+            f"budget exhausted is not the app's fault — attempts must not increment: "
+            f"attempts={app.match_attempts}"
+        )
+        assert app.match_claimed_at is None, "lease must be released so next tick re-claims"
+
+    assert result.get("budget_exhausted") is True, (
+        f"result must surface budget_exhausted flag, got {result}"
+    )
+
+
+@pytest.mark.asyncio
 async def test_run_match_queue_caps_jobs_per_profile_per_tick(db_session):
     """A single profile must not own more than `max_per_profile` jobs in one
     score_and_match call. With batch_size=100 concentrated on one profile and

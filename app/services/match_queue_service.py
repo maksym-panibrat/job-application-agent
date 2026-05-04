@@ -118,6 +118,20 @@ async def mark_attempt_failed(application_id: uuid.UUID, session: AsyncSession) 
     await session.commit()
 
 
+async def release_claim(application_id: uuid.UUID, session: AsyncSession) -> None:
+    """Clear the lease without incrementing attempts.
+
+    Used when scoring failed for a reason that's not the app's fault — e.g.
+    BudgetExhausted (Gemini quota gone). The app stays pending_match and
+    becomes eligible for the next tick to re-claim once the underlying issue
+    resolves. Contrast with `mark_attempt_failed` which increments attempts
+    and after MAX_ATTEMPTS flips the app to status='error'."""
+    result = await session.execute(select(Application).where(Application.id == application_id))
+    app = result.scalar_one()
+    app.match_claimed_at = None
+    await session.commit()
+
+
 async def pending_count(session: AsyncSession, profile_id: uuid.UUID | None = None) -> int:
     from sqlalchemy import func
 

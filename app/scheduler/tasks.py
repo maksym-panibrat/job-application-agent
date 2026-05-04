@@ -258,6 +258,7 @@ async def run_match_queue(
     them re-eligible the tick after."""
     import time
 
+    from app.agents.llm_safe import BudgetExhausted
     from app.database import get_session_factory
     from app.models.application import Application
     from app.models.job import Job
@@ -268,11 +269,18 @@ async def run_match_queue(
     factory = get_session_factory()
     deadline = time.monotonic() + deadline_seconds
     succeeded = failed = deferred = 0
+    budget_exhausted = False
 
     async with factory() as session:
         batch = await match_queue_service.next_batch(session, limit=batch_size)
     if not batch:
-        return {"attempted": 0, "succeeded": 0, "failed": 0, "deferred": 0}
+        return {
+            "attempted": 0,
+            "succeeded": 0,
+            "failed": 0,
+            "deferred": 0,
+            "budget_exhausted": False,
+        }
     attempted = len(batch)
 
     # Group by profile_id; one LangGraph invocation per profile
@@ -305,6 +313,23 @@ async def run_match_queue(
 
             try:
                 await score_and_match(profile, session, jobs=jobs)
+            except BudgetExhausted as exc:
+                # Gemini quota gone — not the app's fault. Release leases so
+                # the next tick re-claims naturally once budget restores.
+                # DO NOT increment attempts (that's for real failures and
+                # accumulates toward match_status='error', which silently
+                # discards perfectly good pending matches during a brief
+                # credit outage — see #74).
+                await log.awarning(
+                    "match_queue.budget_exhausted",
+                    resumes_at=exc.resumes_at.isoformat(),
+                    apps_released=len(apps_this_tick),
+                )
+                budget_exhausted = True
+                for a in apps_this_tick:
+                    await match_queue_service.release_claim(a.id, session)
+                # No point trying remaining profiles — same Gemini, same outcome.
+                break
             except Exception as exc:
                 await log.aexception("match_queue.batch_error", error=str(exc))
                 for a in apps_this_tick:
@@ -330,4 +355,5 @@ async def run_match_queue(
         "succeeded": succeeded,
         "failed": failed,
         "deferred": deferred,
+        "budget_exhausted": budget_exhausted,
     }
