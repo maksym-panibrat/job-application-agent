@@ -41,6 +41,28 @@ async def test_safe_ainvoke_raises_budget_exhausted_on_429_quota_string():
 
 
 @pytest.mark.asyncio
+async def test_safe_ainvoke_raises_budget_exhausted_on_genai_resource_exhausted():
+    """google-genai SDK / langchain-google-genai wrapped 429 RESOURCE_EXHAUSTED
+    must also map to BudgetExhausted. Real prod message lacks the literal word
+    "quota" — it says "Your prepayment credits are depleted" — so the older
+    "429 + quota" predicate misses it. Caught in prod via Cloud Error Reporting
+    when chat endpoint returned generic "Stream error" instead of a graceful
+    budget-exhausted UX (smoke step 7, 2026-05-04)."""
+    msg = (
+        "Error calling model 'gemini-2.5-pro' (RESOURCE_EXHAUSTED): "
+        "429 RESOURCE_EXHAUSTED. {'error': {'code': 429, 'message': "
+        "'Your prepayment credits are depleted. Please go to AI Studio "
+        "at https://ai.studio/projects to manage your project and billing.', "
+        "'status': 'RESOURCE_EXHAUSTED'}}"
+    )
+    model = MagicMock()
+    model.ainvoke = AsyncMock(side_effect=Exception(msg))
+
+    with pytest.raises(BudgetExhausted):
+        await safe_ainvoke(model, ["msg"])
+
+
+@pytest.mark.asyncio
 async def test_safe_ainvoke_propagates_non_quota_exceptions():
     """Non-quota exceptions propagate unchanged."""
     model = MagicMock()
