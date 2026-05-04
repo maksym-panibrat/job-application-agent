@@ -42,8 +42,17 @@ async def safe_ainvoke(
         return await model.ainvoke(messages, **kwargs)
     except Exception as exc:
         exc_str = str(exc)
-        is_budget_exhausted = isinstance(exc, GaxResourceExhausted) or (
-            "429" in exc_str and "quota" in exc_str.lower()
+        # langchain-google-genai (new google-genai SDK) raises
+        # ChatGoogleGenerativeAIError(... 429 RESOURCE_EXHAUSTED ... credits
+        # are depleted ...) — the literal word "quota" is absent. Match on
+        # the canonical RESOURCE_EXHAUSTED status string so prepayment-credit
+        # depletion falls through the same graceful BudgetExhausted path as
+        # the legacy google-api-core ResourceExhausted.
+        exc_lower = exc_str.lower()
+        is_budget_exhausted = (
+            isinstance(exc, GaxResourceExhausted)
+            or "resource_exhausted" in exc_lower
+            or ("429" in exc_str and "quota" in exc_lower)
         )
         if is_budget_exhausted:
             resumes_at = _next_month_utc()
