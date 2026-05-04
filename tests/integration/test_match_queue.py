@@ -143,3 +143,60 @@ async def test_mark_error_after_3_attempts(db_session):
     ).scalar_one()
     assert refreshed.match_status == "error"
     assert refreshed.match_attempts == 3
+
+
+@pytest.mark.asyncio
+async def test_audit_and_recover_error_apps(db_session):
+    """audit_error_apps + recover_error_apps round-trip:
+    seed mixed apps (some error, some pending_match, some matched), audit,
+    then recover and assert the error apps flip back to pending_match while
+    others are untouched. Mirrors the 2026-05-04 prod recovery scenario (#75)."""
+    from datetime import UTC, datetime, timedelta
+
+    p1 = await _seed_profile(db_session, "airbnb")
+    p2 = await _seed_profile(db_session, "stripe")
+
+    # Seed jobs for each profile + create their pending applications
+    for slug, profile in (("airbnb", p1), ("stripe", p2)):
+        for ext in ("a", "b"):
+            db_session.add(_job(slug, ext))
+    await db_session.commit()
+    jobs = (await db_session.execute(sa.select(Job))).scalars().all()
+    for job in jobs:
+        await match_queue_service.enqueue_for_interested_profiles(job, db_session)
+
+    # Get all the just-created applications
+    apps = (await db_session.execute(sa.select(Application))).scalars().all()
+    assert len(apps) == 4  # 2 jobs per profile × 2 profiles, each scoped to one profile
+
+    # Force two of them into match_status='error' (simulating depletion outcome)
+    for app in apps[:2]:
+        for _ in range(3):
+            await match_queue_service.mark_attempt_failed(app.id, db_session)
+
+    db_session.expire_all()
+
+    # Audit — all profiles, no time bound
+    rows = await match_queue_service.audit_error_apps(db_session)
+    total = sum(r["count"] for r in rows)
+    assert total == 2, f"expected 2 error apps, got {total} ({rows})"
+
+    # Audit with `since` in the future → should match nothing
+    future = datetime.now(UTC) + timedelta(days=1)
+    rows_future = await match_queue_service.audit_error_apps(db_session, since=future)
+    assert rows_future == []
+
+    # Recover — re-queue all error apps
+    recovered = await match_queue_service.recover_error_apps(db_session)
+    assert recovered == 2
+
+    db_session.expire_all()
+    statuses = (await db_session.execute(sa.select(Application.match_status))).scalars().all()
+    # All 4 apps should now be pending_match
+    assert sorted(statuses) == ["pending_match"] * 4
+    attempts = (await db_session.execute(sa.select(Application.match_attempts))).scalars().all()
+    assert all(a == 0 for a in attempts), f"attempts must reset to 0, got {attempts}"
+
+    # Second audit should find nothing
+    rows_after = await match_queue_service.audit_error_apps(db_session)
+    assert rows_after == []
