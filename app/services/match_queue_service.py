@@ -118,6 +118,88 @@ async def mark_attempt_failed(application_id: uuid.UUID, session: AsyncSession) 
     await session.commit()
 
 
+async def audit_error_apps(
+    session: AsyncSession,
+    *,
+    since: datetime | None = None,
+    profile_id: uuid.UUID | None = None,
+) -> list[dict]:
+    """Count Application rows in match_status='error', grouped by profile_id.
+
+    Used for one-off recovery after incidents that wrongly drove apps to
+    'error' (e.g. the 2026-05-04 Gemini credit depletion: while the new
+    BudgetExhausted graceful path wasn't yet deployed, every match_queue tick
+    incremented attempts on every claimed app; after 3 attempts → error).
+
+    `since` filters by Application.created_at; passing None counts all.
+    """
+    from sqlalchemy import func
+
+    q = select(
+        Application.profile_id,
+        func.count(Application.id).label("count"),
+        func.min(Application.created_at).label("oldest"),
+        func.max(Application.created_at).label("newest"),
+    ).where(Application.match_status == "error")
+    if since is not None:
+        q = q.where(Application.created_at >= since)
+    if profile_id is not None:
+        q = q.where(Application.profile_id == profile_id)
+    q = q.group_by(Application.profile_id)
+
+    result = await session.execute(q)
+    return [
+        {
+            "profile_id": row.profile_id,
+            "count": row.count,
+            "oldest": row.oldest,
+            "newest": row.newest,
+        }
+        for row in result.all()
+    ]
+
+
+async def recover_error_apps(
+    session: AsyncSession,
+    *,
+    since: datetime | None = None,
+    profile_id: uuid.UUID | None = None,
+) -> int:
+    """Re-queue Application rows in match_status='error' back to pending_match.
+
+    Resets the lifecycle so run_match_queue picks them up on the next tick:
+      match_status='error' → 'pending_match'
+      match_attempts → 0
+      match_queued_at → now()
+      match_claimed_at → None
+      match_score / match_summary / match_rationale: untouched (already null
+      on error rows by construction — they never scored successfully).
+
+    Returns the rowcount.
+    """
+    now = datetime.now(UTC)
+    from sqlalchemy import update
+
+    stmt = (
+        update(Application)
+        .where(Application.match_status == "error")
+        .values(
+            match_status="pending_match",
+            match_attempts=0,
+            match_queued_at=now,
+            match_claimed_at=None,
+            updated_at=now,
+        )
+    )
+    if since is not None:
+        stmt = stmt.where(Application.created_at >= since)
+    if profile_id is not None:
+        stmt = stmt.where(Application.profile_id == profile_id)
+    result = await session.execute(stmt)
+    await session.commit()
+    return result.rowcount or 0
+
+
 async def release_claim(application_id: uuid.UUID, session: AsyncSession) -> None:
     """Clear the lease without incrementing attempts.
 
