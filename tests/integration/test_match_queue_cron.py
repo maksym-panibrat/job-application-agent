@@ -312,3 +312,121 @@ async def test_run_match_queue_caps_jobs_per_profile_per_tick(db_session):
         assert app.match_claimed_at is not None, (
             "deferred apps must remain claimed for the 300s lease window"
         )
+
+
+@pytest.mark.asyncio
+async def test_run_match_queue_reprocesses_deferred_apps_after_lease_expiry(db_session):
+    """The cap fix's load-bearing assumption: apps deferred this tick (claimed
+    but unprocessed because of the per-profile cap) get reclaimed on a later
+    tick once the 300s lease expires. Without this property, the cap would
+    silently leak work into oblivion (#79)."""
+    from datetime import UTC, datetime, timedelta
+
+    profile = await _seed_profile(db_session, "airbnb")
+    profile_id = profile.id
+
+    # Seed 5 apps, cap=2 → 2 matched first tick, 3 deferred (claimed_at set)
+    jobs = []
+    for i in range(5):
+        job = Job(
+            source="greenhouse_board",
+            external_id=f"reproc-{i}",
+            title=f"Engineer {i}",
+            company_name=slug_to_company_name("airbnb"),
+            apply_url=f"https://x/{i}",
+            is_active=True,
+        )
+        db_session.add(job)
+        jobs.append(job)
+    await db_session.commit()
+    for j in jobs:
+        await db_session.refresh(j)
+        await match_queue_service.enqueue_for_interested_profiles(j, db_session)
+
+    fake_graph = MagicMock()
+
+    async def fake_invoke(state, config=None):
+        from app.agents.matching_agent import ScoreResult
+
+        return {
+            "scores": [
+                ScoreResult(
+                    application_id=jc["application_id"],
+                    score=0.9,
+                    summary="ok",
+                    rationale="ok",
+                    strengths=[],
+                    gaps=[],
+                )
+                for jc in state["jobs"]
+            ]
+        }
+
+    fake_graph.ainvoke = fake_invoke
+
+    # First tick: cap=2 → 2 matched, 3 deferred
+    with patch("app.agents.matching_agent.build_graph", return_value=fake_graph):
+        result1 = await run_match_queue(max_per_profile=2)
+    assert result1["succeeded"] == 2
+    assert result1["deferred"] == 3
+
+    # Second tick *immediately*: lease still active → next_batch claims nothing
+    with patch("app.agents.matching_agent.build_graph", return_value=fake_graph):
+        result2 = await run_match_queue(max_per_profile=2)
+    assert result2["attempted"] == 0, (
+        "lease should still be active; next_batch should claim nothing"
+    )
+
+    # Back-date the deferred apps' claimed_at past the 300s cutoff so the lease
+    # is effectively expired, then run again.
+    long_ago = datetime.now(UTC) - timedelta(seconds=400)
+    await db_session.execute(
+        sa.update(Application)
+        .where(
+            Application.profile_id == profile_id,
+            Application.match_status == "pending_match",
+        )
+        .values(match_claimed_at=long_ago)
+    )
+    await db_session.commit()
+    db_session.expire_all()
+
+    # Third tick: lease expired → next_batch reclaims, cap=2 of the 3 process
+    with patch("app.agents.matching_agent.build_graph", return_value=fake_graph):
+        result3 = await run_match_queue(max_per_profile=2)
+    assert result3["succeeded"] == 2, (
+        f"after lease expiry, deferred apps must be reclaimable; got {result3}"
+    )
+    assert result3["deferred"] == 1, "1 still deferred (5 total, 2 matched in tick1, 2 in tick3)"
+
+    # Fourth tick: back-date again to push the last deferred over the lease line
+    long_ago2 = datetime.now(UTC) - timedelta(seconds=400)
+    await db_session.execute(
+        sa.update(Application)
+        .where(
+            Application.profile_id == profile_id,
+            Application.match_status == "pending_match",
+        )
+        .values(match_claimed_at=long_ago2)
+    )
+    await db_session.commit()
+
+    with patch("app.agents.matching_agent.build_graph", return_value=fake_graph):
+        result4 = await run_match_queue(max_per_profile=2)
+    assert result4["succeeded"] == 1, "the last deferred app finally drains"
+
+    # Final state: all 5 apps matched, 0 still pending
+    db_session.expire_all()
+    pending_left = (
+        (
+            await db_session.execute(
+                sa.select(Application).where(
+                    Application.profile_id == profile_id,
+                    Application.match_status == "pending_match",
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert len(pending_left) == 0, "all originally-deferred apps must end up matched"
