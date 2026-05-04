@@ -61,6 +61,66 @@ async def test_chat_empty_message_rejected(test_app):
 
 
 @pytest.mark.asyncio
+async def test_chat_emits_structured_budget_exhausted_event(test_app):
+    """When the onboarding graph hits BudgetExhausted (Gemini quota / prepayment
+    credits depleted), chat must emit a structured SSE event with the resumption
+    timestamp — not the generic 'Stream error' that hides the cause from users.
+
+    Regression: see #74. Before the fix, chat.py:92 caught BudgetExhausted in
+    its `except Exception` catch-all and yielded {'error': 'Stream error'},
+    which the UI showed as an opaque failure (smoke step 7 trace, 2026-05-04)."""
+    from datetime import UTC, datetime
+    from unittest.mock import MagicMock, patch
+
+    from app.agents.llm_safe import BudgetExhausted
+
+    await test_app.get("/api/profile")
+
+    resumes_at = datetime(2026, 6, 1, tzinfo=UTC)
+
+    async def boom(*args, **kwargs):
+        raise BudgetExhausted(resumes_at)
+        # Make the function an async generator so `async for chunk in graph.astream(...)`
+        # is valid syntax against this mock.
+        yield  # pragma: no cover
+
+    fake_graph = MagicMock()
+    fake_graph.astream = boom
+
+    from app.main import app as fastapi_app
+
+    # Fixture doesn't run lifespan, so checkpointer is unset. Inject a non-None
+    # placeholder for the duration of this test so chat.py takes the real graph
+    # path, then restore (avoid leaking into other tests).
+    prev_checkpointer = getattr(fastapi_app.state, "checkpointer", None)
+    fastapi_app.state.checkpointer = MagicMock()
+    try:
+        with patch("app.agents.onboarding.build_graph", return_value=fake_graph):
+            async with test_app.stream(
+                "POST",
+                "/api/chat/messages",
+                json={"message": "anything"},
+            ) as resp:
+                assert resp.status_code == 200
+                events = []
+                async for line in resp.aiter_lines():
+                    if line.startswith("data: "):
+                        data = line[6:]
+                        if data == "[DONE]":
+                            break
+                        events.append(json.loads(data))
+    finally:
+        fastapi_app.state.checkpointer = prev_checkpointer
+
+    error_events = [e for e in events if "error" in e]
+    assert error_events, f"expected at least one error event, got {events}"
+    assert error_events[0]["error"] == "budget_exhausted", (
+        f"expected structured budget_exhausted event, got {error_events[0]}"
+    )
+    assert error_events[0]["resumes_at"] == resumes_at.isoformat()
+
+
+@pytest.mark.asyncio
 async def test_chat_session_persists_across_messages(test_app):
     """
     Two messages to the same profile thread accumulate in the checkpointed state.

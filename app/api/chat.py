@@ -65,6 +65,8 @@ async def send_message(
     }
 
     async def stream_response():
+        from app.agents.llm_safe import BudgetExhausted
+
         try:
             from langchain_core.messages import AIMessageChunk
 
@@ -89,6 +91,13 @@ async def send_message(
                             text += block.get("text", "")
                 if text:
                     yield f"data: {json.dumps({'content': text})}\n\n"
+        except BudgetExhausted as exc:
+            # Gemini quota / prepayment credits depleted. Surface a structured
+            # event with the resumption timestamp so the UI can render a
+            # meaningful banner instead of an opaque "Stream error" (#74).
+            await log.awarning("chat.budget_exhausted", resumes_at=exc.resumes_at.isoformat())
+            payload = {"error": "budget_exhausted", "resumes_at": exc.resumes_at.isoformat()}
+            yield f"data: {json.dumps(payload)}\n\n"
         except Exception as e:
             await log.aexception("chat.stream_error", error=str(e))
             yield f"data: {json.dumps({'error': 'Stream error'})}\n\n"
