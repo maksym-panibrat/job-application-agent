@@ -1,14 +1,22 @@
-"""Job sync entrypoint — enqueueing-only, fast.
+"""Job sync entrypoint.
+
+Two contracts here, by design (#80):
+
+  prune_and_enqueue(profile, session)
+    Bulk-cron-safe and HTTP-warm-up: seed defaults if the profile is empty,
+    drop slugs marked is_invalid, enqueue stale slugs for background fetch,
+    update profile.last_sync_*. Fast (no LLM). Returns
+    {queued_slugs, matched_now=0, seeded_defaults, pruned_slugs}.
+
+  sync_profile(profile, session)
+    User-triggered HTTP path (POST /api/jobs/sync). Calls prune_and_enqueue
+    then synchronously scores up to `matching_jobs_per_batch` already-cached
+    jobs for instant UI feedback. Cron MUST NOT call this — Cloud Run's 300s
+    wall + N-profile fan-out blew up the synchronous scoring path (#70 /
+    commit 191df6a regression / fixed by #71).
 
 The actual fetch happens in app.scheduler.tasks.run_sync_queue.
 The actual matching happens in app.scheduler.tasks.run_match_queue.
-This function:
-  1. Seeds 5 default slugs if profile has none.
-  2. Drops any slug whose SlugFetch row is is_invalid=True (the source of
-     the "We removed X" banner — backend now matches the UI promise).
-  3. Enqueues every stale (last_fetched_at NULL or > 6h old) slug for background fetch.
-  4. Scores up to `matching_jobs_per_batch` already-cached, slug-scoped, unscored jobs
-     so the user sees something immediately.
 """
 
 from datetime import UTC, datetime
@@ -57,21 +65,13 @@ async def _prune_invalid_slugs(profile: UserProfile, session: AsyncSession) -> l
     return sorted(invalid)
 
 
-async def sync_profile(
-    profile: UserProfile,
-    session: AsyncSession,
-    *,
-    score_cached_jobs: bool = True,
-) -> dict:
-    # `score_cached_jobs=True` is the user-triggered "instant feedback" path
-    # (POST /api/jobs/sync) — score up to N already-cached jobs synchronously
-    # so the UI has something to show before run_match_queue ticks.
-    # The 6h bulk cron must pass `False`: it has no UI to feed back to and
-    # runs across N profiles inside Cloud Run's 300s wall — synchronous LLM
-    # scoring there blew that budget (HTTP 504, issue #70 / regression in
-    # commit 191df6a). Matching for cron-discovered jobs is owned by
-    # run_match_queue (every 5min, deadline-bounded).
-    settings = get_settings()
+async def prune_and_enqueue(profile: UserProfile, session: AsyncSession) -> dict:
+    """Cron-safe profile sync: seed defaults + prune invalid slugs + enqueue
+    stale slugs + update last_sync_*. No LLM, no synchronous scoring.
+
+    Returns the same summary shape as `sync_profile` but with `matched_now=0`,
+    so callers can treat the two functions interchangeably for telemetry.
+    """
     seeded = seed_defaults_if_empty(profile)
     if seeded:
         session.add(profile)
@@ -82,16 +82,9 @@ async def sync_profile(
         await session.commit()
 
     queued = await slug_registry_service.enqueue_stale(profile, session, ttl_hours=6)
-    if score_cached_jobs:
-        matched = await match_service.score_cached(
-            profile, session, cap=settings.matching_jobs_per_batch
-        )
-    else:
-        matched = []
-
     summary = {
         "queued_slugs": queued,
-        "matched_now": len(matched),
+        "matched_now": 0,
         "seeded_defaults": seeded,
         "pruned_slugs": pruned,
     }
@@ -102,12 +95,29 @@ async def sync_profile(
         profile.last_sync_completed_at = datetime.now(UTC)
     session.add(profile)
     await session.commit()
+    return summary
+
+
+async def sync_profile(profile: UserProfile, session: AsyncSession) -> dict:
+    """User-triggered HTTP path: prune + enqueue, then synchronously LLM-score
+    up to N cached jobs for instant UI feedback. Cron MUST NOT call this — see
+    module docstring."""
+    settings = get_settings()
+    summary = await prune_and_enqueue(profile, session)
+    matched = await match_service.score_cached(
+        profile, session, cap=settings.matching_jobs_per_batch
+    )
+    if matched:
+        summary["matched_now"] = len(matched)
+        profile.last_sync_summary = summary
+        session.add(profile)
+        await session.commit()
 
     await log.ainfo(
         "sync.queued",
         profile_id=str(profile.id),
-        queued_slugs=queued,
-        matched_now=len(matched),
-        seeded_defaults=seeded,
+        queued_slugs=summary["queued_slugs"],
+        matched_now=summary["matched_now"],
+        seeded_defaults=summary["seeded_defaults"],
     )
     return {"status": "queued", **summary}
