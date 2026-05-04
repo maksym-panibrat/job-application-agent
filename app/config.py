@@ -28,6 +28,12 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     matching_max_concurrency: int = 8
     matching_jobs_per_batch: int = 20
+    # Per-tick match-queue caps. `max_per_profile` bounds how many jobs a
+    # single profile can own in one score_and_match call (slower ticks risk
+    # Cloud Run's 300s wall when one profile dominates the batch — see #71).
+    # `tick_deadline_seconds` bounds total wall time per tick.
+    matching_max_per_profile_per_tick: int = 30
+    matching_tick_deadline_seconds: int = 240
 
     cors_allowed_origins: list[str] = ["http://localhost:5173", "http://localhost:3000"]
     # Absolute base URL Google sees as redirect_uri host. Cloud Run forwards HTTP to

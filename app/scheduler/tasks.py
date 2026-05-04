@@ -267,12 +267,17 @@ async def run_sync_queue(*, max_slugs: int = 64, deadline_seconds: int = 240) ->
 async def run_match_queue(
     *,
     batch_size: int = 100,
-    deadline_seconds: int = 240,
-    max_per_profile: int = 30,
+    deadline_seconds: int | None = None,
+    max_per_profile: int | None = None,
 ) -> dict:
     """Drain pending_match applications. One LangGraph batch per profile per tick
     (the agent fans out internally). Per-tick deadline keeps us under Cloud Run's
     300s wall.
+
+    `deadline_seconds` and `max_per_profile` default to
+    `Settings.matching_tick_deadline_seconds` and
+    `Settings.matching_max_per_profile_per_tick` respectively (see #77 — env-var
+    tunable without a redeploy). Tests can still pass explicit overrides.
 
     `max_per_profile` caps how many jobs a single profile can own in one
     score_and_match call. Without it, batch_size=100 concentrated on one
@@ -284,6 +289,13 @@ async def run_match_queue(
     import time
 
     from app.agents.llm_safe import BudgetExhausted
+    from app.config import get_settings
+
+    settings = get_settings()
+    if deadline_seconds is None:
+        deadline_seconds = settings.matching_tick_deadline_seconds
+    if max_per_profile is None:
+        max_per_profile = settings.matching_max_per_profile_per_tick
     from app.database import get_session_factory
     from app.models.application import Application
     from app.models.job import Job
