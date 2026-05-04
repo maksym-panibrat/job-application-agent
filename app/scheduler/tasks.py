@@ -49,18 +49,29 @@ async def run_job_sync() -> dict:
     }
 
 
-async def run_generation_queue(checkpointer) -> dict:
-    """Generate materials for applications stuck in pending status. Returns a summary dict.
+async def run_generation_queue(*, deadline_seconds: int = 240) -> dict:
+    """Generate materials for applications stuck in pending status.
 
-    ``checkpointer`` must be a LangGraph checkpointer (typically
-    ``request.app.state.checkpointer`` initialized in the FastAPI lifespan).
-    ``generate_materials`` raises ``RuntimeError`` if it is None.
+    Bounded by `deadline_seconds` per Cloud Run's 300s wall: 10 pending apps ×
+    ~10-30s per generate_materials call easily exceeds 300s if Gemini is slow.
+    Iterations after the deadline trips are deferred to the next tick — they
+    stay in generation_status='pending' and become eligible immediately
+    (no lease in this lifecycle, contrast with run_match_queue's 300s lease).
+
+    Note: `generate_materials` is a synchronous-LLM call (no checkpointer).
+    The contract was changed in commit 4d47205-era; passing `checkpointer=`
+    was a stale kwarg from the LangGraph-interrupt era and TypeError'd at
+    every call (silently caught by the generic except, returning failed=N).
     """
+    import time
+
     from app.database import get_session_factory
     from app.models.application import Application
     from app.services.application_service import generate_materials
 
     factory = get_session_factory()
+    deadline = time.monotonic() + deadline_seconds
+
     async with factory() as session:
         result = await session.execute(
             select(Application)
@@ -76,17 +87,31 @@ async def run_generation_queue(checkpointer) -> dict:
     attempted = len(app_ids)
     succeeded = 0
     failed = 0
+    deferred = 0
 
-    for app_id in app_ids:
+    for i, app_id in enumerate(app_ids):
+        if time.monotonic() > deadline:
+            deferred = len(app_ids) - i
+            await log.awarning(
+                "scheduler.generation_queue_deferred",
+                deferred=deferred,
+                processed=i,
+            )
+            break
         try:
             async with factory() as session:
-                await generate_materials(app_id, session, checkpointer=checkpointer)
+                await generate_materials(app_id, session)
                 succeeded += 1
         except Exception as exc:
             failed += 1
             await log.aexception("scheduler.generation_error", app_id=str(app_id), error=str(exc))
 
-    return {"attempted": attempted, "succeeded": succeeded, "failed": failed}
+    return {
+        "attempted": attempted,
+        "succeeded": succeeded,
+        "failed": failed,
+        "deferred": deferred,
+    }
 
 
 async def run_daily_maintenance() -> dict:

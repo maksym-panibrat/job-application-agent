@@ -24,9 +24,10 @@ def make_app(
         google_api_key="fake",
     )
     test_app.dependency_overrides[get_cron_settings] = lambda: override_settings
-    # Emulate lifespan: the /generation-queue endpoint resolves the checkpointer
-    # from app.state.checkpointer and 503s if absent. Tests pass a sentinel
-    # object by default; pass checkpointer=None to exercise the guard.
+    # The `checkpointer` parameter is a vestigial parameter kept so existing
+    # tests don't break — generate_materials no longer uses a checkpointer
+    # (#76 stripped the stale kwarg from the cron path). Set on app.state
+    # for any future test that wants to assert state is or isn't present.
     if checkpointer is not None:
         test_app.state.checkpointer = checkpointer
     return TestClient(test_app, raise_server_exceptions=raise_server_exceptions)
@@ -125,22 +126,28 @@ def test_generation_queue_budget_exhausted_returns_structured_response():
     assert body["resumes_at"] == resumes_at.isoformat()
 
 
-def test_generation_queue_missing_checkpointer_returns_503():
-    # If the FastAPI lifespan never set app.state.checkpointer, the cron endpoint
-    # 503s loudly instead of calling run_generation_queue (which would hit the
-    # RuntimeError in generate_materials).
+def test_generation_queue_does_not_require_checkpointer():
+    """generate_materials switched to a synchronous (no-checkpointer) contract
+    in the cover-letter-graph rewrite. The cron endpoint no longer threads a
+    checkpointer; passing one was a stale kwarg that TypeError'd at every call
+    and was silently caught by the generic except, masking the bug (#76)."""
     client = make_app(secret="real-secret", checkpointer=None)
     with patch(
         "app.api.internal_cron.run_generation_queue",
-        new=AsyncMock(return_value={"attempted": 0, "succeeded": 0, "failed": 0}),
+        new=AsyncMock(return_value={"attempted": 0, "succeeded": 0, "failed": 0, "deferred": 0}),
     ) as mock:
         resp = client.post(
             "/internal/cron/generation-queue",
             headers={"X-Cron-Secret": "real-secret"},
         )
-    assert resp.status_code == 503
-    assert resp.json()["detail"] == "checkpointer not initialized"
-    mock.assert_not_called()
+    assert resp.status_code == 200, resp.text
+    mock.assert_called_once()
+    # No checkpointer arg passed — call should be plain `run_generation_queue()`.
+    call = mock.call_args
+    assert call.args == () and call.kwargs == {}, (
+        f"run_generation_queue must be called with no args, "
+        f"got args={call.args} kwargs={call.kwargs}"
+    )
 
 
 def test_sync_unexpected_exception_returns_500():
