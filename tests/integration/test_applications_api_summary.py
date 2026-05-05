@@ -55,3 +55,43 @@ async def test_list_endpoint_includes_match_summary(db_session, auth_headers, se
     row = next(r for r in rows if r["match_score"] == 0.8)
     assert row["match_summary"] == "One-line summary text."
     assert row["match_rationale"] == "Audit text."  # still serialized for API audit
+
+
+@pytest.mark.asyncio
+async def test_detail_endpoint_exposes_description_clean(db_session, auth_headers, seeded_user):
+    """GET /api/applications/{id} surfaces description_clean (markdownified) alongside
+    the raw description_md so the SPA can render readable text instead of HTML."""
+    from app.main import app as fastapi_app
+
+    _user, profile = seeded_user
+
+    job = Job(
+        source="greenhouse_board",
+        external_id=str(uuid.uuid4()),
+        title="HTML Description Role",
+        company_name="HTMLCo",
+        apply_url="https://example.com/apply",
+        description_md="<h2>Who we are</h2><p>Cool company.</p>",
+        description_clean="## Who we are\n\nCool company.",
+    )
+    db_session.add(job)
+    await db_session.commit()
+    await db_session.refresh(job)
+
+    app_obj = Application(
+        job_id=job.id,
+        profile_id=profile.id,
+        status="pending_review",
+    )
+    db_session.add(app_obj)
+    await db_session.commit()
+    await db_session.refresh(app_obj)
+
+    transport = ASGITransport(app=fastapi_app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.get(f"/api/applications/{app_obj.id}", headers=auth_headers)
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["job"]["description_clean"] == "## Who we are\n\nCool company."
+    # description_md kept alongside for backward compat / null-fallback.
+    assert payload["job"]["description_md"] == "<h2>Who we are</h2><p>Cool company.</p>"

@@ -50,6 +50,7 @@ export interface Job {
   salary: string | null
   contract_type: string | null
   description_md: string | null
+  description_clean: string | null
   apply_url: string
   posted_at: string | null
 }

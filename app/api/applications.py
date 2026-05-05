@@ -98,6 +98,7 @@ async def get_application(
             "salary": job.salary,
             "contract_type": job.contract_type,
             "description_md": job.description_md,
+            "description_clean": job.description_clean,
             "apply_url": job.apply_url,
             "posted_at": job.posted_at,
         }

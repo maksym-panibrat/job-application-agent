@@ -8,7 +8,8 @@ function JobDetails({ app }: { app: ApplicationDetail }) {
   const job = app.job
   if (!job) return null
 
-  const hasDetails = job.description_md || job.salary || job.contract_type || job.posted_at || app.match_strengths?.length || app.match_gaps?.length
+  const description = job.description_clean ?? job.description_md
+  const hasDetails = description || job.salary || job.contract_type || job.posted_at || app.match_strengths?.length || app.match_gaps?.length
 
   if (!hasDetails) return null
 
@@ -64,11 +65,11 @@ function JobDetails({ app }: { app: ApplicationDetail }) {
             </div>
           )}
 
-          {job.description_md && (
+          {description && (
             <div>
               <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Description</p>
               <pre className="whitespace-pre-wrap font-sans text-gray-700 text-sm leading-relaxed max-h-96 overflow-y-auto">
-                {job.description_md}
+                {description}
               </pre>
             </div>
           )}

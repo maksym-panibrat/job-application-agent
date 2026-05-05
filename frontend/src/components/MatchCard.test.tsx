@@ -28,6 +28,7 @@ function makeApp(overrides: Partial<Application> = {}): Application {
       salary: '$120k',
       contract_type: 'full-time',
       description_md: 'A great role.',
+      description_clean: 'A great role.',
       apply_url: 'https://example.com/apply',
       posted_at: null,
     },
