@@ -224,29 +224,17 @@ jobs:
             echo "auth_enabled=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Resolve Cloud Run service URL (pre-deploy)
-        id: pre_url
-        # Cloud Run service URLs are stable per service, so we can fetch the URL
-        # from the existing revision and pass it back in as PUBLIC_BASE_URL so the
-        # OAuth router builds an absolute redirect_uri Google will accept.
-        run: |
-          URL=$(gcloud run services describe api --region us-central1 \
-            --format="value(status.url)" 2>/dev/null || echo "")
-          if [ -z "$URL" ]; then
-            echo "No existing service URL — first deploy. PUBLIC_BASE_URL will be empty"
-            echo "and the prod-secrets validator will fail; set the URL manually after"
-            echo "the first revision lands and re-run." >&2
-            exit 1
-          fi
-          echo "url=$URL" >> "$GITHUB_OUTPUT"
-
       - name: Deploy to Cloud Run
+        # PUBLIC_BASE_URL is the custom domain (job-search.panibrat.com) rather
+        # than the auto-generated run.app URL because Google's OAuth client is
+        # registered against the custom domain — the redirect_uri the app sends
+        # must match an authorized URI exactly.
         run: |
           gcloud run deploy api \
             --image us-central1-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/app/api:${{ github.sha }} \
             --region us-central1 \
             --set-secrets="${{ steps.secrets.outputs.secrets }}" \
-            --set-env-vars="ENVIRONMENT=production,AUTH_ENABLED=${{ steps.secrets.outputs.auth_enabled }},PUBLIC_BASE_URL=${{ steps.pre_url.outputs.url }}" \
+            --set-env-vars="ENVIRONMENT=production,AUTH_ENABLED=${{ steps.secrets.outputs.auth_enabled }},PUBLIC_BASE_URL=https://job-search.panibrat.com" \
             --service-account="${{ secrets.GCP_SERVICE_ACCOUNT }}" \
             --min-instances=0 \
             --max-instances=1 \
@@ -285,13 +273,6 @@ jobs:
       - name: Set up gcloud
         uses: google-github-actions/setup-gcloud@v3
 
-      - name: Resolve Cloud Run URL
-        id: url
-        run: |
-          URL=$(gcloud run services describe api --region us-central1 \
-            --format="value(status.url)")
-          echo "url=$URL" >> $GITHUB_OUTPUT
-
       - name: Warm up Cloud Run (60s)
         run: |
           echo "Waiting 60s for new revision to promote and cold-start..."
@@ -308,8 +289,10 @@ jobs:
           echo "value=$SECRET" >> $GITHUB_OUTPUT
 
       - name: Run golden-path smoke
+        # Smoke targets the custom domain (the URL real users hit) so DNS/cert
+        # and the routing-layer in front of Cloud Run are part of the SLO check.
         env:
-          SMOKE_BASE_URL: ${{ steps.url.outputs.url }}
+          SMOKE_BASE_URL: https://job-search.panibrat.com
           SMOKE_BEARER_TOKEN: ${{ secrets.SMOKE_BEARER_TOKEN }}
           SMOKE_CRON_SECRET: ${{ steps.cron_secret.outputs.value }}
         run: uv run python scripts/smoke/golden_path.py --verbose
