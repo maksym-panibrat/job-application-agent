@@ -2,7 +2,7 @@
 
 AI-powered job search assistant: ingests Greenhouse company boards, scores each role against your profile, and generates a tailored cover letter on demand.
 
-**Live demo:** https://api-2twfzafrta-uc.a.run.app
+**Live demo:** https://job-search.panibrat.com
 
 ## How it works
 
