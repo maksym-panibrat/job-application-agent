@@ -25,6 +25,27 @@ export default function Landing() {
     }
   }
 
+  // Dev-only escape hatch. Calls the deterministic test-user login endpoint
+  // (mounted only when ENVIRONMENT is development or test — see app/main.py),
+  // stores the JWT in sessionStorage, and full-page-navigates to /matches so
+  // AuthProvider re-mounts and reads the freshly-set token.
+  async function startDevLogin() {
+    setError(null)
+    setPending(true)
+    try {
+      const res = await fetch('/api/test/login', { method: 'POST' })
+      if (!res.ok) throw new Error(`test login returned ${res.status}`)
+      const data = await res.json()
+      if (!data?.access_token) throw new Error('missing access_token')
+      sessionStorage.setItem('access_token', data.access_token)
+      window.location.href = '/matches'
+    } catch (err) {
+      setPending(false)
+      setError('Dev login failed. Is the backend running with ENVIRONMENT=development?')
+      console.error('Dev login failed', err)
+    }
+  }
+
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col items-center justify-center gap-8 px-4">
       <div className="text-center max-w-lg">
@@ -50,6 +71,20 @@ export default function Landing() {
       </button>
       {error && (
         <p role="alert" className="text-sm text-red-600 -mt-4">{error}</p>
+      )}
+      {/* `import.meta.env.DEV` is a Vite compile-time constant: in production
+          builds it folds to `false` and the entire block is dead-code-eliminated.
+          The /api/test/login endpoint is also gated server-side, so this is
+          defense in depth, not the primary safety boundary. */}
+      {import.meta.env.DEV && (
+        <button
+          type="button"
+          onClick={startDevLogin}
+          disabled={pending}
+          className="text-xs text-gray-400 hover:text-gray-600 underline disabled:opacity-60 disabled:cursor-not-allowed"
+        >
+          Dev login (skip OAuth)
+        </button>
       )}
       <a href="https://github.com/maksym-panibrat/job-application-agent" className="text-sm text-gray-400 hover:text-gray-600">
         View on GitHub
