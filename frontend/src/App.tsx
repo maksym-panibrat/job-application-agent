@@ -11,6 +11,7 @@ import Matches from './pages/Matches'
 import ApplicationReview from './pages/ApplicationReview'
 import Applied from './pages/Applied'
 import Onboarding from './pages/Onboarding'
+import Settings from './pages/Settings'
 
 function ShellRoutes() {
   return (
@@ -25,7 +26,7 @@ function ShellRoutes() {
           <Route path="/matches/:id" element={<RequireAuth><ApplicationReview /></RequireAuth>} />
           <Route path="/applied" element={<RequireAuth><Applied /></RequireAuth>} />
           <Route path="/profile" element={<RequireAuth><Onboarding /></RequireAuth>} />
-          <Route path="/settings" element={<RequireAuth><Onboarding /></RequireAuth>} />
+          <Route path="/settings" element={<RequireAuth><Settings /></RequireAuth>} />
         </Routes>
       </AppShell>
       <CoachDrawer />
