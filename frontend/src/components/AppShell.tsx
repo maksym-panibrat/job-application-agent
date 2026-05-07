@@ -1,5 +1,5 @@
 import { ReactNode, useState } from 'react'
-import { Link, useNavigate, useSearchParams } from 'react-router-dom'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { IconButton } from './ui/IconButton'
 import { ActionSheet, ActionSheetItem } from './ui/ActionSheet'
@@ -11,16 +11,14 @@ export interface AppShellProps {
 
 export function AppShell({ children }: AppShellProps) {
   const { signOut, user } = useAuth()
-  const [, setParams] = useSearchParams()
+  const location = useLocation()
   const navigate = useNavigate()
   const [menuOpen, setMenuOpen] = useState(false)
 
   function openCoach() {
-    setParams((prev) => {
-      const next = new URLSearchParams(prev)
-      next.set('coach', '1')
-      return next
-    })
+    const next = new URLSearchParams(location.search)
+    next.set('coach', '1')
+    navigate({ pathname: location.pathname, search: `?${next.toString()}` })
   }
 
   return (

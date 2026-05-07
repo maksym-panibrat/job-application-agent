@@ -137,12 +137,12 @@ test.describe('Top-level navigation', () => {
     await expect(page).toHaveURL(/\/settings$/)
     await expect(page.getByRole('heading', { name: /^Settings$/i })).toBeVisible()
 
-    // Coach button toggles the ?coach=1 query param (Plan C will render the
-    // actual drawer; for now we only assert the URL contract).
+    // Coach button opens the drawer and sets the ?coach=1 query param.
     await page.goto('/')
     await page.waitForLoadState('networkidle')
     await page.getByRole('button', { name: 'Coach' }).click()
     await expect(page).toHaveURL(/[?&]coach=1/)
+    await expect(page.getByRole('dialog', { name: 'Coach' })).toBeVisible()
 
     // Sign out is reachable as a button in the header.
     await expect(page.getByRole('button', { name: /Sign out/i })).toBeVisible()
