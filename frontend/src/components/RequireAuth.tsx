@@ -5,11 +5,11 @@ export default function RequireAuth({ children }: { children: React.ReactNode })
   const { user, loading } = useAuth()
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-screen text-gray-500">
+      <div className="flex items-center justify-center min-h-screen text-muted">
         Loading...
       </div>
     )
   }
-  if (!user) return <Navigate to="/" replace />
+  if (!user) return <Navigate to="/login" replace />
   return <>{children}</>
 }
