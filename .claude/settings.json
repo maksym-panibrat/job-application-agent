@@ -44,15 +44,5 @@
         ]
       }
     ]
-  },
-  "enabledPlugins": {
-    "python-development@claude-code-workflows": true,
-    "javascript-typescript@claude-code-workflows": true,
-    "llm-application-dev@claude-code-workflows": true,
-    "comprehensive-review@claude-code-workflows": true,
-    "api-testing-observability@claude-code-workflows": true,
-    "backend-api-security@claude-code-workflows": true,
-    "database-migrations@claude-code-workflows": true,
-    "cicd-automation@claude-code-workflows": true
   }
 }

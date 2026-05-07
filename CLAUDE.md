@@ -66,30 +66,3 @@ No Sentry / no external SaaS. Errors flow to GCP Cloud Error Reporting via struc
 ## Hard app-level limits (not DB constraints)
 
 50 work experiences/profile · 500 matched applications/user · 5 MB resume · 14-day job staleness · 7-day search auto-pause.
-
-## Automaton overrides (local; supersede plugin defaults)
-
-These directives supersede rules shipped by the `automaton` plugin, per the harness's documented instruction priority (CLAUDE.md > skills > default system prompt). When a plugin skill's text disagrees with a directive in this section while running in this repo, this section wins.
-
-### `automaton:interpreting-an-issue` Step 1 — relaxed header check
-
-**Override.** When running `automaton:interpreting-an-issue` (directly via `/dry-run NN`, or as Step 3 of `automaton:working-an-issue`) in this repo, replace the strict `{## Goal, ## Acceptance criteria, ## Verification}` requirement with the relaxed check below. Do NOT halt with reason "spec template incomplete" if the relaxed check passes.
-
-**Relaxed check.** The issue body satisfies the gate when it contains:
-
-1. **A goal slot** — any one of: `## Goal`, `## Symptoms`, `## Problem`.
-2. **An acceptance slot** — any one of: `## Acceptance criteria`, `## Acceptance Criteria`, `## Acceptance`.
-3. **(Optional) Verification.** A `## Verification` block is encouraged but not required. If absent, Step 5 falls back to the project default verification commands below.
-
-**Verification fallback (Step 5 when issue has no `## Verification`).** Pick by which paths the implementation actually touched:
-
-| Touched paths | Fallback command(s) |
-|---|---|
-| `frontend/**` only | `cd frontend && npm run typecheck && npm run test -- --run` |
-| `app/**` or `tests/**` only | `uv run pytest tests/unit/` |
-| both | both, in order: backend first, then frontend |
-| neither (e.g., docs-only) | skip Step 5 |
-
-**What stays strict.** The interpreter agent's own halt thresholds at Step 7 (`ambiguity_score >= 2` and `estimated_complexity == "large"`) are unchanged. Those are the real gates; the header check was a dumb pre-filter.
-
-**Why this is loose.** The strict three-header check rejects perfectly clear issues (e.g., bug reports using `## Symptoms`) that the interpreter agent would have no trouble with. The interpreter already has its own ambiguity and complexity gates — they catch real problems instead of header-naming cosmetics. See `docs/superpowers/specs/2026-05-07-automaton-issue-template-local-override-design.md`.
