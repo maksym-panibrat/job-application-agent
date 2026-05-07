@@ -203,7 +203,12 @@ export const api = {
   getMe: () => apiFetch<{ id: string; email: string }>('/api/users/me'),
 
   // Chat
-  sendMessage: (message: string, onChunk: (text: string) => void, onError?: (err: Error) => void): Promise<void> => {
+  sendMessage: (
+    message: string,
+    onChunk: (text: string) => void,
+    onError?: (err: Error) => void,
+    onMeta?: (meta: Record<string, unknown>) => void,
+  ): Promise<void> => {
     const token = sessionStorage.getItem('access_token')
     const headers: Record<string, string> = { 'Content-Type': 'application/json' }
     if (token) headers['Authorization'] = `Bearer ${token}`
@@ -221,17 +226,28 @@ export const api = {
       if (!res.body) return
       const reader = res.body.getReader()
       const decoder = new TextDecoder()
+      let pendingEvent: string | null = null
       while (true) {
         const { done, value } = await reader.read()
         if (done) break
         const text = decoder.decode(value)
         for (const line of text.split('\n')) {
+          if (line.startsWith('event: ')) {
+            pendingEvent = line.slice(7).trim()
+            continue
+          }
           if (line.startsWith('data: ')) {
             const data = line.slice(6)
+            const eventType = pendingEvent
+            pendingEvent = null
             if (data === '[DONE]') return
             try {
               const parsed = JSON.parse(data)
-              if (parsed.content) onChunk(parsed.content)
+              if (eventType === 'meta' && onMeta) {
+                onMeta(parsed)
+              } else if (parsed.content) {
+                onChunk(parsed.content)
+              }
             } catch {
               const err = new Error(`stream parse error: ${data}`)
               if (onError) { onError(err); return }
