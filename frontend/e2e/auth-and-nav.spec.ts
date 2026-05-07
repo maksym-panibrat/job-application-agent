@@ -106,10 +106,10 @@ test.describe('Top-level navigation', () => {
     await page.goto('/')
     await page.waitForLoadState('networkidle')
 
-    // The new Feed has status chips ("Pending") and a "Sync now" button — no
-    // "Job Matches" heading or "Sync jobs" button anymore. Two "Sync now"
-    // buttons may be present (header SyncRow + EmptyState CTA when no
-    // matches), so use first().
+    // The new Feed has status chips ("Pending"). Sync now lives in the AppShell
+    // header (relocated from the feed sticky region in #101), so it's available
+    // on every page. Use first() because the mobile hamburger menu can also
+    // contain a "Sync now" entry once opened.
     await expect(page.getByRole('button', { name: /pending/i })).toBeVisible()
     await expect(page.getByRole('button', { name: /sync now/i }).first()).toBeVisible()
     expect(failures, `5xx responses hit: ${failures.join(', ')}`).toEqual([])

@@ -64,16 +64,19 @@ export function ActionSheet({ open, onClose, title, heading, children }: ActionS
 export interface ActionSheetItemProps {
   onClick?: () => void
   intent?: 'default' | 'danger'
+  disabled?: boolean
   children: ReactNode
 }
 
-export function ActionSheetItem({ onClick, intent = 'default', children }: ActionSheetItemProps) {
+export function ActionSheetItem({ onClick, intent = 'default', disabled = false, children }: ActionSheetItemProps) {
   return (
     <button
       type="button"
       onClick={onClick}
+      disabled={disabled}
       className={cn(
         'text-left px-4 py-3 text-sm border-b border-border last:border-b-0 hover:bg-surface',
+        'disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-transparent',
         intent === 'danger' ? 'text-danger' : 'text-text',
       )}
     >

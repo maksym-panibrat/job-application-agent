@@ -4,12 +4,10 @@ import { api, Application } from '../api/client'
 import { track } from '../lib/track'
 import { useStatusFilter } from '../lib/useStatusFilter'
 import { StatusChips, StatusCounts } from '../components/feed/StatusChips'
-import { SyncRow } from '../components/feed/SyncRow'
 import { MatchCard } from '../components/feed/MatchCard'
 import { ProfileCompletenessCard } from '../components/feed/ProfileCompletenessCard'
 import { SkeletonCard } from '../components/ui/Skeleton'
 import { EmptyState } from '../components/ui/EmptyState'
-import { Button } from '../components/ui/Button'
 
 const SERVER_STATUS_BY_FILTER = {
   pending: 'pending_review',
@@ -67,10 +65,7 @@ export default function Matches() {
       {profile && <ProfileCompletenessCard profile={profile} />}
 
       <div className="sticky top-14 z-10 -mx-4 px-4 py-3 bg-bg/90 backdrop-blur border-b border-border">
-        <div className="flex items-center justify-between gap-3 mb-2">
-          <StatusChips counts={counts} />
-        </div>
-        <SyncRow />
+        <StatusChips counts={counts} />
       </div>
 
       <div className="mt-4">
@@ -84,11 +79,8 @@ export default function Matches() {
           <EmptyState
             title={status === 'pending' ? 'Caught up' : `No ${status} matches`}
             description={status === 'pending'
-              ? 'We\'ll surface new matches as boards refresh.'
+              ? 'We’ll surface new matches as boards refresh. Tap the refresh icon in the header to fetch now.'
               : `Nothing in your ${status} list yet.`}
-            action={status === 'pending'
-              ? <Button size="sm" variant="secondary" onClick={() => window.scrollTo({ top: 0 })}>Sync now</Button>
-              : undefined}
           />
         ) : (
           <div className="space-y-2">
