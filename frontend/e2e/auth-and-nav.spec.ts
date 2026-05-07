@@ -83,7 +83,7 @@ test.describe('Top-level navigation', () => {
     await loginAsTestUser(page)
   })
 
-  test('Matches page loads and lists 0+ applications without server error', async ({ page, request }) => {
+  test('Feed page loads and lists 0+ applications without server error', async ({ page, request }) => {
     // Swallow the budget-status endpoint so the amber banner doesn't shift assertions.
     await page.route('**/api/status', (route) =>
       route.fulfill({
@@ -102,11 +102,16 @@ test.describe('Top-level navigation', () => {
       }
     })
 
-    await page.goto('/matches')
+    // Plan B: / is the new Feed (auth-gated). /matches is still aliased.
+    await page.goto('/')
     await page.waitForLoadState('networkidle')
 
-    await expect(page.getByRole('heading', { name: /Job Matches/i })).toBeVisible()
-    await expect(page.getByRole('button', { name: /Sync jobs/i })).toBeVisible()
+    // The new Feed has status chips ("Pending") and a "Sync now" button — no
+    // "Job Matches" heading or "Sync jobs" button anymore. Two "Sync now"
+    // buttons may be present (header SyncRow + EmptyState CTA when no
+    // matches), so use first().
+    await expect(page.getByRole('button', { name: /pending/i })).toBeVisible()
+    await expect(page.getByRole('button', { name: /sync now/i }).first()).toBeVisible()
     expect(failures, `5xx responses hit: ${failures.join(', ')}`).toEqual([])
   })
 
@@ -119,22 +124,23 @@ test.describe('Top-level navigation', () => {
       })
     )
 
-    await page.goto('/matches')
+    await page.goto('/')
     await page.waitForLoadState('networkidle')
-    await expect(page.getByRole('heading', { name: /Job Matches/i })).toBeVisible()
+    // The new Feed shows status chips, not a "Job Matches" heading.
+    await expect(page.getByRole('button', { name: /pending/i })).toBeVisible()
 
     // Brand link returns to root.
     await expect(page.getByRole('link', { name: 'Job Agent' })).toHaveAttribute('href', '/')
 
-    // Settings → opens the legacy Onboarding/Profile page (Plan B will replace
+    // Settings → opens the legacy Onboarding/Profile page (Plan C will replace
     // it with a structured Settings page). Until then /settings aliases to it.
     await page.getByRole('link', { name: 'Settings' }).click()
     await expect(page).toHaveURL(/\/settings$/)
     await expect(page.getByRole('heading', { name: /Profile Setup/i })).toBeVisible()
 
-    // Coach button toggles the ?coach=1 query param (Plan B will render the
-    // actual drawer; for Plan A we only assert the URL contract).
-    await page.goto('/matches')
+    // Coach button toggles the ?coach=1 query param (Plan C will render the
+    // actual drawer; for now we only assert the URL contract).
+    await page.goto('/')
     await page.waitForLoadState('networkidle')
     await page.getByRole('button', { name: 'Coach' }).click()
     await expect(page).toHaveURL(/[?&]coach=1/)
