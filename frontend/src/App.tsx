@@ -17,14 +17,14 @@ function ShellRoutes() {
       <BudgetBanner />
       <AppShell>
         <Routes>
-          <Route path="/" element={<Landing />} />
+          <Route path="/" element={<RequireAuth><Matches /></RequireAuth>} />
+          <Route path="/login" element={<Landing />} />
           <Route path="/auth/callback" element={<AuthCallback />} />
           <Route path="/matches" element={<RequireAuth><Matches /></RequireAuth>} />
           <Route path="/matches/:id" element={<RequireAuth><ApplicationReview /></RequireAuth>} />
           <Route path="/applied" element={<RequireAuth><Applied /></RequireAuth>} />
           <Route path="/profile" element={<RequireAuth><Onboarding /></RequireAuth>} />
           <Route path="/settings" element={<RequireAuth><Onboarding /></RequireAuth>} />
-          <Route path="/login" element={<Landing />} />
         </Routes>
       </AppShell>
     </>
