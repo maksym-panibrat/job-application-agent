@@ -2,6 +2,7 @@ import { Routes, Route } from 'react-router-dom'
 import { AuthProvider } from './context/AuthContext'
 import { ToastProvider } from './components/ui/Toast'
 import { AppShell } from './components/AppShell'
+import { CoachDrawer } from './components/coach/CoachDrawer'
 import BudgetBanner from './components/BudgetBanner'
 import RequireAuth from './components/RequireAuth'
 import Landing from './pages/Landing'
@@ -27,6 +28,7 @@ function ShellRoutes() {
           <Route path="/settings" element={<RequireAuth><Onboarding /></RequireAuth>} />
         </Routes>
       </AppShell>
+      <CoachDrawer />
     </>
   )
 }
