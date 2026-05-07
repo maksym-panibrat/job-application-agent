@@ -2,6 +2,7 @@
 # and alembic autogenerate can discover every table.
 
 from app.models.application import Application, GeneratedDocument  # noqa: F401
+from app.models.event import Event  # noqa: F401
 from app.models.job import Job  # noqa: F401
 from app.models.llm_status import LLMStatus  # noqa: F401
 from app.models.oauth_account import OAuthAccount  # noqa: F401
@@ -13,6 +14,7 @@ from app.models.user_profile import Skill, UserProfile, WorkExperience  # noqa: 
 
 __all__ = [
     "User",
+    "Event",
     "UserProfile",
     "Skill",
     "WorkExperience",
