@@ -132,11 +132,10 @@ test.describe('Top-level navigation', () => {
     // Brand link returns to root.
     await expect(page.getByRole('link', { name: 'Job Agent' })).toHaveAttribute('href', '/')
 
-    // Settings → opens the legacy Onboarding/Profile page (Plan C will replace
-    // it with a structured Settings page). Until then /settings aliases to it.
+    // Settings → renders the structured Settings page (Plan C).
     await page.getByRole('link', { name: 'Settings' }).click()
     await expect(page).toHaveURL(/\/settings$/)
-    await expect(page.getByRole('heading', { name: /Profile Setup/i })).toBeVisible()
+    await expect(page.getByRole('heading', { name: /^Settings$/i })).toBeVisible()
 
     // Coach button toggles the ?coach=1 query param (Plan C will render the
     // actual drawer; for now we only assert the URL contract).
