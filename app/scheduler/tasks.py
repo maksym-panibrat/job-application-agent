@@ -168,10 +168,22 @@ async def run_daily_maintenance() -> dict:
         if trimmed:
             await log.ainfo("maintenance.applications_trimmed", count=trimmed)
 
+        # Events retention — delete > 90 days old (spec section 7).
+        cutoff = datetime.now(UTC) - timedelta(days=90)
+        events_result = await session.execute(
+            text("DELETE FROM events WHERE occurred_at < :cutoff"),
+            {"cutoff": cutoff},
+        )
+        await session.commit()
+        events_deleted = events_result.rowcount
+        if events_deleted:
+            await log.ainfo("maintenance.events_deleted", count=events_deleted)
+
     return {
         "stale_jobs": stale,
         "searches_paused": len(expired_profiles),
         "applications_trimmed": trimmed,
+        "events_deleted": events_deleted,
     }
 
 
