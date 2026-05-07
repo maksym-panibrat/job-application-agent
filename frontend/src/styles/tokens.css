@@ -16,8 +16,8 @@
 
   /* Text */
   --c-text: #f9fafb;
-  --c-text-muted: #9ca3af;
-  --c-text-subtle: #6b7280;
+  --c-text-muted: #cbd5e1;   /* gray-300 — was #9ca3af; bumped for readability on dark bg */
+  --c-text-subtle: #9ca3af;  /* gray-400 — was #6b7280; bumped to pass WCAG AA */
 
   /* Accent (purple) */
   --c-accent: #a78bfa;

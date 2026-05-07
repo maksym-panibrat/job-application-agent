@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { api } from './client'
 
 function mockFetch(status: number, body: unknown, headers?: Record<string, string>) {
@@ -88,6 +88,60 @@ describe('api client', () => {
       const received: string[] = []
       await api.sendMessage('hi', (chunk) => received.push(chunk))
       expect(received).toEqual(['Hi'])
+    })
+  })
+
+  describe('sendMessage SSE parsing', () => {
+    let originalFetch: typeof fetch
+
+    afterEach(() => {
+      if (originalFetch) globalThis.fetch = originalFetch
+    })
+
+    function mockSseResponse(body: string): Response {
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode(body))
+          controller.close()
+        },
+      })
+      return new Response(stream, { status: 200, headers: { 'Content-Type': 'text/event-stream' } })
+    }
+
+    it('forwards content chunks to onChunk', async () => {
+      originalFetch = globalThis.fetch
+      const body = 'data: {"content":"hello"}\n\ndata: {"content":" world"}\n\ndata: [DONE]\n\n'
+      globalThis.fetch = vi.fn().mockResolvedValue(mockSseResponse(body))
+
+      const chunks: string[] = []
+      await api.sendMessage('hi', (c) => chunks.push(c))
+      expect(chunks.join('')).toBe('hello world')
+    })
+
+    it('fires onMeta when an event: meta line precedes a JSON data line', async () => {
+      originalFetch = globalThis.fetch
+      const body =
+        'data: {"content":"hi"}\n\n' +
+        'event: meta\ndata: {"profile_mutated": true}\n\n' +
+        'data: [DONE]\n\n'
+      globalThis.fetch = vi.fn().mockResolvedValue(mockSseResponse(body))
+
+      const onMeta = vi.fn()
+      await api.sendMessage('hi', () => {}, undefined, onMeta)
+      expect(onMeta).toHaveBeenCalledWith({ profile_mutated: true })
+    })
+
+    it('ignores unknown event types', async () => {
+      originalFetch = globalThis.fetch
+      const body =
+        'data: {"content":"hi"}\n\n' +
+        'event: ping\ndata: {"x":1}\n\n' +
+        'data: [DONE]\n\n'
+      globalThis.fetch = vi.fn().mockResolvedValue(mockSseResponse(body))
+
+      const onMeta = vi.fn()
+      await api.sendMessage('hi', () => {}, undefined, onMeta)
+      expect(onMeta).not.toHaveBeenCalled()
     })
   })
 })

@@ -152,3 +152,106 @@ async def test_chat_session_persists_across_messages(test_app):
             collected.append("".join(chunks))
 
     assert all(len(c) > 0 for c in collected), "All messages should receive responses"
+
+
+@pytest.mark.asyncio
+async def test_chat_emits_meta_event_when_profile_mutated(test_app):
+    """When the agent (or its tools) mutates the user's profile during a turn,
+    chat must emit an `event: meta\\ndata: {"profile_mutated": true}` SSE
+    event before the terminal [DONE]. The frontend uses this to surface an
+    inline 'Search now' CTA under the mutating reply (Plan C, Coach drawer)."""
+    from datetime import UTC, datetime
+    from unittest.mock import MagicMock, patch
+
+    from langchain_core.messages import AIMessageChunk
+    from sqlalchemy import select, update
+
+    from app.database import get_session_factory
+    from app.models.user_profile import UserProfile
+
+    # Make sure the dev profile exists
+    await test_app.get("/api/profile")
+
+    factory = get_session_factory()
+    async with factory() as s:
+        row = (await s.execute(select(UserProfile).limit(1))).scalar_one()
+        profile_id = row.id
+
+    async def stream_then_mutate(*args, **kwargs):
+        # Yield a single text chunk
+        yield (AIMessageChunk(content="ok"), {})
+        # Bump profile.updated_at to simulate an agent tool write
+        async with factory() as s:
+            await s.execute(
+                update(UserProfile)
+                .where(UserProfile.id == profile_id)
+                .values(updated_at=datetime.now(UTC))
+            )
+            await s.commit()
+
+    fake_graph = MagicMock()
+    fake_graph.astream = stream_then_mutate
+
+    from app.main import app as fastapi_app
+
+    prev_checkpointer = getattr(fastapi_app.state, "checkpointer", None)
+    fastapi_app.state.checkpointer = MagicMock()
+    try:
+        with patch("app.agents.onboarding.build_graph", return_value=fake_graph):
+            async with test_app.stream(
+                "POST",
+                "/api/chat/messages",
+                json={"message": "set my target roles"},
+            ) as resp:
+                assert resp.status_code == 200
+                lines = []
+                async for line in resp.aiter_lines():
+                    lines.append(line)
+                    if line == "data: [DONE]":
+                        break
+    finally:
+        fastapi_app.state.checkpointer = prev_checkpointer
+
+    joined = "\n".join(lines)
+    assert "event: meta" in joined, f"missing meta event; got:\n{joined}"
+    assert '"profile_mutated": true' in joined, f"missing payload; got:\n{joined}"
+
+    # Order: meta MUST appear before [DONE]
+    meta_idx = next(i for i, line in enumerate(lines) if line == "event: meta")
+    done_idx = next(i for i, line in enumerate(lines) if line == "data: [DONE]")
+    assert meta_idx < done_idx, "meta event must precede [DONE]"
+
+
+@pytest.mark.asyncio
+async def test_chat_does_not_emit_meta_when_profile_unchanged(test_app):
+    """No mutation during the turn → no meta event."""
+    from unittest.mock import MagicMock, patch
+
+    from langchain_core.messages import AIMessageChunk
+
+    await test_app.get("/api/profile")
+
+    async def stream_only(*args, **kwargs):
+        yield (AIMessageChunk(content="hi"), {})
+
+    fake_graph = MagicMock()
+    fake_graph.astream = stream_only
+
+    from app.main import app as fastapi_app
+
+    prev_checkpointer = getattr(fastapi_app.state, "checkpointer", None)
+    fastapi_app.state.checkpointer = MagicMock()
+    try:
+        with patch("app.agents.onboarding.build_graph", return_value=fake_graph):
+            async with test_app.stream(
+                "POST",
+                "/api/chat/messages",
+                json={"message": "hi"},
+            ) as resp:
+                assert resp.status_code == 200
+                joined = "\n".join([ln async for ln in resp.aiter_lines() if ln])
+    finally:
+        fastapi_app.state.checkpointer = prev_checkpointer
+
+    assert "event: meta" not in joined, f"unexpected meta event in:\n{joined}"
+    assert "[DONE]" in joined
