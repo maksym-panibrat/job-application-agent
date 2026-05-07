@@ -1,0 +1,92 @@
+import { ReactNode, useState } from 'react'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
+import { useAuth } from '../context/AuthContext'
+import { IconButton } from './ui/IconButton'
+import { ActionSheet, ActionSheetItem } from './ui/ActionSheet'
+import { Settings, Coach, Hamburger } from './ui/icons'
+
+export interface AppShellProps {
+  children: ReactNode
+}
+
+export function AppShell({ children }: AppShellProps) {
+  const { signOut, user } = useAuth()
+  const [, setParams] = useSearchParams()
+  const navigate = useNavigate()
+  const [menuOpen, setMenuOpen] = useState(false)
+
+  function openCoach() {
+    setParams((prev) => {
+      const next = new URLSearchParams(prev)
+      next.set('coach', '1')
+      return next
+    })
+  }
+
+  return (
+    <div className="min-h-screen bg-bg text-text">
+      <header className="sticky top-0 z-30 bg-surface border-b border-border">
+        <div className="max-w-3xl mx-auto px-4 h-14 flex items-center justify-between gap-2">
+          <Link to="/" className="font-bold text-text text-sm tracking-tight">Job Agent</Link>
+
+          <nav className="flex items-center gap-1">
+            {user && (
+              <>
+                <div className="hidden md:flex items-center gap-1">
+                  <Link
+                    to="/settings"
+                    aria-label="Settings"
+                    className="inline-flex items-center justify-center w-11 h-11 rounded-md-token text-muted hover:bg-surface-2 hover:text-text"
+                  >
+                    <Settings className="w-5 h-5" />
+                  </Link>
+                  <IconButton aria-label="Coach" onClick={openCoach}>
+                    <Coach className="w-5 h-5" />
+                  </IconButton>
+                  <button
+                    type="button"
+                    onClick={() => signOut()}
+                    className="px-3 py-1.5 text-sm text-muted hover:text-text"
+                  >
+                    Sign out
+                  </button>
+                </div>
+
+                <IconButton
+                  aria-label="Open menu"
+                  className="md:hidden"
+                  onClick={() => setMenuOpen(true)}
+                >
+                  <Hamburger className="w-5 h-5" />
+                </IconButton>
+              </>
+            )}
+          </nav>
+        </div>
+      </header>
+
+      <main className="max-w-3xl mx-auto px-4 py-6">{children}</main>
+
+      <ActionSheet
+        open={menuOpen}
+        onClose={() => setMenuOpen(false)}
+        title="Menu"
+        heading="Menu"
+      >
+        <ActionSheetItem
+          onClick={() => { setMenuOpen(false); navigate('/settings') }}
+        >
+          Settings
+        </ActionSheetItem>
+        <ActionSheetItem
+          onClick={() => { setMenuOpen(false); openCoach() }}
+        >
+          Coach
+        </ActionSheetItem>
+        <ActionSheetItem intent="danger" onClick={() => { setMenuOpen(false); signOut() }}>
+          Sign out
+        </ActionSheetItem>
+      </ActionSheet>
+    </div>
+  )
+}
