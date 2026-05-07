@@ -1,9 +1,10 @@
-import { useMemo } from 'react'
+import { useMemo, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { api, Profile } from '../../api/client'
 import { Button } from '../ui/Button'
 import { useToast } from '../ui/Toast'
+import { track } from '../../lib/track'
 
 interface CheckItem {
   id: string
@@ -28,6 +29,13 @@ export function ProfileCompletenessCard({ profile }: { profile: Profile }) {
   const items = useMemo(() => checks(profile), [profile])
   const allDone = items.every((c) => c.done)
   const paused = profile.search_active === false
+
+  useEffect(() => {
+    const checksDone = items.filter(c => c.done).length
+    track('profile.completeness_viewed', {
+      checks_done: checksDone, checks_total: items.length, paused,
+    })
+  }, [items, paused])
 
   const toggle = useMutation({
     mutationFn: (active: boolean) => api.toggleSearch(active),

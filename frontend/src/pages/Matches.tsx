@@ -1,6 +1,7 @@
-import { useMemo } from 'react'
+import { useMemo, useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { api, Application } from '../api/client'
+import { track } from '../lib/track'
 import { useStatusFilter } from '../lib/useStatusFilter'
 import { StatusChips, StatusCounts } from '../components/feed/StatusChips'
 import { SyncRow } from '../components/feed/SyncRow'
@@ -44,6 +45,22 @@ export default function Matches() {
     applied:   status === 'applied'   ? apps.data : appliedQ.data,
     dismissed: status === 'dismissed' ? apps.data : dismissedQ.data,
   }), [status, apps.data, pendingQ.data, appliedQ.data, dismissedQ.data])
+
+  useEffect(() => {
+    if (apps.isLoading) return
+    track('feed.viewed', {
+      status_filter: status,
+      count_pending: counts.pending,
+      count_applied: counts.applied,
+      count_dismissed: counts.dismissed,
+    })
+  }, [status, apps.isLoading, counts.pending, counts.applied, counts.dismissed])
+
+  useEffect(() => {
+    if (!apps.isLoading && (apps.data?.length ?? 0) === 0) {
+      track('feed.empty_state_shown', { reason: status === 'pending' ? 'no_matches' : `no_${status}` })
+    }
+  }, [apps.isLoading, apps.data?.length, status])
 
   return (
     <div>

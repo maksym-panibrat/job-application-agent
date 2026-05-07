@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useEffect, useState } from 'react'
 import { api } from '../api/client'
+import { track } from '../lib/track'
 
 interface User {
   id: string
@@ -48,6 +49,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [])
 
   const signOut = () => {
+    track('auth.signed_out')
     sessionStorage.removeItem('access_token')
     setToken(null)
     setUser(null)

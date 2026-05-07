@@ -73,9 +73,7 @@ async def test_mark_applied_transitions_status(
 
 
 @pytest.mark.asyncio
-async def test_mark_applied_idempotent(
-    client, seeded_user, auth_headers, sample_application
-):
+async def test_mark_applied_idempotent(client, seeded_user, auth_headers, sample_application):
     # First call
     r1 = await client.post(
         f"/api/applications/{sample_application.id}/mark-applied",
@@ -92,3 +90,33 @@ async def test_mark_applied_idempotent(
     assert r2.status_code == 200
     # applied_at should not change on subsequent calls
     assert r2.json()["applied_at"] == first_at
+
+
+@pytest.mark.asyncio
+async def test_review_patch_accepts_pending_review_for_undo(
+    client, seeded_user, auth_headers, sample_application, db_session
+):
+    """PATCH accepts 'pending_review' so the UI's 'Move back to pending' can
+    roll back an accidental Open posting click. applied_at is cleared on
+    the transition."""
+    # First move the application to applied so applied_at is set.
+    r = await client.post(
+        f"/api/applications/{sample_application.id}/mark-applied",
+        headers=auth_headers,
+    )
+    assert r.status_code == 200
+    await db_session.refresh(sample_application)
+    assert sample_application.applied_at is not None
+
+    # Now PATCH back to pending_review.
+    r2 = await client.patch(
+        f"/api/applications/{sample_application.id}",
+        json={"status": "pending_review"},
+        headers=auth_headers,
+    )
+    assert r2.status_code == 200, r2.text
+    assert r2.json()["status"] == "pending_review"
+
+    await db_session.refresh(sample_application)
+    assert sample_application.status == "pending_review"
+    assert sample_application.applied_at is None

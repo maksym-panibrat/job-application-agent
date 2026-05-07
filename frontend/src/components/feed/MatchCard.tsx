@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { api, Application } from '../../api/client'
+import { track } from '../../lib/track'
 import { Card } from '../ui/Card'
 import { IconButton } from '../ui/IconButton'
 import { ActionSheet, ActionSheetItem } from '../ui/ActionSheet'
@@ -43,7 +44,7 @@ export function MatchCard({ app }: { app: Application }) {
   const age = relativeAge(job.posted_at) || relativeAge(app.created_at)
 
   return (
-    <SwipeableCard onCommit={() => dismiss.mutate()} actionLabel="Remove">
+    <SwipeableCard onCommit={() => { track('match.dismissed', { application_id: app.id, source: 'swipe', score: app.match_score }); dismiss.mutate() }} actionLabel="Remove">
       <div className="relative">
         {/* Kebab in absolute corner — far from natural tap zone, doesn't interfere with the card link. */}
         <div className="absolute top-1 right-1 z-10">
@@ -55,7 +56,7 @@ export function MatchCard({ app }: { app: Application }) {
           </IconButton>
         </div>
 
-        <Card as="rrlink" to={`/matches/${app.id}`} interactive className="block pr-12">
+        <Card as="rrlink" to={`/matches/${app.id}`} interactive onClick={() => track('match.card_opened', { application_id: app.id, score: app.match_score })} className="block pr-12">
           <div className="flex items-center gap-2 flex-wrap">
             <ScoreBadge score={app.match_score} />
             <GenerationBadge status={app.generation_status} />
@@ -83,7 +84,11 @@ export function MatchCard({ app }: { app: Application }) {
           }}>
             Open original posting ↗
           </ActionSheetItem>
-          <ActionSheetItem intent="danger" onClick={() => { setMenuOpen(false); dismiss.mutate() }}>
+          <ActionSheetItem intent="danger" onClick={() => {
+            setMenuOpen(false)
+            track('match.dismissed', { application_id: app.id, source: 'kebab', score: app.match_score })
+            dismiss.mutate()
+          }}>
             Dismiss
           </ActionSheetItem>
         </ActionSheet>

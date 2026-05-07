@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../api/client'
 import { useToast } from '../ui/Toast'
+import { track } from '../../lib/track'
 
 export interface TargetSlugsSectionProps {
   slugs: { greenhouse?: string[]; lever?: string[]; ashby?: string[] }
@@ -30,12 +31,14 @@ export function TargetSlugsSection({ slugs }: TargetSlugsSectionProps) {
     if (!draft) return
     const existing = slugs[key] ?? []
     if (existing.includes(draft)) return
+    track('settings.slug_added', { provider: key })
     patch.mutate({ ...slugs, [key]: [...existing, draft] })
     setDrafts((d) => ({ ...d, [key]: '' }))
   }
 
   function remove(key: 'greenhouse' | 'lever' | 'ashby', s: string) {
     const existing = slugs[key] ?? []
+    track('settings.slug_removed', { provider: key })
     patch.mutate({ ...slugs, [key]: existing.filter((x) => x !== s) })
   }
 

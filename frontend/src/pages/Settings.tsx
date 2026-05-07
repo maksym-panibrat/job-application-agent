@@ -1,5 +1,7 @@
+import { useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../api/client'
+import { track } from '../lib/track'
 import { SearchToggleSection } from '../components/settings/SearchToggleSection'
 import { ResumeSection } from '../components/settings/ResumeSection'
 import { TargetSlugsSection } from '../components/settings/TargetSlugsSection'
@@ -8,6 +10,8 @@ import { ProfileSummary } from '../components/settings/ProfileSummary'
 import { AccountSection } from '../components/settings/AccountSection'
 
 export default function Settings() {
+  useEffect(() => { track('settings.viewed') }, [])
+
   const { data: profile, isLoading } = useQuery({
     queryKey: ['profile'],
     queryFn: api.getProfile,
