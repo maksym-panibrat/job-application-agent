@@ -3,6 +3,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../api/client'
 import { Button } from '../ui/Button'
 import { useToast } from '../ui/Toast'
+import { track } from '../../lib/track'
 
 interface Message {
   role: 'user' | 'assistant'
@@ -44,6 +45,7 @@ export function Coach({ initialPrompt }: CoachProps) {
 
   async function send(text: string) {
     if (!text.trim() || sending) return
+    track('coach.message_sent', { length: text.length })
     setInput('')
     setSending(true)
     setMessages((prev) => [...prev, { role: 'user', content: text }])
@@ -61,6 +63,7 @@ export function Coach({ initialPrompt }: CoachProps) {
           })
         },
         () => {
+          track('coach.message_failed', { reason: 'stream_error' })
           setMessages((prev) => {
             const out = [...prev]
             out[out.length - 1] = {
@@ -133,7 +136,7 @@ export function Coach({ initialPrompt }: CoachProps) {
                   <Button
                     size="sm"
                     pending={triggerSync.isPending}
-                    onClick={() => triggerSync.mutate()}
+                    onClick={() => { track('coach.search_now_clicked'); triggerSync.mutate() }}
                   >
                     ✦ Search now
                   </Button>

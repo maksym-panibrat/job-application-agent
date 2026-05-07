@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
+import { track } from '../lib/track'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import { IconButton } from '../components/ui/IconButton'
@@ -89,7 +90,11 @@ export default function ApplicationReview() {
           Open original posting ↗
         </ActionSheetItem>
         {app.status === 'applied' && (
-          <ActionSheetItem onClick={() => { setMenuOpen(false); moveBackToPending.mutate() }}>
+          <ActionSheetItem onClick={() => {
+            setMenuOpen(false)
+            track('match.unapplied', { application_id: id })
+            moveBackToPending.mutate()
+          }}>
             Move back to pending
           </ActionSheetItem>
         )}

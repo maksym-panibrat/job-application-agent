@@ -1,6 +1,8 @@
+import { useEffect } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { Drawer } from '../ui/Drawer'
 import { Coach } from './Coach'
+import { track } from '../../lib/track'
 
 const PROMPT_BY_SLUG: Record<string, string> = {
   set_resume:    'Help me upload or describe my resume.',
@@ -15,6 +17,12 @@ export function CoachDrawer() {
   const open = params.get('coach') === '1'
   const slug = params.get('prompt')
   const initialPrompt = slug ? PROMPT_BY_SLUG[slug] : undefined
+
+  useEffect(() => {
+    if (open) {
+      track('coach.opened', { source: 'deep_link', prompt_slug: slug ?? null })
+    }
+  }, [open, slug])
 
   function close() {
     setParams((prev) => {

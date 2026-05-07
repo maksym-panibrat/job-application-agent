@@ -1,5 +1,6 @@
 import { useCallback } from 'react'
 import { useSearchParams } from 'react-router-dom'
+import { track } from './track'
 
 export type StatusFilter = 'pending' | 'applied' | 'dismissed'
 
@@ -23,6 +24,7 @@ export function useStatusFilter(): UseStatusFilterResult {
   const status = parse(params.get('status'))
 
   const setStatus = useCallback((next: StatusFilter) => {
+    if (next !== status) track('feed.status_filter_changed', { from: status, to: next })
     setParams(
       (prev) => {
         const out = new URLSearchParams(prev)
@@ -32,7 +34,7 @@ export function useStatusFilter(): UseStatusFilterResult {
       },
       { replace: true },
     )
-  }, [setParams])
+  }, [setParams, status])
 
   return { status, setStatus }
 }

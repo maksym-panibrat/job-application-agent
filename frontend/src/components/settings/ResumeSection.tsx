@@ -3,6 +3,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../api/client'
 import { Button } from '../ui/Button'
 import { useToast } from '../ui/Toast'
+import { track } from '../../lib/track'
 
 export interface ResumeSectionProps {
   hasResume: boolean
@@ -16,6 +17,7 @@ export function ResumeSection({ hasResume }: ResumeSectionProps) {
   const upload = useMutation({
     mutationFn: (file: File) => api.uploadResume(file),
     onSuccess: (result) => {
+      track('settings.resume_uploaded', { extraction_status: result.extraction_status })
       qc.invalidateQueries({ queryKey: ['profile'] })
       if (result.extraction_status === 'llm_error') {
         show("Resume saved, but the AI is unavailable right now — edit your profile manually.", 'error')

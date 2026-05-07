@@ -3,6 +3,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { api, SyncStatus } from '../../api/client'
 import { Button } from '../ui/Button'
 import { useToast } from '../ui/Toast'
+import { track } from '../../lib/track'
 
 const POLL_MS = 3_000
 
@@ -46,10 +47,15 @@ export function SyncRow() {
   const sync = useMutation({
     mutationFn: api.triggerSync,
     onSuccess: (data) => {
+      track('feed.sync_succeeded', {
+        matched_now: data.matched_now ?? 0,
+        queued_slugs: data.queued_slugs?.length ?? 0,
+      })
       show(`Searching now — ${data.matched_now ?? 0} from cache.`, 'success')
       setTimeout(() => qc.invalidateQueries({ queryKey: ['applications'] }), 1500)
     },
     onError: (err) => {
+      track('feed.sync_failed', { error: (err as Error)?.message ?? 'unknown' })
       show((err as Error)?.message ?? 'Sync failed — try again', 'error')
     },
   })
@@ -66,7 +72,7 @@ export function SyncRow() {
         variant={isLive ? 'ghost' : 'secondary'}
         pending={sync.isPending}
         disabled={!!isLive}
-        onClick={() => sync.mutate()}
+        onClick={() => { track('feed.sync_clicked', { source: 'feed_button' }); sync.mutate() }}
         size="sm"
       >
         {sync.isPending ? 'Syncing…' : label}

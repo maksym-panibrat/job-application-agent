@@ -73,7 +73,7 @@ test.describe('Landing page — Sign in with Google', () => {
 })
 
 test.describe('Top-level navigation', () => {
-  // These tests navigate to protected routes (/matches, /applied, /profile).
+  // These tests navigate to protected routes (/matches, /settings).
   // We authenticate as the deterministic e2e test user via loginAsTestUser so
   // the app renders the authenticated nav bar. The goal isn't to test auth —
   // it's to assert that each top-level route renders without a 500 or
@@ -146,28 +146,5 @@ test.describe('Top-level navigation', () => {
 
     // Sign out is reachable as a button in the header.
     await expect(page.getByRole('button', { name: /Sign out/i })).toBeVisible()
-  })
-
-  test('History page loads without crashing the app', async ({ page }) => {
-    await page.route('**/api/status', (route) =>
-      route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({ budget_exhausted: false, resumes_at: null }),
-      })
-    )
-
-    const failures: string[] = []
-    page.on('response', (res) => {
-      if (res.status() >= 500 && /\/api\//.test(res.url())) {
-        failures.push(`${res.status()} ${res.url()}`)
-      }
-    })
-
-    await page.goto('/applied')
-    await page.waitForLoadState('networkidle')
-
-    await expect(page.getByRole('heading', { name: /History/i })).toBeVisible()
-    expect(failures, `5xx responses hit: ${failures.join(', ')}`).toEqual([])
   })
 })
