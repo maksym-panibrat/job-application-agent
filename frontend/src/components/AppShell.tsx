@@ -15,7 +15,7 @@ export function AppShell({ children }: AppShellProps) {
   const location = useLocation()
   const navigate = useNavigate()
   const [menuOpen, setMenuOpen] = useState(false)
-  const sync = useSyncControl()
+  const sync = useSyncControl({ enabled: !!user })
   const syncBusy = sync.isLive || sync.isPending
   const syncLabel = sync.isLive ? sync.label : 'Sync now'
 
@@ -43,6 +43,15 @@ export function AppShell({ children }: AppShellProps) {
                   >
                     <Sync className={`w-5 h-5 ${syncBusy ? 'animate-spin' : ''}`} />
                   </IconButton>
+                  {sync.isLive && (
+                    <span
+                      data-testid="header-sync-live-label"
+                      className="text-xs text-muted ml-1 mr-2 max-w-[200px] truncate"
+                      title={sync.label}
+                    >
+                      {sync.label}
+                    </span>
+                  )}
                   <Link
                     to="/settings"
                     aria-label="Settings"

@@ -79,7 +79,7 @@ export default function Matches() {
           <EmptyState
             title={status === 'pending' ? 'Caught up' : `No ${status} matches`}
             description={status === 'pending'
-              ? 'We’ll surface new matches as boards refresh. Tap ↻ in the header to fetch now.'
+              ? 'We’ll surface new matches as boards refresh. Tap the refresh icon in the header to fetch now.'
               : `Nothing in your ${status} list yet.`}
           />
         ) : (

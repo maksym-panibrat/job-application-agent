@@ -7,10 +7,18 @@ import { MemoryRouter } from 'react-router-dom'
 import { server } from '../test/server'
 import { ToastProvider } from './ui/Toast'
 
+const { mockAuth } = vi.hoisted(() => ({
+  mockAuth: {
+    current: {
+      user: { id: 'u-1', email: 'maks@example.com' } as { id: string; email: string } | null,
+    },
+  },
+}))
+
 vi.mock('../context/AuthContext', () => ({
   useAuth: () => ({
-    user: { id: 'u-1', email: 'maks@example.com' },
-    token: 'fake',
+    user: mockAuth.current.user,
+    token: mockAuth.current.user ? 'fake' : null,
     loading: false,
     signOut: vi.fn(),
   }),
@@ -68,6 +76,7 @@ const idleStatus = {
 
 describe('AppShell (desktop)', () => {
   beforeEach(() => {
+    mockAuth.current.user = { id: 'u-1', email: 'maks@example.com' }
     server.use(http.get('/api/sync/status', () => HttpResponse.json(idleStatus)))
   })
 
@@ -107,6 +116,7 @@ describe('AppShell (desktop)', () => {
 
 describe('AppShell sync (header button)', () => {
   beforeEach(() => {
+    mockAuth.current.user = { id: 'u-1', email: 'maks@example.com' }
     server.use(http.get('/api/sync/status', () => HttpResponse.json(idleStatus)))
   })
 
@@ -149,10 +159,34 @@ describe('AppShell sync (header button)', () => {
     renderShell()
     expect(await screen.findByRole('button', { name: /scoring 8 jobs/i })).toBeInTheDocument()
   })
+
+  it('renders the live label visibly next to the icon when syncing', async () => {
+    server.use(
+      http.get('/api/sync/status', () => HttpResponse.json({
+        ...idleStatus, state: 'syncing', slugs_total: 12, slugs_pending: 5,
+      })),
+    )
+    renderShell()
+    const live = await screen.findByTestId('header-sync-live-label')
+    expect(live).toHaveTextContent(/searching 7 of 12 boards/i)
+  })
+
+  it('shows a danger toast when the sync POST fails', async () => {
+    server.use(
+      http.post('/api/jobs/sync', () => HttpResponse.json({ detail: 'rate limited' }, { status: 429 })),
+    )
+    const user = userEvent.setup()
+    renderShell()
+    await user.click(screen.getByRole('button', { name: /sync now/i }))
+    await waitFor(() =>
+      expect(screen.getByRole('status').className).toMatch(/border-l-danger/)
+    )
+  })
 })
 
 describe('AppShell sync (mobile menu)', () => {
   beforeEach(() => {
+    mockAuth.current.user = { id: 'u-1', email: 'maks@example.com' }
     server.use(http.get('/api/sync/status', () => HttpResponse.json(idleStatus)))
   })
 
@@ -175,5 +209,27 @@ describe('AppShell sync (mobile menu)', () => {
     expect(sheetSync).toBeDefined()
     await user.click(sheetSync!)
     await waitFor(() => expect(posted).toBe(true))
+  })
+})
+
+describe('AppShell sync (unauthenticated)', () => {
+  beforeEach(() => {
+    mockAuth.current.user = null
+  })
+
+  it('does not poll /api/sync/status when there is no user', async () => {
+    let statusCalls = 0
+    server.use(
+      http.get('/api/sync/status', () => {
+        statusCalls += 1
+        return HttpResponse.json(idleStatus)
+      }),
+    )
+    renderShell()
+    // Give the effect a chance to fire if it were going to.
+    await new Promise((r) => setTimeout(r, 30))
+    expect(statusCalls).toBe(0)
+    // And the gated header controls aren't rendered either.
+    expect(screen.queryByRole('button', { name: /sync now/i })).not.toBeInTheDocument()
   })
 })
