@@ -1,93 +1,84 @@
-import { useState } from 'react'
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { api } from '../api/client'
-import { MatchCard } from '../components/MatchCard'
-import { SyncStatusChip } from '../components/SyncStatusChip'
-import { InvalidSlugsNotice } from '../components/InvalidSlugsNotice'
-import { computeRefetchInterval, POST_SYNC_WINDOW_MS } from './refetchInterval'
+import { useMemo } from 'react'
+import { useQuery } from '@tanstack/react-query'
+import { api, Application } from '../api/client'
+import { useStatusFilter } from '../lib/useStatusFilter'
+import { StatusChips, StatusCounts } from '../components/feed/StatusChips'
+import { SyncRow } from '../components/feed/SyncRow'
+import { MatchCard } from '../components/feed/MatchCard'
+import { ProfileCompletenessCard } from '../components/feed/ProfileCompletenessCard'
+import { SkeletonCard } from '../components/ui/Skeleton'
+import { EmptyState } from '../components/ui/EmptyState'
+import { Button } from '../components/ui/Button'
 
-function SkeletonCard() {
-  return (
-    <div className="bg-white rounded-lg shadow p-4 animate-pulse">
-      <div className="h-4 bg-gray-200 rounded w-3/4 mb-2" />
-      <div className="h-3 bg-gray-200 rounded w-1/2 mb-4" />
-      <div className="h-3 bg-gray-200 rounded w-full mb-2" />
-      <div className="h-3 bg-gray-200 rounded w-full" />
-    </div>
-  )
+const SERVER_STATUS_BY_FILTER = {
+  pending: 'pending_review',
+  applied: 'applied',
+  dismissed: 'dismissed',
+} as const
+
+function deriveCounts(byStatus: Partial<Record<'pending' | 'applied' | 'dismissed', Application[]>>): StatusCounts {
+  return {
+    pending:   byStatus.pending?.length ?? 0,
+    applied:   byStatus.applied?.length ?? 0,
+    dismissed: byStatus.dismissed?.length ?? 0,
+  }
 }
 
 export default function Matches() {
-  const qc = useQueryClient()
-  const [postSyncUntilMs, setPostSyncUntilMs] = useState<number | null>(null)
+  const { status } = useStatusFilter()
 
-  const { data: apps, isLoading } = useQuery({
-    queryKey: ['applications'],
-    queryFn: () => api.listApplications({ status: 'pending_review' }),
-    refetchInterval: () => computeRefetchInterval(postSyncUntilMs),
+  const { data: profile } = useQuery({ queryKey: ['profile'], queryFn: api.getProfile })
+
+  const apps = useQuery({
+    queryKey: ['applications', status],
+    queryFn: () => api.listApplications({ status: SERVER_STATUS_BY_FILTER[status] }),
+    refetchInterval: 30_000,
   })
 
-  const sync = useMutation({
-    mutationFn: api.triggerSync,
-    onSuccess: () => {
-      // Background scoring runs ~30s for a 20-job batch — poll aggressively
-      // for a minute so freshly scored matches surface without a manual reload.
-      setPostSyncUntilMs(Date.now() + POST_SYNC_WINDOW_MS)
-      setTimeout(() => qc.invalidateQueries({ queryKey: ['applications'] }), 3000)
-    },
-  })
+  const pendingQ   = useQuery({ queryKey: ['applications', 'pending'],   queryFn: () => api.listApplications({ status: 'pending_review' }), enabled: status !== 'pending'   })
+  const appliedQ   = useQuery({ queryKey: ['applications', 'applied'],   queryFn: () => api.listApplications({ status: 'applied' }),        enabled: status !== 'applied'   })
+  const dismissedQ = useQuery({ queryKey: ['applications', 'dismissed'], queryFn: () => api.listApplications({ status: 'dismissed' }),     enabled: status !== 'dismissed' })
 
-  const refetchMatches = () => qc.invalidateQueries({ queryKey: ['applications'] })
+  const counts = useMemo(() => deriveCounts({
+    pending:   status === 'pending'   ? apps.data : pendingQ.data,
+    applied:   status === 'applied'   ? apps.data : appliedQ.data,
+    dismissed: status === 'dismissed' ? apps.data : dismissedQ.data,
+  }), [status, apps.data, pendingQ.data, appliedQ.data, dismissedQ.data])
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <h1 className="text-xl font-bold text-gray-900">Job Matches</h1>
-          <p className="text-sm text-gray-500 mt-0.5">{apps?.length ?? 0} pending review</p>
+      {profile && <ProfileCompletenessCard profile={profile} />}
+
+      <div className="sticky top-14 z-10 -mx-4 px-4 py-3 bg-bg/90 backdrop-blur border-b border-border">
+        <div className="flex items-center justify-between gap-3 mb-2">
+          <StatusChips counts={counts} />
         </div>
-        <div className="flex items-center gap-3">
-          <SyncStatusChip onIdle={refetchMatches} />
-          <button
-            onClick={() => sync.mutate()}
-            disabled={sync.isPending}
-            className="px-3 py-1.5 text-sm font-medium bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 transition-colors"
-          >
-            {sync.isPending ? 'Syncing...' : 'Sync jobs'}
-          </button>
-        </div>
+        <SyncRow />
       </div>
 
-      <div className="mb-4">
-        <InvalidSlugsNotice />
+      <div className="mt-4">
+        {apps.isLoading ? (
+          <div className="space-y-2">
+            {Array.from({ length: 5 }).map((_, i) => (
+              <div key={i} data-testid="skel-card"><SkeletonCard /></div>
+            ))}
+          </div>
+        ) : !apps.data?.length ? (
+          <EmptyState
+            title={status === 'pending' ? 'Caught up' : `No ${status} matches`}
+            description={status === 'pending'
+              ? 'We\'ll surface new matches as boards refresh.'
+              : `Nothing in your ${status} list yet.`}
+            action={status === 'pending'
+              ? <Button size="sm" variant="secondary" onClick={() => window.scrollTo({ top: 0 })}>Sync now</Button>
+              : undefined}
+          />
+        ) : (
+          <div className="space-y-2">
+            {apps.data.map((app) => <MatchCard key={app.id} app={app} />)}
+          </div>
+        )}
       </div>
-
-      {sync.data && (
-        <div className="mb-4 p-3 bg-green-50 text-green-700 text-sm rounded-md">
-          Searching now. {sync.data.matched_now} matches from cache, {sync.data.queued_slugs.length} boards queued.
-          New matches will appear in a couple minutes.
-        </div>
-      )}
-
-      {sync.isError && (
-        <div className="mb-4 p-3 bg-red-50 text-red-700 text-sm rounded-md">
-          {(sync.error as Error)?.message ?? 'Sync failed.'}
-        </div>
-      )}
-
-      {isLoading ? (
-        <div className="grid gap-3">
-          {Array.from({ length: 6 }).map((_, i) => <SkeletonCard key={i} />)}
-        </div>
-      ) : !apps?.length ? (
-        <div className="text-center py-16 text-gray-400">
-          <p className="text-sm mt-1">No matches yet. Click 'Sync jobs' to fetch new listings.</p>
-        </div>
-      ) : (
-        <div className="grid gap-3">
-          {apps.map((app) => <MatchCard key={app.id} app={app} />)}
-        </div>
-      )}
     </div>
   )
 }
