@@ -196,7 +196,31 @@ export const api = {
       `/api/applications/${id}/mark-applied`,
       { method: 'POST' }
     ),
+  /** URL of the document's PDF endpoint. NOT directly usable as an `<a href>`
+   *  in production — the endpoint requires a JWT in the Authorization header,
+   *  which browser navigation does not send. Use `downloadPdfBlob()` and the
+   *  blob-download dance instead. Kept for callers that just need the URL. */
   downloadPdf: (docId: string) => `/api/documents/${docId}/pdf`,
+  /** Fetch the PDF as a blob using the auth header from sessionStorage.
+   *  Throws on non-2xx (so the caller can surface an error toast). */
+  downloadPdfBlob: async (docId: string): Promise<Blob> => {
+    const token = sessionStorage.getItem('access_token')
+    const headers: Record<string, string> = {}
+    if (token) headers['Authorization'] = `Bearer ${token}`
+    const res = await fetch(`/api/documents/${docId}/pdf`, { headers })
+    if (!res.ok) {
+      const text = await res.text()
+      let detail: string | null = null
+      try {
+        const parsed = JSON.parse(text)
+        if (parsed && typeof parsed.detail === 'string') detail = parsed.detail
+      } catch {
+        // body wasn't JSON
+      }
+      throw new Error(detail ?? `${res.status}: ${text}`)
+    }
+    return res.blob()
+  },
 
   // Status & auth
   getStatus: () => apiFetch<AppStatus>('/api/status'),

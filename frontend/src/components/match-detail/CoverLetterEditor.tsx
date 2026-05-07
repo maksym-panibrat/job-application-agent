@@ -35,6 +35,26 @@ export function CoverLetterEditor({ appId, doc, status }: CoverLetterEditorProps
     onError: (e) => show((e as Error)?.message ?? 'Could not save edits', 'error'),
   })
 
+  // Browser navigation via <a href> would 401 in production because the
+  // PDF endpoint requires the JWT in the Authorization header. Fetch the
+  // blob with auth, then trigger a client-side download.
+  async function downloadPdf() {
+    if (!doc) return
+    try {
+      const blob = await api.downloadPdfBlob(doc.id)
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `${doc.doc_type}.pdf`
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+    } catch (e) {
+      show((e as Error)?.message ?? 'Download failed', 'error')
+    }
+  }
+
   if (!doc) {
     return (
       <section className="mb-6">
@@ -71,12 +91,7 @@ export function CoverLetterEditor({ appId, doc, status }: CoverLetterEditorProps
           <Button size="sm" variant="ghost" disabled={!dirty || save.isPending} onClick={() => save.mutate()}>
             {save.isPending ? 'Saving…' : 'Save edits'}
           </Button>
-          <a
-            href={api.downloadPdf(doc.id)} target="_blank" rel="noopener noreferrer"
-            className="inline-flex items-center px-3 py-1.5 rounded-md-token text-sm text-muted hover:text-text hover:bg-surface min-h-[32px]"
-          >
-            PDF ↓
-          </a>
+          <Button size="sm" variant="ghost" onClick={downloadPdf}>PDF ↓</Button>
         </div>
       </div>
       <TextArea
