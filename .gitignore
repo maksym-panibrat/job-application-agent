@@ -59,6 +59,9 @@ Thumbs.db
 .claude/settings.local.json
 .claude/worktrees/
 
+# Superpowers brainstorming companion (mockup HTML / state)
+.superpowers/
+
 # Misc
 *.log
 *.sqlite
