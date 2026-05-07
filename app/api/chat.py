@@ -1,10 +1,18 @@
-"""Chat endpoint — streams onboarding agent responses via SSE."""
+"""Chat endpoint — streams onboarding agent responses via SSE.
+
+If the agent mutates the user's profile during a turn (detected via a
+before/after snapshot of profile.updated_at), the endpoint emits an
+`event: meta\\ndata: {"profile_mutated": true}\\n\\n` event before
+the terminal `[DONE]`. The frontend uses this to render an inline
+'Search now' CTA under the mutating reply.
+"""
 
 import json
 
 import structlog
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_profile
@@ -15,23 +23,27 @@ log = structlog.get_logger()
 router = APIRouter(prefix="/api/chat", tags=["chat"])
 
 
+async def _profile_updated_at(session_factory, profile_id):
+    """Read profile.updated_at in a fresh session — the request-scoped
+    session may be in the middle of an unrelated transaction."""
+    async with session_factory() as s:
+        row = (
+            await s.execute(select(UserProfile.updated_at).where(UserProfile.id == profile_id))
+        ).first()
+    return row[0] if row else None
+
+
 @router.post("/messages")
 async def send_message(
     request: Request,
     profile: UserProfile = Depends(get_current_profile),
     session: AsyncSession = Depends(get_db),
 ):
-    """
-    Send a message to the onboarding agent and stream the response.
-    POST body: {"message": "..."}
-    Response: text/event-stream
-    """
     body = await request.json()
     user_message = body.get("message", "").strip()
     if not user_message:
         return {"error": "message is required"}
 
-    # Get checkpointer from app state (set up in lifespan)
     app_state = request.app.state
     checkpointer = getattr(app_state, "checkpointer", None)
 
@@ -48,15 +60,15 @@ async def send_message(
 
     graph = build_graph(checkpointer)
     thread_id = str(profile.id)
+    factory = get_session_factory()
     config = {
         "configurable": {
             "thread_id": thread_id,
-            "db_factory": get_session_factory(),
+            "db_factory": factory,
             "profile_id": str(profile.id),
         }
     }
 
-    # Build graph input — always pass profile_id and current resume_md
     graph_input: dict = {
         "messages": [{"role": "user", "content": user_message}],
         "profile_id": str(profile.id),
@@ -70,6 +82,9 @@ async def send_message(
         try:
             from langchain_core.messages import AIMessageChunk
 
+            # Snapshot BEFORE the agent runs so we can detect mutations.
+            before = await _profile_updated_at(factory, profile.id)
+
             async for chunk in graph.astream(
                 graph_input,
                 config,
@@ -77,8 +92,7 @@ async def send_message(
             ):
                 if not (isinstance(chunk, tuple) and len(chunk) == 2):
                     continue
-                msg, metadata = chunk
-                # Only forward AI response text; skip ToolMessages and non-agent nodes
+                msg, _metadata = chunk
                 if not isinstance(msg, AIMessageChunk):
                     continue
                 content = msg.content
@@ -91,12 +105,17 @@ async def send_message(
                             text += block.get("text", "")
                 if text:
                     yield f"data: {json.dumps({'content': text})}\n\n"
+
+            # AFTER the agent finishes, check for profile mutation.
+            after = await _profile_updated_at(factory, profile.id)
+            if before != after:
+                yield 'event: meta\ndata: {"profile_mutated": true}\n\n'
         except BudgetExhausted as exc:
-            # Gemini quota / prepayment credits depleted. Surface a structured
-            # event with the resumption timestamp so the UI can render a
-            # meaningful banner instead of an opaque "Stream error" (#74).
             await log.awarning("chat.budget_exhausted", resumes_at=exc.resumes_at.isoformat())
-            payload = {"error": "budget_exhausted", "resumes_at": exc.resumes_at.isoformat()}
+            payload = {
+                "error": "budget_exhausted",
+                "resumes_at": exc.resumes_at.isoformat(),
+            }
             yield f"data: {json.dumps(payload)}\n\n"
         except Exception as e:
             await log.aexception("chat.stream_error", error=str(e))
