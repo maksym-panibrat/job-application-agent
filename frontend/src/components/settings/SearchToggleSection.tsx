@@ -2,6 +2,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../api/client'
 import { Button } from '../ui/Button'
 import { useToast } from '../ui/Toast'
+import { track } from '../../lib/track'
 
 export interface SearchToggleSectionProps {
   active: boolean
@@ -20,7 +21,10 @@ export function SearchToggleSection({ active, expiresAt }: SearchToggleSectionPr
   const { show } = useToast()
   const toggle = useMutation({
     mutationFn: (next: boolean) => api.toggleSearch(next),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['profile'] }),
+    onSuccess: () => {
+      track('settings.search_toggled', { to: active ? 'paused' : 'active' })
+      qc.invalidateQueries({ queryKey: ['profile'] })
+    },
     onError: (e) => show((e as Error)?.message ?? 'Could not update search', 'error'),
   })
   const days = daysUntil(expiresAt)

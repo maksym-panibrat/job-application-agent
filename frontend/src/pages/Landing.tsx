@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { track } from '../lib/track'
 
 export default function Landing() {
   const [error, setError] = useState<string | null>(null)
@@ -10,6 +11,7 @@ export default function Landing() {
   // (CSRF) on that response is still persisted by the browser since this is
   // same-origin with Cloud Run.
   async function startGoogleLogin() {
+    track('auth.signin_clicked', { method: 'google' })
     setError(null)
     setPending(true)
     try {
@@ -17,8 +19,10 @@ export default function Landing() {
       if (!res.ok) throw new Error(`authorize returned ${res.status}`)
       const data = await res.json()
       if (!data?.authorization_url) throw new Error('missing authorization_url')
+      track('auth.signin_succeeded', { method: 'google' })
       window.location.href = data.authorization_url
     } catch (err) {
+      track('auth.signin_failed', { method: 'google', reason: String(err) })
       setPending(false)
       setError('Sign-in is unavailable right now. Please try again in a moment.')
       console.error('Google OAuth start failed', err)
@@ -30,6 +34,7 @@ export default function Landing() {
   // stores the JWT in sessionStorage, and full-page-navigates to /matches so
   // AuthProvider re-mounts and reads the freshly-set token.
   async function startDevLogin() {
+    track('auth.signin_clicked', { method: 'dev' })
     setError(null)
     setPending(true)
     try {
@@ -38,8 +43,10 @@ export default function Landing() {
       const data = await res.json()
       if (!data?.access_token) throw new Error('missing access_token')
       sessionStorage.setItem('access_token', data.access_token)
+      track('auth.signin_succeeded', { method: 'dev' })
       window.location.href = '/matches'
     } catch (err) {
+      track('auth.signin_failed', { method: 'dev', reason: String(err) })
       setPending(false)
       setError('Dev login failed. Is the backend running with ENVIRONMENT=development?')
       console.error('Dev login failed', err)

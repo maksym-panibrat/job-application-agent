@@ -2,6 +2,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../api/client'
 import { Button } from '../ui/Button'
 import { useToast } from '../ui/Toast'
+import { track } from '../../lib/track'
 
 export interface StickyActionsProps {
   appId: string
@@ -30,8 +31,12 @@ export function StickyActions({ appId, status, applyUrl }: StickyActionsProps) {
 
   function onOpenAndMark(e: React.MouseEvent) {
     e.preventDefault()
+    track('match.original_posting_opened', { application_id: appId })
     window.open(applyUrl, '_blank', 'noopener')
-    if (status === 'pending_review') markApplied.mutate()
+    if (status === 'pending_review') {
+      track('match.applied', { application_id: appId })
+      markApplied.mutate()
+    }
   }
 
   if (status === 'applied') {
@@ -54,7 +59,7 @@ export function StickyActions({ appId, status, applyUrl }: StickyActionsProps) {
       <Button
         size="md" variant="ghost"
         pending={dismiss.isPending}
-        onClick={() => dismiss.mutate()}
+        onClick={() => { track('match.dismissed', { application_id: appId, source: 'detail_skip' }); dismiss.mutate() }}
       >
         ⏷ Skip
       </Button>
