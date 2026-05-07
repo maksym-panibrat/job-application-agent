@@ -133,11 +133,16 @@ async def review_application(
         raise HTTPException(status_code=404, detail="Application not found")
 
     action = data.get("status")
-    if action not in ("dismissed", "applied"):
-        raise HTTPException(status_code=400, detail="status must be dismissed or applied")
+    if action not in ("dismissed", "applied", "pending_review"):
+        raise HTTPException(
+            status_code=400, detail="status must be dismissed, applied, or pending_review"
+        )
 
     if action == "applied" and app.status != "applied":
         app.applied_at = datetime.now(UTC)
+    if action == "pending_review":
+        # Undo path: clear applied_at so the UI's "applied" status doesn't linger.
+        app.applied_at = None
     app.status = action
     app.updated_at = datetime.now(UTC)
     session.add(app)
