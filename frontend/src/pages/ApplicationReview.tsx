@@ -74,7 +74,7 @@ export default function ApplicationReview() {
           strengths={app.match_strengths}
           gaps={app.match_gaps}
         />
-        <JobDescription content={app.job.description_md} />
+        <JobDescription content={app.job.description_clean ?? app.job.description_md} />
         <CoverLetterEditor appId={app.id} doc={cover} status={app.generation_status} />
       </div>
 

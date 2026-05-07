@@ -65,6 +65,44 @@ describe('Match detail (ApplicationReview)', () => {
     expect(screen.getByRole('button', { name: /save edits/i })).toBeInTheDocument()
   })
 
+  it('renders description_clean (markdownified) instead of raw description_md HTML (regression: re #69)', async () => {
+    // Greenhouse delivers HTML in description_md; the API also exposes
+    // description_clean which is the markdownified version. The match
+    // detail page MUST prefer description_clean so users don't see raw
+    // <p>/<h2>/<strong> tags as visible text. Plan B's rewrite reverted
+    // PR #89's fix; this test guards against that recurring.
+    renderAt('/matches/a1', detail({
+      job: {
+        id: 'j', title: 'Senior Backend Engineer', company_name: 'Acme',
+        location: null, workplace_type: null, salary: null,
+        contract_type: null,
+        description_md: '<p>Raw HTML — engineers wanted.</p>',
+        description_clean: 'Clean markdown — engineers wanted.',
+        apply_url: 'https://x.com/', posted_at: null,
+      },
+    }))
+    await waitFor(() =>
+      expect(screen.getByText(/clean markdown/i)).toBeInTheDocument()
+    )
+    expect(screen.queryByText(/<p>/i)).not.toBeInTheDocument()
+  })
+
+  it('falls back to description_md when description_clean is null (legacy rows)', async () => {
+    renderAt('/matches/a1', detail({
+      job: {
+        id: 'j', title: 'Senior Backend Engineer', company_name: 'Acme',
+        location: null, workplace_type: null, salary: null,
+        contract_type: null,
+        description_md: 'Legacy row text.',
+        description_clean: null,
+        apply_url: 'https://x.com/', posted_at: null,
+      },
+    }))
+    await waitFor(() =>
+      expect(screen.getByText(/legacy row text/i)).toBeInTheDocument()
+    )
+  })
+
   it('shows the loading state before the fetch completes', () => {
     server.use(http.get('/api/applications/a1', async () => {
       await new Promise((r) => setTimeout(r, 50))
