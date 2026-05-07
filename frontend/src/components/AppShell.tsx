@@ -3,7 +3,8 @@ import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { IconButton } from './ui/IconButton'
 import { ActionSheet, ActionSheetItem } from './ui/ActionSheet'
-import { Settings, Coach, Hamburger } from './ui/icons'
+import { Settings, Coach, Hamburger, Sync } from './ui/icons'
+import { useSyncControl } from '../lib/useSyncControl'
 
 export interface AppShellProps {
   children: ReactNode
@@ -14,6 +15,9 @@ export function AppShell({ children }: AppShellProps) {
   const location = useLocation()
   const navigate = useNavigate()
   const [menuOpen, setMenuOpen] = useState(false)
+  const sync = useSyncControl()
+  const syncBusy = sync.isLive || sync.isPending
+  const syncLabel = sync.isLive ? sync.label : 'Sync now'
 
   function openCoach() {
     const next = new URLSearchParams(location.search)
@@ -31,6 +35,14 @@ export function AppShell({ children }: AppShellProps) {
             {user && (
               <>
                 <div className="hidden md:flex items-center gap-1">
+                  <IconButton
+                    aria-label={syncLabel}
+                    title={syncLabel}
+                    disabled={syncBusy}
+                    onClick={() => sync.trigger('header_button')}
+                  >
+                    <Sync className={`w-5 h-5 ${syncBusy ? 'animate-spin' : ''}`} />
+                  </IconButton>
                   <Link
                     to="/settings"
                     aria-label="Settings"
@@ -71,6 +83,12 @@ export function AppShell({ children }: AppShellProps) {
         title="Menu"
         heading="Menu"
       >
+        <ActionSheetItem
+          disabled={syncBusy}
+          onClick={() => { setMenuOpen(false); sync.trigger('mobile_menu') }}
+        >
+          {syncLabel}
+        </ActionSheetItem>
         <ActionSheetItem
           onClick={() => { setMenuOpen(false); navigate('/settings') }}
         >

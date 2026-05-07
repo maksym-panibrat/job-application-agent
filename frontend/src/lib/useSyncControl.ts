@@ -1,13 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { api, SyncStatus } from '../../api/client'
-import { Button } from '../ui/Button'
-import { useToast } from '../ui/Toast'
-import { track } from '../../lib/track'
+import { api, SyncStatus } from '../api/client'
+import { useToast } from '../components/ui/Toast'
+import { track } from './track'
 
 const POLL_MS = 3_000
 
-function liveLabel(s: SyncStatus): string {
+export function liveLabel(s: SyncStatus | null): string {
+  if (!s) return 'Sync now'
   if (s.state === 'syncing') {
     const done = s.slugs_total - s.slugs_pending
     return `Searching ${done} of ${s.slugs_total} boards…`
@@ -18,7 +18,15 @@ function liveLabel(s: SyncStatus): string {
   return 'Sync now'
 }
 
-export function SyncRow() {
+export interface SyncControl {
+  status: SyncStatus | null
+  label: string
+  isLive: boolean
+  isPending: boolean
+  trigger: (source: string) => void
+}
+
+export function useSyncControl(): SyncControl {
   const qc = useQueryClient()
   const { show } = useToast()
   const [status, setStatus] = useState<SyncStatus | null>(null)
@@ -36,7 +44,7 @@ export function SyncRow() {
         }
         prevState.current = body.state
       } catch {
-        // Silent — the button just stays "Sync now" without live state.
+        // Silent — control just stays "Sync now" without live state.
       }
     }
     poll()
@@ -60,26 +68,14 @@ export function SyncRow() {
     },
   })
 
-  const isLive = status?.state && status.state !== 'idle'
-  const label = status ? liveLabel(status) : 'Sync now'
-  const lastSyncCopy = status?.last_sync_completed_at
-    ? 'Last synced a few minutes ago · we re-check every few hours'
-    : ''
-
-  return (
-    <div className="flex items-center justify-between gap-3 mb-2">
-      <Button
-        variant={isLive ? 'ghost' : 'secondary'}
-        pending={sync.isPending}
-        disabled={!!isLive}
-        onClick={() => { track('feed.sync_clicked', { source: 'feed_button' }); sync.mutate() }}
-        size="sm"
-      >
-        {sync.isPending ? 'Syncing…' : label}
-      </Button>
-      {!isLive && lastSyncCopy && (
-        <span className="text-xs text-subtle">{lastSyncCopy}</span>
-      )}
-    </div>
-  )
+  return {
+    status,
+    label: liveLabel(status),
+    isLive: !!(status?.state && status.state !== 'idle'),
+    isPending: sync.isPending,
+    trigger: (source: string) => {
+      track('feed.sync_clicked', { source })
+      sync.mutate()
+    },
+  }
 }
