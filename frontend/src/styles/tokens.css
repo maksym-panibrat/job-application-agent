@@ -1,0 +1,58 @@
+/* Design tokens — single source of truth for colors, typography, spacing rhythm.
+   Consumed by tailwind.config.js (extend.colors etc.) so utilities like
+   `bg-surface` and `text-muted` resolve to these variables.
+
+   Dark-only for now. Light-mode tokens would live under a `:root[data-theme="light"]`
+   block but are deliberately deferred (see spec — out of scope). */
+:root {
+  /* Surfaces */
+  --c-bg: #0b0d12;
+  --c-surface: #11141b;
+  --c-surface-2: #1a1e28;
+
+  /* Borders */
+  --c-border: #1f2330;
+  --c-border-strong: #2a2f3d;
+
+  /* Text */
+  --c-text: #f9fafb;
+  --c-text-muted: #9ca3af;
+  --c-text-subtle: #6b7280;
+
+  /* Accent (purple) */
+  --c-accent: #a78bfa;
+  --c-accent-fg: #0b0d12;
+
+  /* Semantic */
+  --c-success: #4ade80;
+  --c-warning: #fbbf24;
+  --c-danger: #ef4444;
+
+  /* Radius */
+  --r-sm: 6px;
+  --r-md: 10px;
+  --r-lg: 14px;
+  --r-pill: 999px;
+
+  /* Motion */
+  --t-fast: 150ms;
+  --t-slow: 250ms;
+  --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+/* Page baseline */
+html, body {
+  background: var(--c-bg);
+  color: var(--c-text);
+  font-family: 'Inter', ui-sans-serif, system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* Reduce motion respect */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+  }
+}

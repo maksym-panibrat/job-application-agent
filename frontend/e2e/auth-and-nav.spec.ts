@@ -110,7 +110,7 @@ test.describe('Top-level navigation', () => {
     expect(failures, `5xx responses hit: ${failures.join(', ')}`).toEqual([])
   })
 
-  test('nav bar routes between Matches / History / Profile', async ({ page }) => {
+  test('AppShell header surfaces Settings link, Coach button, Sign out', async ({ page }) => {
     await page.route('**/api/status', (route) =>
       route.fulfill({
         status: 200,
@@ -123,17 +123,24 @@ test.describe('Top-level navigation', () => {
     await page.waitForLoadState('networkidle')
     await expect(page.getByRole('heading', { name: /Job Matches/i })).toBeVisible()
 
-    await page.getByRole('link', { name: 'History' }).click()
-    await expect(page).toHaveURL(/\/applied$/)
-    await expect(page.getByRole('heading', { name: /History/i })).toBeVisible()
+    // Brand link returns to root.
+    await expect(page.getByRole('link', { name: 'Job Agent' })).toHaveAttribute('href', '/')
 
-    await page.getByRole('link', { name: 'Profile' }).click()
-    await expect(page).toHaveURL(/\/profile$/)
+    // Settings → opens the legacy Onboarding/Profile page (Plan B will replace
+    // it with a structured Settings page). Until then /settings aliases to it.
+    await page.getByRole('link', { name: 'Settings' }).click()
+    await expect(page).toHaveURL(/\/settings$/)
     await expect(page.getByRole('heading', { name: /Profile Setup/i })).toBeVisible()
 
-    await page.getByRole('link', { name: 'Matches' }).click()
-    await expect(page).toHaveURL(/\/matches$/)
-    await expect(page.getByRole('heading', { name: /Job Matches/i })).toBeVisible()
+    // Coach button toggles the ?coach=1 query param (Plan B will render the
+    // actual drawer; for Plan A we only assert the URL contract).
+    await page.goto('/matches')
+    await page.waitForLoadState('networkidle')
+    await page.getByRole('button', { name: 'Coach' }).click()
+    await expect(page).toHaveURL(/[?&]coach=1/)
+
+    // Sign out is reachable as a button in the header.
+    await expect(page.getByRole('button', { name: /Sign out/i })).toBeVisible()
   })
 
   test('History page loads without crashing the app', async ({ page }) => {
