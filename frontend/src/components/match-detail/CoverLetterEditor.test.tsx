@@ -93,7 +93,10 @@ describe('CoverLetterEditor', () => {
 
     await waitFor(() => expect(receivedUrl).toBe('/api/documents/d1/pdf'))
     expect(receivedAuthHeader).toBe('Bearer fake-jwt')
-    expect(createSpy).toHaveBeenCalled()
+    // The blob handling (createObjectURL → synthetic <a> → click → revoke)
+    // happens AFTER the fetch resolves; wrap in waitFor so the test doesn't
+    // race the post-fetch microtasks (CI scheduling is slower than local).
+    await waitFor(() => expect(createSpy).toHaveBeenCalled())
 
     createSpy.mockRestore()
     revokeSpy.mockRestore()
