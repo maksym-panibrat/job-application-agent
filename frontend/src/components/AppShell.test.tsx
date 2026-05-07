@@ -1,6 +1,9 @@
 import { describe, it, expect, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter } from 'react-router-dom'
+import { ToastProvider } from './ui/Toast'
 
 vi.mock('../context/AuthContext', () => ({
   useAuth: () => ({
@@ -12,7 +15,12 @@ vi.mock('../context/AuthContext', () => ({
   AuthProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
 }))
 
+vi.mock('../lib/track', () => ({
+  track: vi.fn(),
+}))
+
 import { AppShell } from './AppShell'
+import { CoachDrawer } from './coach/CoachDrawer'
 
 function renderShell(pathname = '/') {
   return render(
@@ -21,6 +29,22 @@ function renderShell(pathname = '/') {
         <p>page body</p>
       </AppShell>
     </MemoryRouter>
+  )
+}
+
+function renderShellWithCoach(pathname = '/') {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  return render(
+    <QueryClientProvider client={qc}>
+      <ToastProvider>
+        <MemoryRouter initialEntries={[pathname]}>
+          <AppShell>
+            <p>page body</p>
+          </AppShell>
+          <CoachDrawer />
+        </MemoryRouter>
+      </ToastProvider>
+    </QueryClientProvider>
   )
 }
 
@@ -46,5 +70,14 @@ describe('AppShell (desktop)', () => {
   it('renders the hamburger button (visible on mobile; rendered at all widths)', () => {
     renderShell()
     expect(screen.getByRole('button', { name: /open menu/i })).toBeInTheDocument()
+  })
+
+  it('opens the Coach drawer when Coach is clicked', async () => {
+    const user = userEvent.setup()
+    renderShellWithCoach('/')
+
+    await user.click(screen.getByRole('button', { name: /coach/i }))
+
+    expect(screen.getByRole('dialog', { name: 'Coach' })).toBeInTheDocument()
   })
 })
