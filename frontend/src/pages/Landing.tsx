@@ -47,10 +47,10 @@ export default function Landing() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 flex flex-col items-center justify-center gap-8 px-4">
+    <div className="min-h-screen bg-bg flex flex-col items-center justify-center gap-8 px-4">
       <div className="text-center max-w-lg">
-        <h1 className="text-3xl font-bold text-gray-900 mb-3">Job Application Agent</h1>
-        <p className="text-gray-600">
+        <h1 className="text-3xl font-bold text-text mb-3 tracking-tight">Job Application Agent</h1>
+        <p className="text-muted">
           AI-powered job matching. Upload your resume, set your preferences, and get
           tailored applications generated automatically.
         </p>
@@ -59,7 +59,7 @@ export default function Landing() {
         type="button"
         onClick={startGoogleLogin}
         disabled={pending}
-        className="inline-flex items-center gap-3 px-6 py-3 bg-white border border-gray-300 rounded-lg shadow-sm text-gray-700 font-medium hover:bg-gray-50 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+        className="inline-flex items-center gap-3 px-6 py-3 bg-surface border border-border-strong rounded-lg-token text-text font-medium hover:bg-surface-2 transition-colors disabled:opacity-60 disabled:cursor-not-allowed min-h-[48px]"
       >
         <svg className="w-5 h-5" viewBox="0 0 24 24">
           <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
@@ -70,7 +70,7 @@ export default function Landing() {
         {pending ? 'Redirecting…' : 'Sign in with Google'}
       </button>
       {error && (
-        <p role="alert" className="text-sm text-red-600 -mt-4">{error}</p>
+        <p role="alert" className="text-sm text-danger -mt-4">{error}</p>
       )}
       {/* `import.meta.env.DEV` is a Vite compile-time constant: in production
           builds it folds to `false` and the entire block is dead-code-eliminated.
@@ -81,12 +81,12 @@ export default function Landing() {
           type="button"
           onClick={startDevLogin}
           disabled={pending}
-          className="text-xs text-gray-400 hover:text-gray-600 underline disabled:opacity-60 disabled:cursor-not-allowed"
+          className="text-xs text-subtle hover:text-text underline disabled:opacity-60 disabled:cursor-not-allowed"
         >
           Dev login (skip OAuth)
         </button>
       )}
-      <a href="https://github.com/maksym-panibrat/job-application-agent" className="text-sm text-gray-400 hover:text-gray-600">
+      <a href="https://github.com/maksym-panibrat/job-application-agent" className="text-sm text-subtle hover:text-text">
         View on GitHub
       </a>
     </div>
