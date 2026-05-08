@@ -38,14 +38,9 @@ export default function ApplicationReview() {
   })
 
   const moveBackToPending = useMutation({
-    mutationFn: async () => {
-      // Backend currently accepts only 'dismissed' or 'applied' on this PATCH;
-      // 'pending_review' will error-toast until a backend follow-up extends
-      // the API. Cast bypasses the client type so the wire intent is clear.
-      return api.reviewApplication(id!, 'pending_review' as 'dismissed' | 'applied')
-    },
+    mutationFn: () => api.reviewApplication(id!, 'pending_review'),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['application', id] }),
-    onError: (e) => show((e as Error)?.message ?? 'Backend does not yet allow un-applying', 'error'),
+    onError: (e) => show((e as Error)?.message ?? 'Could not move back to pending', 'error'),
   })
 
   if (isLoading || !app) {
