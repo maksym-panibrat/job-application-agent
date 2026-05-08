@@ -122,4 +122,44 @@ describe('MatchCard', () => {
     const { container } = renderCard(makeApp({ job: null }))
     expect(container.firstChild).toBeNull()
   })
+
+  it('renders Restore (not Dismiss) in the kebab when status is dismissed', async () => {
+    const user = userEvent.setup()
+    renderCard(makeApp({ status: 'dismissed' }))
+    await user.click(screen.getByRole('button', { name: /more actions/i }))
+    expect(screen.getByText(/restore/i)).toBeInTheDocument()
+    expect(screen.queryByText(/^dismiss$/i)).not.toBeInTheDocument()
+  })
+
+  it('clicking Restore in the kebab POSTs status=pending_review', async () => {
+    let patched: unknown = null
+    server.use(
+      http.patch('/api/applications/app-1', async ({ request }) => {
+        patched = await request.json()
+        return HttpResponse.json({ id: 'app-1', status: 'pending_review' })
+      }),
+    )
+    const user = userEvent.setup()
+    renderCard(makeApp({ status: 'dismissed' }))
+    await user.click(screen.getByRole('button', { name: /more actions/i }))
+    await user.click(screen.getByText(/restore/i))
+    await waitFor(() => expect(patched).toEqual({ status: 'pending_review' }))
+  })
+
+  it('swipe-left on a dismissed card does NOT fire any PATCH', async () => {
+    let patchCount = 0
+    server.use(
+      http.patch('/api/applications/app-1', () => {
+        patchCount += 1
+        return HttpResponse.json({ id: 'app-1', status: 'dismissed' })
+      }),
+    )
+    renderCard(makeApp({ status: 'dismissed' }))
+    const surface = screen.getByTestId('swipe-surface')
+    fireEvent.pointerDown(surface, { clientX: 200, pointerId: 1 })
+    fireEvent.pointerMove(surface, { clientX: 100, pointerId: 1 })
+    fireEvent.pointerUp(surface, { clientX: 100, pointerId: 1 })
+    await new Promise((r) => setTimeout(r, 30))
+    expect(patchCount).toBe(0)
+  })
 })

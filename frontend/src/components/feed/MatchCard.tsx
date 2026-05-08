@@ -25,6 +25,7 @@ export function MatchCard({ app }: { app: Application }) {
   const qc = useQueryClient()
   const { show } = useToast()
   const [menuOpen, setMenuOpen] = useState(false)
+  const isDismissed = app.status === 'dismissed'
 
   const dismiss = useMutation({
     mutationFn: () => api.reviewApplication(app.id, 'dismissed'),
@@ -33,6 +34,15 @@ export function MatchCard({ app }: { app: Application }) {
       qc.invalidateQueries({ queryKey: ['applications'] })
     },
     onError: (e) => show((e as Error)?.message ?? 'Could not dismiss', 'error'),
+  })
+
+  const restore = useMutation({
+    mutationFn: () => api.reviewApplication(app.id, 'pending_review'),
+    onSuccess: () => {
+      show(`Restored ${app.job?.title ?? 'match'}`, 'info')
+      qc.invalidateQueries({ queryKey: ['applications'] })
+    },
+    onError: (e) => show((e as Error)?.message ?? 'Could not restore', 'error'),
   })
 
   const job = app.job
@@ -44,7 +54,14 @@ export function MatchCard({ app }: { app: Application }) {
   const age = relativeAge(job.posted_at) || relativeAge(app.created_at)
 
   return (
-    <SwipeableCard onCommit={() => { track('match.dismissed', { application_id: app.id, source: 'swipe', score: app.match_score }); dismiss.mutate() }} actionLabel="Remove">
+    <SwipeableCard
+      onCommit={() => {
+        if (isDismissed) return
+        track('match.dismissed', { application_id: app.id, source: 'swipe', score: app.match_score })
+        dismiss.mutate()
+      }}
+      actionLabel="Remove"
+    >
       <div className="relative">
         {/* Kebab in absolute corner — far from natural tap zone, doesn't interfere with the card link. */}
         <div className="absolute top-1 right-1 z-10">
@@ -84,13 +101,23 @@ export function MatchCard({ app }: { app: Application }) {
           }}>
             Open original posting ↗
           </ActionSheetItem>
-          <ActionSheetItem intent="danger" onClick={() => {
-            setMenuOpen(false)
-            track('match.dismissed', { application_id: app.id, source: 'kebab', score: app.match_score })
-            dismiss.mutate()
-          }}>
-            Dismiss
-          </ActionSheetItem>
+          {isDismissed ? (
+            <ActionSheetItem onClick={() => {
+              setMenuOpen(false)
+              track('match.undismissed', { application_id: app.id, source: 'kebab' })
+              restore.mutate()
+            }}>
+              Restore
+            </ActionSheetItem>
+          ) : (
+            <ActionSheetItem intent="danger" onClick={() => {
+              setMenuOpen(false)
+              track('match.dismissed', { application_id: app.id, source: 'kebab', score: app.match_score })
+              dismiss.mutate()
+            }}>
+              Dismiss
+            </ActionSheetItem>
+          )}
         </ActionSheet>
       </div>
     </SwipeableCard>
