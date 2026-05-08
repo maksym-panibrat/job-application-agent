@@ -56,6 +56,8 @@ class LeverPostingsSource(JobSource):
                 posted_at = datetime.fromtimestamp(ts / 1000, tz=UTC)
             except (TypeError, ValueError, OSError):
                 pass
+        # Lever's `categories.team` is the closest analogue to a company name in
+        # this slug-only flow; the slug itself is canonical for the Company row.
         company_name = slug.replace("-", " ").title()
         return JobData(
             external_id=external_id,

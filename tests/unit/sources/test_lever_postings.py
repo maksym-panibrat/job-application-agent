@@ -142,6 +142,23 @@ async def test_fetch_jobs_skips_postings_without_apply_url(src):
 
 @respx.mock
 @pytest.mark.asyncio
+async def test_fetch_jobs_falls_back_to_description_when_html_missing(src):
+    item = _posting(1)
+    item.pop("descriptionHtml")
+    item["description"] = "<p>Plain</p>"
+    respx.get(f"{LEVER_POSTINGS_BASE}/acme").mock(
+        side_effect=[
+            httpx.Response(200, json=[item]),
+            httpx.Response(200, json=[]),
+        ]
+    )
+    async with httpx.AsyncClient() as client:
+        jobs = await src.fetch_jobs("acme", client=client)
+    assert jobs[0].description_raw == "<p>Plain</p>"
+
+
+@respx.mock
+@pytest.mark.asyncio
 async def test_fetch_jobs_filters_by_since(src):
     recent = _posting(1, "2026-05-05T12:00:00Z")
     old = _posting(2, "2025-01-01T00:00:00Z")
