@@ -15,7 +15,7 @@ from app.services import match_queue_service
 
 def _job(slug: str, ext: str = "1") -> Job:
     return Job(
-        source="greenhouse_board",
+        source="greenhouse",
         external_id=f"{slug}-{ext}",
         title="Engineer",
         company_name=slug_to_company_name(slug),

@@ -57,4 +57,4 @@ def test_provider_name_returns_string():
 
     src = GreenhouseBoardSource()
     assert isinstance(src.provider_name, str)
-    assert src.provider_name == "greenhouse_board"  # rename to "greenhouse" happens in Task B3
+    assert src.provider_name == "greenhouse"

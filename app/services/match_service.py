@@ -161,7 +161,7 @@ async def score_and_match(
             select(Job)
             .where(
                 Job.is_active.is_(True),
-                Job.source == "greenhouse_board",
+                Job.source == "greenhouse",
                 Job.company_name.in_(company_names),
             )
             .order_by(Job.posted_at.desc().nullslast(), Job.fetched_at.desc())
@@ -200,7 +200,7 @@ async def score_and_match(
                     "company": job.company_name,
                     "location": job.location,
                     "workplace_type": job.workplace_type,
-                    "description": job.description_clean or job.description_md or "",
+                    "description": job.description or job.description_raw or "",
                 }
             )
             job_map[str(app.id)] = job
@@ -325,7 +325,7 @@ async def score_cached(
         select(Job)
         .where(
             Job.is_active.is_(True),
-            Job.source == "greenhouse_board",
+            Job.source == "greenhouse",
             Job.company_name.in_(company_names),
         )
         .order_by(Job.posted_at.desc().nullslast(), Job.fetched_at.desc())

@@ -42,7 +42,7 @@ async def _seed_job(
     title: str = "Software Engineer",
     salary: str | None = None,
     posted_at: datetime | None = None,
-    source: str = "greenhouse_board",
+    source: str = "greenhouse",
     company_name: str = "Acme Corp",
 ) -> Job:
     job = Job(
@@ -51,7 +51,7 @@ async def _seed_job(
         title=title,
         company_name=company_name,
         apply_url="https://example.com/apply",
-        description_md="A great engineering role.",
+        description="A great engineering role.",
         salary=salary,
         posted_at=posted_at,
     )
@@ -291,7 +291,7 @@ async def test_score_and_match_filters_by_profile_slugs(db_session):
     even if Stripe jobs exist in the global pool from other users (spec 2026-04-28)."""
     # Two jobs, two companies
     airbnb_job = Job(
-        source="greenhouse_board",
+        source="greenhouse",
         external_id="a-1",
         title="X",
         company_name="Airbnb",
@@ -299,7 +299,7 @@ async def test_score_and_match_filters_by_profile_slugs(db_session):
         is_active=True,
     )
     stripe_job = Job(
-        source="greenhouse_board",
+        source="greenhouse",
         external_id="s-1",
         title="Y",
         company_name="Stripe",
@@ -352,7 +352,7 @@ async def test_score_cached_only_uses_existing_jobs(db_session):
     db_session.add(profile)
     db_session.add(
         Job(
-            source="greenhouse_board",
+            source="greenhouse",
             external_id="a-2",
             title="Z",
             company_name="Airbnb",
@@ -392,7 +392,7 @@ async def test_score_and_match_flips_match_status_to_matched(db_session):
     )
     db_session.add(profile)
     job = Job(
-        source="greenhouse_board",
+        source="greenhouse",
         external_id="m-1",
         title="Eng",
         company_name="Airbnb",
@@ -467,7 +467,7 @@ async def test_score_cached_skips_jobs_with_fresh_match_claim(db_session):
     await db_session.refresh(profile)
 
     job = Job(
-        source="greenhouse_board",
+        source="greenhouse",
         external_id="r-1",
         title="Eng",
         company_name="Airbnb",
@@ -504,14 +504,14 @@ async def test_score_and_match_persists_summary_and_uses_location(db_session):
     """Scored Application gets match_summary populated and rationale stays for audit."""
     profile = await _seed_profile(db_session)
     job = Job(
-        source="greenhouse_board",
+        source="greenhouse",
         external_id=str(uuid.uuid4()),
         title="Senior Backend Engineer",
         company_name="Test Co",
         location="Berlin, Germany",
         workplace_type="hybrid",
-        description_md="<p>5+ yrs Python required.</p>",
-        description_clean="5+ yrs Python required.",
+        description_raw="<p>5+ yrs Python required.</p>",
+        description="5+ yrs Python required.",
         apply_url="https://example.com/apply/ms",
     )
     db_session.add(job)

@@ -22,9 +22,7 @@ log = structlog.get_logger()
 class GreenhouseBoardSource(JobSource):
     @property
     def provider_name(self) -> str:
-        # Task B3 flips this to "greenhouse" alongside the
-        # UPDATE jobs SET source = 'greenhouse' WHERE source = 'greenhouse_board'.
-        return "greenhouse_board"
+        return "greenhouse"
 
     def _parse_job(self, item: dict, slug: str) -> JobData | None:
         job_id = item.get("id")

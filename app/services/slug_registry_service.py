@@ -32,8 +32,8 @@ async def get(source: str, slug: str, session: AsyncSession) -> SlugFetch | None
 async def validate_slug(source: str, slug: str, session: AsyncSession) -> bool:
     """Returns True if the slug exists on Greenhouse. On True, upserts a row
     with last_status='ok' (no last_fetched_at — that's set by an actual fetch)."""
-    if source != "greenhouse_board":
-        raise ValueError(f"validate_slug only supports greenhouse_board (got {source})")
+    if source != "greenhouse":
+        raise ValueError(f"validate_slug only supports greenhouse (got {source})")
     src = GreenhouseBoardSource()
     ok = await src.validate(slug)
     if not ok:
@@ -108,9 +108,9 @@ async def enqueue_stale(profile, session: AsyncSession, *, ttl_hours: int = 6) -
     cutoff = datetime.now(UTC) - timedelta(hours=ttl_hours)
     queued: list[str] = []
     for slug in slugs:
-        row = await get("greenhouse_board", slug, session)
+        row = await get("greenhouse", slug, session)
         if row is None:
-            row = SlugFetch(source="greenhouse_board", slug=slug, queued_at=datetime.now(UTC))
+            row = SlugFetch(source="greenhouse", slug=slug, queued_at=datetime.now(UTC))
             session.add(row)
             queued.append(slug)
             continue

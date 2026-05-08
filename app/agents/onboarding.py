@@ -150,7 +150,7 @@ async def persist_inferred_slugs(profile, slugs: list[str], session) -> list[str
     """
     valid: list[str] = []
     for s in slugs:
-        if await slug_registry_service.validate_slug("greenhouse_board", s, session):
+        if await slug_registry_service.validate_slug("greenhouse", s, session):
             valid.append(s)
     profile.target_company_slugs = {
         **(profile.target_company_slugs or {}),

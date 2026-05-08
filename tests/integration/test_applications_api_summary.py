@@ -21,12 +21,12 @@ async def test_list_endpoint_includes_match_summary(db_session, auth_headers, se
     _user, profile = seeded_user
 
     job = Job(
-        source="greenhouse_board",
+        source="greenhouse",
         external_id=str(uuid.uuid4()),
         title="API Test Engineer",
         company_name="API Co",
         apply_url="https://example.com/apply",
-        description_md="A role.",
+        description="A role.",
     )
     db_session.add(job)
     await db_session.commit()
@@ -58,21 +58,21 @@ async def test_list_endpoint_includes_match_summary(db_session, auth_headers, se
 
 
 @pytest.mark.asyncio
-async def test_detail_endpoint_exposes_description_clean(db_session, auth_headers, seeded_user):
-    """GET /api/applications/{id} surfaces description_clean (markdownified) alongside
-    the raw description_md so the SPA can render readable text instead of HTML."""
+async def test_detail_endpoint_exposes_description(db_session, auth_headers, seeded_user):
+    """GET /api/applications/{id} surfaces description (markdownified) alongside
+    the raw description_raw so the SPA can render readable text instead of HTML."""
     from app.main import app as fastapi_app
 
     _user, profile = seeded_user
 
     job = Job(
-        source="greenhouse_board",
+        source="greenhouse",
         external_id=str(uuid.uuid4()),
         title="HTML Description Role",
         company_name="HTMLCo",
         apply_url="https://example.com/apply",
-        description_md="<h2>Who we are</h2><p>Cool company.</p>",
-        description_clean="## Who we are\n\nCool company.",
+        description_raw="<h2>Who we are</h2><p>Cool company.</p>",
+        description="## Who we are\n\nCool company.",
     )
     db_session.add(job)
     await db_session.commit()
@@ -92,6 +92,6 @@ async def test_detail_endpoint_exposes_description_clean(db_session, auth_header
         resp = await client.get(f"/api/applications/{app_obj.id}", headers=auth_headers)
     assert resp.status_code == 200
     payload = resp.json()
-    assert payload["job"]["description_clean"] == "## Who we are\n\nCool company."
-    # description_md kept alongside for backward compat / null-fallback.
-    assert payload["job"]["description_md"] == "<h2>Who we are</h2><p>Cool company.</p>"
+    assert payload["job"]["description"] == "## Who we are\n\nCool company."
+    # description_raw kept alongside for backward compat / null-fallback.
+    assert payload["job"]["description_raw"] == "<h2>Who we are</h2><p>Cool company.</p>"

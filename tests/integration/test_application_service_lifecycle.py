@@ -35,7 +35,7 @@ async def _seed_application(db_session) -> tuple[Application, Job, UserProfile]:
         title="Python Engineer",
         company_name="Acme Corp",
         apply_url="https://example.com/apply",
-        description_md="Python backend role.",
+        description="Python backend role.",
     )
     db_session.add(job)
     await db_session.commit()

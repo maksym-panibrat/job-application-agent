@@ -4,7 +4,7 @@ Wraps markdownify with sane defaults (ATX headings, drop script/style),
 plus a whitespace pass to collapse runs of >2 blank lines.
 
 Intended consumer: app.services.job_service.upsert_job, which writes
-description_clean alongside the raw description_md.
+description (markdown) alongside the raw description_raw.
 """
 
 import re

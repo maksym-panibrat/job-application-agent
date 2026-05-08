@@ -27,23 +27,23 @@ def make_job_data(external_id: str = "job-001", title: str = "Python Engineer") 
 @pytest.mark.asyncio
 async def test_upsert_job_creates_new(db_session):
     job_data = make_job_data()
-    job, created = await upsert_job(job_data, "greenhouse_board", db_session)
+    job, created = await upsert_job(job_data, "greenhouse", db_session)
 
     assert created is True
     assert job.id is not None
     assert job.title == "Python Engineer"
-    assert job.source == "greenhouse_board"
+    assert job.source == "greenhouse"
     assert job.external_id == "job-001"
 
 
 @pytest.mark.asyncio
 async def test_upsert_job_updates_existing(db_session):
     job_data = make_job_data()
-    job1, created1 = await upsert_job(job_data, "greenhouse_board", db_session)
+    job1, created1 = await upsert_job(job_data, "greenhouse", db_session)
     assert created1 is True
 
     updated_data = make_job_data(title="Senior Python Engineer")
-    job2, created2 = await upsert_job(updated_data, "greenhouse_board", db_session)
+    job2, created2 = await upsert_job(updated_data, "greenhouse", db_session)
     assert created2 is False
     assert job2.id == job1.id
     assert job2.title == "Senior Python Engineer"
@@ -54,7 +54,7 @@ async def test_mark_stale_jobs(db_session):
     from datetime import timedelta
 
     job_data = make_job_data()
-    job, _ = await upsert_job(job_data, "greenhouse_board", db_session)
+    job, _ = await upsert_job(job_data, "greenhouse", db_session)
 
     job.fetched_at = datetime.now(UTC) - timedelta(days=20)
     db_session.add(job)
@@ -106,7 +106,7 @@ async def test_sync_profile_prunes_invalid_slugs_from_profile(db_session):
     profile = await get_or_create_profile(user.id, db_session)
     profile.target_company_slugs = {"greenhouse": ["airbnb", "deadcorp", "stripe"]}
     db_session.add(profile)
-    db_session.add(SlugFetch(source="greenhouse_board", slug="deadcorp", is_invalid=True))
+    db_session.add(SlugFetch(source="greenhouse", slug="deadcorp", is_invalid=True))
     await db_session.commit()
     await db_session.refresh(profile)
 
@@ -141,8 +141,8 @@ async def test_sync_profile_seeds_defaults_when_empty(db_session):
 
 
 @pytest.mark.asyncio
-async def test_upsert_job_populates_description_clean(db_session):
-    """upsert_job should compute description_clean from raw HTML description_raw."""
+async def test_upsert_job_populates_description(db_session):
+    """upsert_job should compute description (markdown) from raw HTML description_raw."""
     raw = "<h2>About</h2><ul><li><strong>Python</strong></li></ul>"
     data = JobData(
         external_id="ext-clean-1",
@@ -156,17 +156,17 @@ async def test_upsert_job_populates_description_clean(db_session):
         apply_url="https://example.com/apply/1",
         posted_at=None,
     )
-    job, created = await upsert_job(data, "greenhouse_board", db_session)
+    job, created = await upsert_job(data, "greenhouse", db_session)
     assert created is True
-    assert job.description_clean is not None
-    assert "## About" in job.description_clean
-    assert "**Python**" in job.description_clean
-    assert "<h2>" not in job.description_clean
+    assert job.description is not None
+    assert "## About" in job.description
+    assert "**Python**" in job.description
+    assert "<h2>" not in job.description
 
 
 @pytest.mark.asyncio
-async def test_upsert_job_recomputes_description_clean_on_update(db_session):
-    """Re-upserting an existing job recomputes description_clean."""
+async def test_upsert_job_recomputes_description_on_update(db_session):
+    """Re-upserting an existing job recomputes description."""
     data = JobData(
         external_id="ext-clean-2",
         title="Test Engineer",
@@ -179,18 +179,18 @@ async def test_upsert_job_recomputes_description_clean_on_update(db_session):
         apply_url="https://example.com/apply/2",
         posted_at=None,
     )
-    await upsert_job(data, "greenhouse_board", db_session)
+    await upsert_job(data, "greenhouse", db_session)
 
     data.description_raw = "<p>v2 updated</p>"
-    job, created = await upsert_job(data, "greenhouse_board", db_session)
+    job, created = await upsert_job(data, "greenhouse", db_session)
     assert created is False
-    assert "v2 updated" in (job.description_clean or "")
-    assert "v1" not in (job.description_clean or "")
+    assert "v2 updated" in (job.description or "")
+    assert "v1" not in (job.description or "")
 
 
 @pytest.mark.asyncio
 async def test_upsert_job_handles_none_description(db_session):
-    """A job with no description should store description_clean='' (or None — both safe)."""
+    """A job with no description should store description='' (or None — both safe)."""
     data = JobData(
         external_id="ext-clean-3",
         title="Title only",
@@ -203,5 +203,5 @@ async def test_upsert_job_handles_none_description(db_session):
         apply_url="https://example.com/apply/3",
         posted_at=None,
     )
-    job, _ = await upsert_job(data, "greenhouse_board", db_session)
-    assert job.description_clean in ("", None)
+    job, _ = await upsert_job(data, "greenhouse", db_session)
+    assert job.description in ("", None)

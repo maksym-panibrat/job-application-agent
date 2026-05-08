@@ -68,10 +68,10 @@ async def fetch_stratified_sample(per_bucket: int):
                 text(
                     """
                     SELECT id::text, source, title,
-                           length(description_md) AS raw_len, description_md
+                           length(description_raw) AS raw_len, description_raw
                     FROM jobs
-                    WHERE description_md IS NOT NULL
-                      AND length(description_md) BETWEEN :lo AND :hi
+                    WHERE description_raw IS NOT NULL
+                      AND length(description_raw) BETWEEN :lo AND :hi
                     ORDER BY random()
                     LIMIT :n
                     """
@@ -79,7 +79,9 @@ async def fetch_stratified_sample(per_bucket: int):
                 {"lo": lo, "hi": hi, "n": per_bucket},
             )
             for row in r.fetchall():
-                rows.append((label, row.id, row.source, row.title, row.raw_len, row.description_md))
+                rows.append(
+                    (label, row.id, row.source, row.title, row.raw_len, row.description_raw)
+                )
     return rows
 
 

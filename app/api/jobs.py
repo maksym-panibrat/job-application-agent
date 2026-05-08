@@ -57,7 +57,7 @@ async def sync_status(
             (
                 await session.execute(
                     select(SlugFetch).where(
-                        SlugFetch.source == "greenhouse_board",
+                        SlugFetch.source == "greenhouse",
                         SlugFetch.slug.in_(user_slugs),
                     )
                 )

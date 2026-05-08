@@ -35,7 +35,7 @@ async def _seed_profile(db_session, *slugs: str) -> UserProfile:
 async def test_run_match_queue_drains_pending(db_session):
     await _seed_profile(db_session, "airbnb")
     job = Job(
-        source="greenhouse_board",
+        source="greenhouse",
         external_id="x-1",
         title="Engineer",
         company_name=slug_to_company_name("airbnb"),
@@ -98,7 +98,7 @@ async def test_run_match_queue_releases_leases_without_failing_attempts_on_budge
     jobs = []
     for i in range(3):
         job = Job(
-            source="greenhouse_board",
+            source="greenhouse",
             external_id=f"budget-{i}",
             title=f"Engineer {i}",
             company_name=slug_to_company_name("airbnb"),
@@ -163,7 +163,7 @@ async def test_run_match_queue_uses_settings_for_default_caps(db_session, monkey
     jobs = []
     for i in range(5):
         job = Job(
-            source="greenhouse_board",
+            source="greenhouse",
             external_id=f"settings-{i}",
             title=f"Engineer {i}",
             company_name=slug_to_company_name("airbnb"),
@@ -234,7 +234,7 @@ async def test_run_match_queue_caps_jobs_per_profile_per_tick(db_session):
     jobs = []
     for i in range(8):
         job = Job(
-            source="greenhouse_board",
+            source="greenhouse",
             external_id=f"cap-{i}",
             title=f"Engineer {i}",
             company_name=slug_to_company_name("airbnb"),
@@ -329,7 +329,7 @@ async def test_run_match_queue_reprocesses_deferred_apps_after_lease_expiry(db_s
     jobs = []
     for i in range(5):
         job = Job(
-            source="greenhouse_board",
+            source="greenhouse",
             external_id=f"reproc-{i}",
             title=f"Engineer {i}",
             company_name=slug_to_company_name("airbnb"),

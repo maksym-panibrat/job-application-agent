@@ -54,8 +54,8 @@ async def test_status_lists_invalid_slugs(client, auth_headers, seeded_user, db_
     db_session.add(profile)
     await db_session.commit()
     # Two strikes → invalid
-    await slug_registry_service.mark_fetched("greenhouse_board", "openai", "invalid", db_session)
-    await slug_registry_service.mark_fetched("greenhouse_board", "openai", "invalid", db_session)
+    await slug_registry_service.mark_fetched("greenhouse", "openai", "invalid", db_session)
+    await slug_registry_service.mark_fetched("greenhouse", "openai", "invalid", db_session)
 
     response = await client.get("/api/sync/status", headers=auth_headers)
     body = response.json()

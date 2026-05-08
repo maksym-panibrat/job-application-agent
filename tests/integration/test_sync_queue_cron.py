@@ -100,12 +100,12 @@ async def test_run_job_sync_does_not_synchronously_score_cached_jobs(db_session)
     profile = await _seed_profile(db_session, "airbnb")
     profile_id = profile.id
     job = Job(
-        source="greenhouse_board",
+        source="greenhouse",
         external_id="9001",
         title="Backend Engineer",
         company_name=slug_to_company_name("airbnb"),
         apply_url="https://boards.greenhouse.io/airbnb/jobs/9001",
-        description_clean="job",
+        description="job",
     )
     db_session.add(job)
     await db_session.commit()
@@ -143,7 +143,7 @@ async def test_run_job_sync_prunes_invalid_slugs_for_active_profiles(db_session)
     from app.scheduler.tasks import run_job_sync
 
     profile = await _seed_profile(db_session, "airbnb", "deadcorp", "stripe")
-    db_session.add(SlugFetch(source="greenhouse_board", slug="deadcorp", is_invalid=True))
+    db_session.add(SlugFetch(source="greenhouse", slug="deadcorp", is_invalid=True))
     await db_session.commit()
 
     summary = await run_job_sync()
@@ -162,7 +162,7 @@ async def test_run_sync_queue_marks_invalid_after_2_404s(db_session):
     with respx.mock:
         respx.get(f"{GREENHOUSE_BOARDS_BASE}/openai/jobs").mock(return_value=httpx.Response(404))
         await run_sync_queue()
-    row = await slug_registry_service.get("greenhouse_board", "openai", db_session)
+    row = await slug_registry_service.get("greenhouse", "openai", db_session)
     assert row.consecutive_404_count == 1
     assert row.is_invalid is False
 
@@ -175,6 +175,6 @@ async def test_run_sync_queue_marks_invalid_after_2_404s(db_session):
     # Drop in-memory cache so we re-read the row state the worker (in a separate
     # session) committed.
     db_session.expire_all()
-    row = await slug_registry_service.get("greenhouse_board", "openai", db_session)
+    row = await slug_registry_service.get("greenhouse", "openai", db_session)
     assert row.consecutive_404_count == 2
     assert row.is_invalid is True

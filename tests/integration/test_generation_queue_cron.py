@@ -26,12 +26,12 @@ async def _seed_pending_app(db_session) -> Application:
     await db_session.refresh(profile)
 
     job = Job(
-        source="greenhouse_board",
+        source="greenhouse",
         external_id=str(uuid.uuid4()),
         title="Engineer",
         company_name="Acme",
         apply_url="https://x",
-        description_md="role",
+        description="role",
     )
     db_session.add(job)
     await db_session.commit()

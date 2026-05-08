@@ -44,7 +44,7 @@ async def _prune_invalid_slugs(profile: UserProfile, session: AsyncSession) -> l
         (
             await session.execute(
                 select(SlugFetch).where(
-                    SlugFetch.source == "greenhouse_board",
+                    SlugFetch.source == "greenhouse",
                     SlugFetch.slug.in_(user_slugs),
                     SlugFetch.is_invalid.is_(True),
                 )
