@@ -17,7 +17,7 @@ Four frontend UX papercuts, bundled into one spec/PR because they all touch the 
 - Desktop users can apply to a matched job in one click from the detail page.
 - The chat modal is consistently named "Chat" everywhere — UI labels, files, URL param, telemetry.
 - Site brand says "Job Search" everywhere — `<title>`, header brand link, landing hero.
-- Dismiss is reversible **forever**. A dismissed match can be restored to pending at any later point — next week, next month — through the Dismissed-tab kebab and the detail-page kebab. The undo toast is just an ergonomic shortcut for the immediate-misclick case; missing it never costs the user the ability to recover, because the durable Restore action has no time limit.
+- Dismiss is reversible **forever**. A dismissed match can be restored to pending at any later point — next week, next month — through the Dismissed-tab `MatchCard` kebab. (The `ApplicationReview` detail page is intentionally unchanged for dismissed apps; undismiss is exclusively a list-page action.) The undo toast is just an ergonomic shortcut for the immediate-misclick case; missing it never costs the user the ability to recover, because the durable Restore action has no time limit.
 
 ## Non-goals
 
@@ -201,7 +201,7 @@ EDITED
 
 Dismiss must be reversible at **any point in the future** — there is no expiring window. Two paths surface the same `reviewApplication(id, 'pending_review')` action, layered for ergonomics:
 
-- **Durable path (primary).** A "Restore" action on every dismissed match (kebab in the Dismissed list and the detail-page kebab). This is the canonical undo. It has no TTL; it works next week, next month, indefinitely. Whenever a match is in `dismissed`, this affordance is visible.
+- **Durable path (primary, list-only).** A "Restore" action in the `MatchCard` kebab when viewing the Dismissed tab (`?status=dismissed`). This is the canonical undismiss. It has no TTL; it works next week, next month, indefinitely. The `ApplicationReview` detail page is **not** modified for dismissed apps — to undismiss, the user opens the Dismissed tab and clicks Restore on the card. The detail page stays scoped to "review and act on a pending match".
 - **Toast shortcut (secondary).** Right after a fresh dismiss, an "Undo" button on the success toast lets the user reverse the action without navigating to the Dismissed tab. The toast disappears after 8 seconds — but missing it has zero impact on recoverability because the durable path remains. The toast is only a convenience; it is **not** the undismiss feature.
 
 ### Layer 3a — Undo toast on dismiss (convenience shortcut)
@@ -227,23 +227,15 @@ The action renders as a button on the right side of the toast (e.g., `<button cl
 
 Telemetry on undo: `track('match.undismissed', { application_id, source: 'toast' })`.
 
-### Layer 3b — Restore on the dismissed match
+### Layer 3b — Restore on the dismissed match (Dismissed tab only)
+
+**Scope.** This change is confined to the `MatchCard` rendered inside the Dismissed tab. The `ApplicationReview` detail page is **not** modified for dismissed apps — its kebab keeps only "Open original posting ↗" (the existing item). Users undismiss from the list, not from the detail page.
 
 **On `MatchCard` (Dismissed tab).** When `app.status === 'dismissed'`, the kebab's "Dismiss" item is replaced with "Restore". Clicking it calls `reviewApplication(id, 'pending_review')`. Other items (Save for later, Open original posting ↗) stay.
 
 `SwipeableCard` behaviour on dismissed cards: keep swipe-to-dismiss disabled-or-no-op for `dismissed` cards, since "dismiss again" is meaningless. Easiest path: pass a different `onCommit` (or `undefined`) when status is `dismissed` and let `SwipeableCard` no-op. Verify by reading the component before deciding the exact wiring; if the simplest path is to keep swipe enabled but make it a no-op, that's fine.
 
-**On `ApplicationReview` (detail page).** The existing `moveBackToPending` mutation currently only renders for `applied` (line 92-99). Extend to also render for `dismissed`, with label "Restore to pending":
-
-```tsx
-{(app.status === 'applied' || app.status === 'dismissed') && (
-  <ActionSheetItem onClick={...}>
-    {app.status === 'applied' ? 'Move back to pending' : 'Restore to pending'}
-  </ActionSheetItem>
-)}
-```
-
-Telemetry: `track('match.undismissed', { application_id, source: 'kebab' | 'detail_kebab' })`.
+Telemetry: `track('match.undismissed', { application_id, source: 'kebab' })`.
 
 ### Stale comment / type cast cleanup
 
@@ -261,8 +253,7 @@ Fix:
 - `Toast.test.tsx`: clicking the action button runs `onClick` and dismisses the toast. Custom `ttlMs` is honoured. Toasts without an action still render (regression).
 - `MatchCard.test.tsx`: a card with `status='dismissed'` shows "Restore" instead of "Dismiss" in the kebab; clicking it POSTs `pending_review` and refreshes the list.
 - `MatchCard.test.tsx`: dismissing a `pending_review` card produces a toast with an "Undo" button; clicking Undo POSTs `pending_review`.
-- `ApplicationReview.test.tsx`: kebab on a `dismissed` application has "Restore to pending"; clicking it POSTs `pending_review`.
-- `client.ts` typing test (or just the existing usages compiling): no `as` cast remains.
+- `client.ts` typing: existing usages compile after the type widens to include `'pending_review'`; no `as` cast remains.
 
 ### Risks / accepted gaps
 
@@ -294,11 +285,11 @@ The implementation plan treats these as three independent task tracks — parall
   - C2: Extend `Toast.tsx` to accept an optional `action` and `ttlMs`; add tests.
   - C3: Wire undo-toast into every `dismiss.mutate()` success path (`MatchCard.tsx`, `ApplicationReview.tsx`, `StickyActions.tsx`).
   - C4: Add "Restore" kebab item on dismissed `MatchCard` (replaces "Dismiss"); make swipe a no-op on dismissed cards.
-  - C5: Extend `ApplicationReview` kebab to render "Restore to pending" when status is `dismissed`.
+  - **Out of scope for this track:** the `ApplicationReview` detail-page kebab is not extended for dismissed apps. Undismiss lives on the Dismissed list only.
 
 - **Track D — Verification & PR**
   - Type-check, lint, tests, manual dev smoke.
-  - PR with desktop screenshots: (1) `ApplicationReview` desktop showing the new "Open posting ↗" header CTA, (2) the header showing "Agent" icon button, (3) the drawer titled "Agent", (4) the dismiss undo toast (action button visible), (5) the Dismissed-tab kebab showing "Restore". Per user preference, real screenshots only — no ASCII mockups.
+  - PR with desktop screenshots: (1) `ApplicationReview` desktop showing the new "Open posting ↗" header CTA, (2) the header showing the "Chat" icon button, (3) the drawer titled "Chat", (4) the dismiss undo toast (action button visible), (5) the Dismissed-tab kebab showing "Restore", (6) the rebranded "Job Search" header brand. Per user preference, real screenshots only — no ASCII mockups.
 
 ## Acceptance criteria
 
@@ -306,8 +297,9 @@ The implementation plan treats these as three independent task tracks — parall
 - On mobile, the existing bottom sticky bar is unchanged.
 - `rg -wi 'coach' frontend/src` returns zero hits.
 - `rg 'Job (Agent|Application Agent)' frontend/` returns zero hits; the `<title>`, header brand link, and landing hero all read "Job Search".
-- A dismissed match can be restored to `pending_review` at any point in the future — there is no time limit. The Dismissed-tab `MatchCard` kebab shows "Restore" and the detail-page kebab shows "Restore to pending"; both successfully POST the transition. (Tested.)
+- A dismissed match can be restored to `pending_review` at any point in the future — there is no time limit. The Dismissed-tab (`?status=dismissed`) `MatchCard` kebab shows "Restore"; clicking it POSTs the transition and the card moves back to the Pending tab. (Tested.)
+- The `ApplicationReview` detail page is **unchanged** for dismissed apps. Undismiss is exclusively a list-page action.
 - As a convenience, dismissing a match anywhere in the app (swipe, kebab, mobile sticky Skip, detail kebab) also shows a toast with an "Undo" button for 8 seconds. Clicking it within that window restores the match. The toast's TTL is purely cosmetic — it does not bound the user's ability to undo, because the durable Restore action above remains available indefinitely. (Tested.)
-- Stale comment + type cast in `ApplicationReview.tsx` removed; `reviewApplication` client signature includes `'pending_review'`.
+- Stale comment + type cast in `ApplicationReview.tsx` removed; `reviewApplication` client signature includes `'pending_review'`. (Even though the detail-page kebab does not gain a Restore item, the client widening is still required for the toast's Undo action and the list-card Restore item.)
 - All frontend tests, type-check, and lint pass.
 - A single PR contains all four tracks with screenshots and a note in the body that the rename includes telemetry events (`coach.*` → `chat.*`) and the URL param (`?coach=1` → `?chat=1`), plus the "Job Search" rebrand.
