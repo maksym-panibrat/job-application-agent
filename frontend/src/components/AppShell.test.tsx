@@ -87,7 +87,7 @@ describe('AppShell (desktop)', () => {
 
   it('renders the brand link → /', () => {
     renderShell('/anywhere')
-    const brand = screen.getByText('Job Agent')
+    const brand = screen.getByText('Job Search')
     expect(brand.closest('a')).toHaveAttribute('href', '/')
   })
 

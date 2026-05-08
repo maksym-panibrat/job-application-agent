@@ -29,7 +29,7 @@ export function AppShell({ children }: AppShellProps) {
     <div className="min-h-screen bg-bg text-text">
       <header className="sticky top-0 z-30 bg-surface border-b border-border">
         <div className="max-w-3xl mx-auto px-4 h-14 flex items-center justify-between gap-2">
-          <Link to="/" className="font-bold text-text text-sm tracking-tight">Job Agent</Link>
+          <Link to="/" className="font-bold text-text text-sm tracking-tight">Job Search</Link>
 
           <nav className="flex items-center gap-1">
             {user && (

@@ -26,7 +26,7 @@ test.describe('Landing page — Sign in with Google', () => {
 
     await page.goto('/')
 
-    await expect(page.getByRole('heading', { name: /Job Application Agent/i })).toBeVisible()
+    await expect(page.getByRole('heading', { name: /Job Search/i })).toBeVisible()
     await expect(page.getByRole('button', { name: /Sign in with Google/i })).toBeVisible()
     await expect(page.getByRole('button', { name: /Sign in with Google/i })).toBeEnabled()
   })
@@ -130,7 +130,7 @@ test.describe('Top-level navigation', () => {
     await expect(page.getByRole('button', { name: /pending/i })).toBeVisible()
 
     // Brand link returns to root.
-    await expect(page.getByRole('link', { name: 'Job Agent' })).toHaveAttribute('href', '/')
+    await expect(page.getByRole('link', { name: 'Job Search' })).toHaveAttribute('href', '/')
 
     // Settings → renders the structured Settings page (Plan C).
     await page.getByRole('link', { name: 'Settings' }).click()
