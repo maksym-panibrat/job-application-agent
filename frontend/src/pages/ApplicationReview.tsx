@@ -88,13 +88,17 @@ export default function ApplicationReview() {
         <ActionSheetItem onClick={() => { setMenuOpen(false); window.open(app.job!.apply_url, '_blank', 'noopener') }}>
           Open original posting ↗
         </ActionSheetItem>
-        {app.status === 'applied' && (
+        {(app.status === 'applied' || app.status === 'dismissed') && (
           <ActionSheetItem onClick={() => {
             setMenuOpen(false)
-            track('match.unapplied', { application_id: id })
+            if (app.status === 'dismissed') {
+              track('match.undismissed', { application_id: id, source: 'detail_kebab' })
+            } else {
+              track('match.unapplied', { application_id: id })
+            }
             moveBackToPending.mutate()
           }}>
-            Move back to pending
+            {app.status === 'applied' ? 'Move back to pending' : 'Restore to pending'}
           </ActionSheetItem>
         )}
         {app.status !== 'dismissed' && (

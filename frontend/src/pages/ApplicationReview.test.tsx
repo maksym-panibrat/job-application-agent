@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { http, HttpResponse } from 'msw'
 import { MemoryRouter, Routes, Route } from 'react-router-dom'
@@ -132,5 +133,21 @@ describe('Match detail (ApplicationReview)', () => {
       </QueryClientProvider>
     )
     expect(screen.getByText(/loading/i)).toBeInTheDocument()
+  })
+
+  it('shows "Restore to pending" in the kebab when status is dismissed and POSTs pending_review', async () => {
+    let patched: unknown = null
+    server.use(
+      http.patch('/api/applications/a1', async ({ request }) => {
+        patched = await request.json()
+        return HttpResponse.json({ id: 'a1', status: 'pending_review' })
+      }),
+    )
+    renderAt('/matches/a1', detail({ status: 'dismissed' }))
+    await waitFor(() => expect(screen.getByRole('heading', { name: /senior backend engineer/i })).toBeInTheDocument())
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('button', { name: /more actions/i }))
+    await user.click(screen.getByText(/restore to pending/i))
+    await waitFor(() => expect(patched).toEqual({ status: 'pending_review' }))
   })
 })
