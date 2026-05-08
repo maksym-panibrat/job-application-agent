@@ -9,14 +9,15 @@ from sqlmodel import Field, SQLModel
 class Job(SQLModel, table=True):
     __tablename__ = "jobs"
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
-    source: str  # adzuna, greenhouse_board, jsearch, remoteok, remotive
+    source: str  # greenhouse, lever, ashby (and legacy adzuna/jsearch/remoteok/remotive)
     external_id: str
     title: str
     company_name: str
+    company_id: uuid.UUID | None = Field(default=None, foreign_key="companies.id", index=True)
     location: str | None = None
     workplace_type: str | None = None  # remote, hybrid, onsite
-    description_md: str | None = None
-    description_clean: str | None = None  # markdown, populated at ingestion by html_cleaner
+    description_raw: str | None = None  # untouched source payload (HTML for greenhouse/lever/ashby)
+    description: str | None = None  # canonical markdown, populated by html_cleaner at ingestion
     salary: str | None = None
     contract_type: str | None = None
     apply_url: str
