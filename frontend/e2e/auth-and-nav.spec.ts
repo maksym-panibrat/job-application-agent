@@ -115,7 +115,7 @@ test.describe('Top-level navigation', () => {
     expect(failures, `5xx responses hit: ${failures.join(', ')}`).toEqual([])
   })
 
-  test('AppShell header surfaces Settings link, Coach button, Sign out', async ({ page }) => {
+  test('AppShell header surfaces Settings link, Chat button, Sign out', async ({ page }) => {
     await page.route('**/api/status', (route) =>
       route.fulfill({
         status: 200,
@@ -137,12 +137,12 @@ test.describe('Top-level navigation', () => {
     await expect(page).toHaveURL(/\/settings$/)
     await expect(page.getByRole('heading', { name: /^Settings$/i })).toBeVisible()
 
-    // Coach button opens the drawer and sets the ?coach=1 query param.
+    // Chat button opens the drawer and sets the ?chat=1 query param.
     await page.goto('/')
     await page.waitForLoadState('networkidle')
-    await page.getByRole('button', { name: 'Coach' }).click()
-    await expect(page).toHaveURL(/[?&]coach=1/)
-    await expect(page.getByRole('dialog', { name: 'Coach' })).toBeVisible()
+    await page.getByRole('button', { name: 'Chat' }).click()
+    await expect(page).toHaveURL(/[?&]chat=1/)
+    await expect(page.getByRole('dialog', { name: 'Chat' })).toBeVisible()
 
     // Sign out is reachable as a button in the header.
     await expect(page.getByRole('button', { name: /Sign out/i })).toBeVisible()
