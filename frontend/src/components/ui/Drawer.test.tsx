@@ -6,7 +6,7 @@ import { Drawer } from './Drawer'
 describe('Drawer', () => {
   it('renders nothing when closed', () => {
     render(
-      <Drawer open={false} onClose={() => {}} title="Coach">
+      <Drawer open={false} onClose={() => {}} title="Test drawer">
         <p>chat</p>
       </Drawer>
     )
@@ -15,12 +15,12 @@ describe('Drawer', () => {
 
   it('renders dialog with title and close button when open', () => {
     render(
-      <Drawer open onClose={() => {}} title="Coach">
+      <Drawer open onClose={() => {}} title="Test drawer">
         <p>chat content</p>
       </Drawer>
     )
     const dlg = screen.getByRole('dialog')
-    expect(dlg).toHaveAttribute('aria-label', 'Coach')
+    expect(dlg).toHaveAttribute('aria-label', 'Test drawer')
     expect(screen.getByRole('button', { name: 'Close drawer' })).toBeInTheDocument()
     expect(screen.getByText('chat content')).toBeInTheDocument()
   })

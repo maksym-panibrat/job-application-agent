@@ -30,10 +30,10 @@ export function ProfileSummary({ profile }: { profile: Profile }) {
         <p className="pt-2 border-t border-border text-xs text-muted">
           To change anything here:{' '}
           <Link
-            to="?coach=1&prompt=change_profile"
+            to="?chat=1&prompt=change_profile"
             className="text-accent font-semibold"
           >
-            ✦ Open Coach
+            ✦ Open Chat
           </Link>
         </p>
       </div>

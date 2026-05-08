@@ -1,7 +1,7 @@
 import { useEffect } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { Drawer } from '../ui/Drawer'
-import { Coach } from './Coach'
+import { Chat } from './Chat'
 import { track } from '../../lib/track'
 
 const PROMPT_BY_SLUG: Record<string, string> = {
@@ -12,30 +12,30 @@ const PROMPT_BY_SLUG: Record<string, string> = {
   change_profile: 'I want to change something in my profile.',
 }
 
-export function CoachDrawer() {
+export function ChatDrawer() {
   const [params, setParams] = useSearchParams()
-  const open = params.get('coach') === '1'
+  const open = params.get('chat') === '1'
   const slug = params.get('prompt')
   const initialPrompt = slug ? PROMPT_BY_SLUG[slug] : undefined
 
   useEffect(() => {
     if (open) {
-      track('coach.opened', { source: 'deep_link', prompt_slug: slug ?? null })
+      track('chat.opened', { source: 'deep_link', prompt_slug: slug ?? null })
     }
   }, [open, slug])
 
   function close() {
     setParams((prev) => {
       const next = new URLSearchParams(prev)
-      next.delete('coach')
+      next.delete('chat')
       next.delete('prompt')
       return next
     }, { replace: true })
   }
 
   return (
-    <Drawer open={open} onClose={close} title="Coach">
-      <Coach initialPrompt={initialPrompt} />
+    <Drawer open={open} onClose={close} title="Chat">
+      <Chat initialPrompt={initialPrompt} />
     </Drawer>
   )
 }

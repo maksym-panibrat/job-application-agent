@@ -13,13 +13,13 @@ interface Message {
   error?: boolean
 }
 
-export interface CoachProps {
+export interface ChatProps {
   /** Pre-fills the composer (does not auto-send). Used by deep links from
-   *  the ProfileCompletenessCard's 'Tell coach →' rows. */
+   *  the ProfileCompletenessCard's 'Open chat →' rows. */
   initialPrompt?: string
 }
 
-export function Coach({ initialPrompt }: CoachProps) {
+export function Chat({ initialPrompt }: ChatProps) {
   const qc = useQueryClient()
   const { show } = useToast()
   const [messages, setMessages] = useState<Message[]>([])
@@ -45,7 +45,7 @@ export function Coach({ initialPrompt }: CoachProps) {
 
   async function send(text: string) {
     if (!text.trim() || sending) return
-    track('coach.message_sent', { length: text.length })
+    track('chat.message_sent', { length: text.length })
     setInput('')
     setSending(true)
     setMessages((prev) => [...prev, { role: 'user', content: text }])
@@ -63,7 +63,7 @@ export function Coach({ initialPrompt }: CoachProps) {
           })
         },
         () => {
-          track('coach.message_failed', { reason: 'stream_error' })
+          track('chat.message_failed', { reason: 'stream_error' })
           setMessages((prev) => {
             const out = [...prev]
             out[out.length - 1] = {
@@ -136,7 +136,7 @@ export function Coach({ initialPrompt }: CoachProps) {
                   <Button
                     size="sm"
                     pending={triggerSync.isPending}
-                    onClick={() => { track('coach.search_now_clicked'); triggerSync.mutate() }}
+                    onClick={() => { track('chat.search_now_clicked'); triggerSync.mutate() }}
                   >
                     ✦ Search now
                   </Button>

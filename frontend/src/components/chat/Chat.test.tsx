@@ -3,7 +3,7 @@ import { render, screen, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import userEvent from '@testing-library/user-event'
 import { ToastProvider } from '../ui/Toast'
-import { Coach } from './Coach'
+import { Chat } from './Chat'
 
 function withCtx(node: React.ReactNode) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
@@ -24,16 +24,16 @@ function sseStreamResponse(body: string): Response {
   return new Response(stream, { status: 200, headers: { 'Content-Type': 'text/event-stream' } })
 }
 
-describe('Coach', () => {
+describe('Chat', () => {
   it('renders with composer and resume upload affordances', () => {
-    render(withCtx(<Coach />))
+    render(withCtx(<Chat />))
     expect(screen.getByPlaceholderText(/type your/i)).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /resume/i })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /^send$/i })).toBeInTheDocument()
   })
 
   it('prefills composer with initialPrompt (does not auto-send)', () => {
-    render(withCtx(<Coach initialPrompt="What roles am I targeting?" />))
+    render(withCtx(<Chat initialPrompt="What roles am I targeting?" />))
     const input = screen.getByPlaceholderText(/type your/i) as HTMLInputElement
     expect(input.value).toBe('What roles am I targeting?')
   })
@@ -48,7 +48,7 @@ describe('Coach', () => {
     }) as typeof fetch
 
     const user = userEvent.setup()
-    render(withCtx(<Coach />))
+    render(withCtx(<Chat />))
     await user.type(screen.getByPlaceholderText(/type your/i), 'hello')
     await user.click(screen.getByRole('button', { name: /^send$/i }))
     await waitFor(() => expect(screen.getByText('hello')).toBeInTheDocument())
@@ -77,7 +77,7 @@ describe('Coach', () => {
     }) as typeof fetch
 
     const user = userEvent.setup()
-    render(withCtx(<Coach />))
+    render(withCtx(<Chat />))
     await user.type(screen.getByPlaceholderText(/type your/i), 'set roles')
     await user.click(screen.getByRole('button', { name: /^send$/i }))
     await waitFor(() => expect(screen.getByText('updated')).toBeInTheDocument())

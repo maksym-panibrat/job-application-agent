@@ -30,7 +30,7 @@ vi.mock('../lib/track', () => ({
 }))
 
 import { AppShell } from './AppShell'
-import { CoachDrawer } from './coach/CoachDrawer'
+import { ChatDrawer } from './chat/ChatDrawer'
 
 function renderShell(pathname = '/') {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
@@ -47,7 +47,7 @@ function renderShell(pathname = '/') {
   )
 }
 
-function renderShellWithCoach(pathname = '/') {
+function renderShellWithChat(pathname = '/') {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return render(
     <QueryClientProvider client={qc}>
@@ -56,7 +56,7 @@ function renderShellWithCoach(pathname = '/') {
           <AppShell>
             <p>page body</p>
           </AppShell>
-          <CoachDrawer />
+          <ChatDrawer />
         </MemoryRouter>
       </ToastProvider>
     </QueryClientProvider>
@@ -91,11 +91,11 @@ describe('AppShell (desktop)', () => {
     expect(brand.closest('a')).toHaveAttribute('href', '/')
   })
 
-  it('renders Sync, Settings, Coach, Sign-out controls (desktop bar)', () => {
+  it('renders Sync, Settings, Chat, Sign-out controls (desktop bar)', () => {
     renderShell()
     expect(screen.getByRole('button', { name: /sync now/i })).toBeInTheDocument()
     expect(screen.getByRole('link', { name: /settings/i })).toHaveAttribute('href', '/settings')
-    expect(screen.getByRole('button', { name: /coach/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /chat/i })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /sign out/i })).toBeInTheDocument()
   })
 
@@ -104,13 +104,13 @@ describe('AppShell (desktop)', () => {
     expect(screen.getByRole('button', { name: /open menu/i })).toBeInTheDocument()
   })
 
-  it('opens the Coach drawer when Coach is clicked', async () => {
+  it('opens the Chat drawer when Chat is clicked', async () => {
     const user = userEvent.setup()
-    renderShellWithCoach('/')
+    renderShellWithChat('/')
 
-    await user.click(screen.getByRole('button', { name: /coach/i }))
+    await user.click(screen.getByRole('button', { name: /chat/i }))
 
-    expect(screen.getByRole('dialog', { name: 'Coach' })).toBeInTheDocument()
+    expect(screen.getByRole('dialog', { name: 'Chat' })).toBeInTheDocument()
   })
 })
 
