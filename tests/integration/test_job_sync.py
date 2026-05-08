@@ -19,7 +19,7 @@ def make_job_data(external_id: str = "job-001", title: str = "Python Engineer") 
         company_name="Acme Corp",
         location="New York",
         apply_url="https://boards.greenhouse.io/acme/jobs/12345",
-        description_md="We need a Python engineer.",
+        description_raw="We need a Python engineer.",
         posted_at=datetime.now(UTC),
     )
 
@@ -142,7 +142,7 @@ async def test_sync_profile_seeds_defaults_when_empty(db_session):
 
 @pytest.mark.asyncio
 async def test_upsert_job_populates_description_clean(db_session):
-    """upsert_job should compute description_clean from raw HTML description_md."""
+    """upsert_job should compute description_clean from raw HTML description_raw."""
     raw = "<h2>About</h2><ul><li><strong>Python</strong></li></ul>"
     data = JobData(
         external_id="ext-clean-1",
@@ -150,7 +150,7 @@ async def test_upsert_job_populates_description_clean(db_session):
         company_name="Test Co",
         location="Remote",
         workplace_type="remote",
-        description_md=raw,
+        description_raw=raw,
         salary=None,
         contract_type=None,
         apply_url="https://example.com/apply/1",
@@ -173,7 +173,7 @@ async def test_upsert_job_recomputes_description_clean_on_update(db_session):
         company_name="Test Co",
         location=None,
         workplace_type=None,
-        description_md="<p>v1</p>",
+        description_raw="<p>v1</p>",
         salary=None,
         contract_type=None,
         apply_url="https://example.com/apply/2",
@@ -181,7 +181,7 @@ async def test_upsert_job_recomputes_description_clean_on_update(db_session):
     )
     await upsert_job(data, "greenhouse_board", db_session)
 
-    data.description_md = "<p>v2 updated</p>"
+    data.description_raw = "<p>v2 updated</p>"
     job, created = await upsert_job(data, "greenhouse_board", db_session)
     assert created is False
     assert "v2 updated" in (job.description_clean or "")
@@ -197,7 +197,7 @@ async def test_upsert_job_handles_none_description(db_session):
         company_name="Test Co",
         location=None,
         workplace_type=None,
-        description_md=None,
+        description_raw=None,
         salary=None,
         contract_type=None,
         apply_url="https://example.com/apply/3",

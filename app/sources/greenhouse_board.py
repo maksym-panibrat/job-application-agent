@@ -1,14 +1,17 @@
 """Greenhouse board job source adapter."""
 
 from datetime import datetime
-from typing import Any
 
 import httpx
-import markdownify
 import structlog
 
 from app.data.slug_company import slug_to_company_name
-from app.sources.base import JobData, JobSource
+from app.sources.base import (
+    InvalidSlugError,
+    JobData,
+    JobSource,
+    TransientFetchError,
+)
 
 GREENHOUSE_BOARDS_BASE = "https://boards-api.greenhouse.io/v1/boards"
 DEFAULT_TIMEOUT = httpx.Timeout(connect=5.0, read=15.0, write=5.0, pool=5.0)
@@ -16,38 +19,12 @@ DEFAULT_TIMEOUT = httpx.Timeout(connect=5.0, read=15.0, write=5.0, pool=5.0)
 log = structlog.get_logger()
 
 
-def _html_to_markdown(content: str | None) -> str | None:
-    if not content:
-        return content
-    return markdownify.markdownify(content, strip=["script", "style"]).strip() or None
-
-
-class GreenhouseFetchError(Exception):
-    def __init__(self, slug: str, message: str = ""):
-        self.slug = slug
-        super().__init__(message or slug)
-
-
-class InvalidSlugError(GreenhouseFetchError):
-    """404 — board doesn't exist."""
-
-
-class TransientFetchError(GreenhouseFetchError):
-    """5xx or network error — retry next cycle."""
-
-
 class GreenhouseBoardSource(JobSource):
     @property
-    def source_name(self) -> str:
+    def provider_name(self) -> str:
+        # Task B3 flips this to "greenhouse" alongside the
+        # UPDATE jobs SET source = 'greenhouse' WHERE source = 'greenhouse_board'.
         return "greenhouse_board"
-
-    @property
-    def needs_enrichment(self) -> bool:
-        return False
-
-    @property
-    def supports_query_cursor(self) -> bool:
-        return False
 
     def _parse_job(self, item: dict, slug: str) -> JobData | None:
         job_id = item.get("id")
@@ -71,7 +48,8 @@ class GreenhouseBoardSource(JobSource):
             company_name=company_name,
             location=location,
             workplace_type=workplace_type,
-            description_md=_html_to_markdown(item.get("content")),
+            # raw HTML; clean_html_to_markdown runs in job_service
+            description_raw=item.get("content"),
             salary=None,
             contract_type=None,
             apply_url=apply_url,
@@ -79,7 +57,6 @@ class GreenhouseBoardSource(JobSource):
         )
 
     async def validate(self, slug: str, *, client: httpx.AsyncClient | None = None) -> bool:
-        """Cheap existence check via GET /v1/boards/{slug}. True iff 200."""
         url = f"{GREENHOUSE_BOARDS_BASE}/{slug}"
         try:
             if client is not None:
@@ -119,9 +96,7 @@ class GreenhouseBoardSource(JobSource):
             raise InvalidSlugError(slug, "board not found")
         if response.status_code >= 500:
             await log.awarning(
-                "greenhouse_board.upstream_5xx",
-                slug=slug,
-                status=response.status_code,
+                "greenhouse_board.upstream_5xx", slug=slug, status=response.status_code
             )
             raise TransientFetchError(slug, f"upstream {response.status_code}")
         try:
@@ -130,7 +105,6 @@ class GreenhouseBoardSource(JobSource):
         except Exception as exc:
             await log.aerror(
                 "greenhouse_board.fetch_failed",
-                source_name="greenhouse_board",
                 slug=slug,
                 error=str(exc),
                 error_type=type(exc).__name__,
@@ -140,19 +114,6 @@ class GreenhouseBoardSource(JobSource):
 
         return [j for item in data.get("jobs", []) if (j := self._parse_job(item, slug))]
 
-    async def search(
-        self,
-        query: str,
-        location: str | None,
-        slug: str | None = None,
-        client: httpx.AsyncClient | None = None,
-        **kwargs: Any,
-    ) -> tuple[list[JobData], None]:
-        if slug is None:
-            return [], None
-        jobs = await self._fetch_slug(slug, client=client)
-        return jobs, None
-
     async def fetch_jobs(
         self,
         slug: str,
@@ -160,10 +121,6 @@ class GreenhouseBoardSource(JobSource):
         since: datetime | None = None,
         client: httpx.AsyncClient | None = None,
     ) -> list[JobData]:
-        """Fetch all jobs for a slug, optionally filtering by `posted_at >= since`.
-
-        Greenhouse public API has no server-side date filter, so the filter is
-        applied client-side after the full payload is parsed."""
         jobs = await self._fetch_slug(slug, client=client)
         if since is None:
             return jobs

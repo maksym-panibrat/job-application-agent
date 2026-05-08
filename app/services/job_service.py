@@ -14,7 +14,7 @@ async def upsert_job(job_data: JobData, source: str, session: AsyncSession) -> t
     """
     Insert or update a job. Returns (job, created).
     On conflict (source + external_id): update title, description, is_active, fetched_at.
-    description_clean is recomputed from description_md on every write.
+    description_clean is recomputed from description_raw on every write.
     """
     result = await session.execute(
         select(Job).where(
@@ -24,12 +24,12 @@ async def upsert_job(job_data: JobData, source: str, session: AsyncSession) -> t
     )
     existing = result.scalar_one_or_none()
 
-    cleaned = clean_html_to_markdown(job_data.description_md)
+    cleaned = clean_html_to_markdown(job_data.description_raw)
 
     if existing:
         existing.title = job_data.title
         existing.company_name = job_data.company_name
-        existing.description_md = job_data.description_md
+        existing.description_md = job_data.description_raw
         existing.description_clean = cleaned
         existing.salary = job_data.salary
         existing.contract_type = job_data.contract_type
@@ -50,7 +50,7 @@ async def upsert_job(job_data: JobData, source: str, session: AsyncSession) -> t
         company_name=job_data.company_name,
         location=job_data.location,
         workplace_type=job_data.workplace_type,
-        description_md=job_data.description_md,
+        description_md=job_data.description_raw,
         description_clean=cleaned,
         salary=job_data.salary,
         contract_type=job_data.contract_type,
