@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
 from app.models.slug_fetch import SlugFetch
-from app.sources.greenhouse_board import GreenhouseBoardSource
+from app.sources import SOURCES
 
 INVALID_THRESHOLD = 2
 log = structlog.get_logger()
@@ -30,12 +30,15 @@ async def get(source: str, slug: str, session: AsyncSession) -> SlugFetch | None
 
 
 async def validate_slug(source: str, slug: str, session: AsyncSession) -> bool:
-    """Returns True if the slug exists on Greenhouse. On True, upserts a row
-    with last_status='ok' (no last_fetched_at — that's set by an actual fetch)."""
-    if source != "greenhouse":
-        raise ValueError(f"validate_slug only supports greenhouse (got {source})")
-    src = GreenhouseBoardSource()
-    ok = await src.validate(slug)
+    """Returns True if the slug exists on the given provider's board.
+
+    Looks up the adapter in app.sources.SOURCES; raises ValueError on unknown
+    provider. On True, upserts a SlugFetch row with last_status='ok'.
+    """
+    adapter = SOURCES.get(source)
+    if adapter is None:
+        raise ValueError(f"unknown provider: {source}")
+    ok = await adapter.validate(slug)
     if not ok:
         return False
     stmt = (
