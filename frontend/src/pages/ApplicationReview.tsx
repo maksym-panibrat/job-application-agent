@@ -12,6 +12,7 @@ import { MatchAnalysis } from '../components/match-detail/MatchAnalysis'
 import { JobDescription } from '../components/match-detail/JobDescription'
 import { CoverLetterEditor } from '../components/match-detail/CoverLetterEditor'
 import { StickyActions } from '../components/match-detail/StickyActions'
+import { HeaderApplyButton } from '../components/match-detail/HeaderApplyButton'
 
 export default function ApplicationReview() {
   const { id } = useParams<{ id: string }>()
@@ -62,9 +63,12 @@ export default function ApplicationReview() {
         <IconButton aria-label="Back" onClick={() => navigate(-1)}>
           <Close className="w-4 h-4" />
         </IconButton>
-        <IconButton aria-label="More actions" onClick={() => setMenuOpen(true)}>
-          <Kebab className="w-4 h-4" />
-        </IconButton>
+        <div className="flex items-center gap-2">
+          <HeaderApplyButton appId={app.id} status={app.status} applyUrl={app.job.apply_url} />
+          <IconButton aria-label="More actions" onClick={() => setMenuOpen(true)}>
+            <Kebab className="w-4 h-4" />
+          </IconButton>
+        </div>
       </header>
 
       <div className="mt-4">

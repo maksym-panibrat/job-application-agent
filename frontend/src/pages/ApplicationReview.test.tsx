@@ -103,6 +103,17 @@ describe('Match detail (ApplicationReview)', () => {
     )
   })
 
+  it('renders the desktop HeaderApplyButton when status is pending_review', async () => {
+    renderAt('/matches/a1', detail({ status: 'pending_review' }))
+    await waitFor(() => expect(screen.getByRole('heading', { name: /senior backend engineer/i })).toBeInTheDocument())
+    // Both HeaderApplyButton (header, md+) and StickyActions (footer, mobile) render an "Open posting" link
+    const links = screen.getAllByRole('link', { name: /open posting/i })
+    expect(links.length).toBeGreaterThanOrEqual(1)
+    // The HeaderApplyButton link lives inside the <header> element
+    const header = document.querySelector('header')!
+    expect(header.querySelector('a[href]')).not.toBeNull()
+  })
+
   it('shows the loading state before the fetch completes', () => {
     server.use(http.get('/api/applications/a1', async () => {
       await new Promise((r) => setTimeout(r, 50))
