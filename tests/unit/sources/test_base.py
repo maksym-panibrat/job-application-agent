@@ -27,12 +27,28 @@ def test_jobsource_no_search_method():
     )
 
 
-def test_jobsource_has_validate_and_fetch_jobs():
-    """validate() and fetch_jobs() are now part of the base contract."""
-    has_validate_default = callable(getattr(JobSource, "validate", None))
-    assert "validate" in JobSource.__abstractmethods__ or has_validate_default
+def test_jobsource_provider_name_and_fetch_jobs_are_abstract():
+    """provider_name and fetch_jobs must be implemented by subclasses; they
+    are part of the abstract contract."""
     assert "fetch_jobs" in JobSource.__abstractmethods__
     assert "provider_name" in JobSource.__abstractmethods__
+
+
+def test_jobsource_validate_default_raises_not_implemented():
+    """validate() has a default that raises — subclasses must override or
+    callers must catch."""
+    import asyncio
+
+    class _Stub(JobSource):
+        @property
+        def provider_name(self) -> str:
+            return "stub"
+
+        async def fetch_jobs(self, slug, *, since=None, client=None):
+            return []
+
+    with pytest.raises(NotImplementedError):
+        asyncio.run(_Stub().validate("x"))
 
 
 def test_provider_name_returns_string():

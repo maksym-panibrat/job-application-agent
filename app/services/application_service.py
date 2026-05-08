@@ -94,7 +94,7 @@ async def generate_materials(
             "profile_text": profile_text,
             "job_title": job.title,
             "job_company": job.company_name,
-            "job_description": job.description_md or "",
+            "job_description": job.description_clean or job.description_md or "",
             "base_resume_md": profile.base_resume_md or "",
             "document": None,
         }

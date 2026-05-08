@@ -2,15 +2,9 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from datetime import datetime
-from typing import TYPE_CHECKING
 
 import httpx
 from pydantic import BaseModel
-
-if TYPE_CHECKING:
-    from app.models.user_profile import (
-        UserProfile,  # noqa: F401  (kept for backward-compat callers)
-    )
 
 
 class JobData(BaseModel):
