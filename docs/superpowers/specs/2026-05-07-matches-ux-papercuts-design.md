@@ -17,7 +17,7 @@ Four frontend UX papercuts, bundled into one spec/PR because they all touch the 
 - Desktop users can apply to a matched job in one click from the detail page.
 - The chat modal is consistently named "Chat" everywhere — UI labels, files, URL param, telemetry.
 - Site brand says "Job Search" everywhere — `<title>`, header brand link, landing hero.
-- Dismiss is reversible — both immediately (undo toast) and later (restore action in the Dismissed list and on the detail page).
+- Dismiss is reversible **forever**. A dismissed match can be restored to pending at any later point — next week, next month — through the Dismissed-tab kebab and the detail-page kebab. The undo toast is just an ergonomic shortcut for the immediate-misclick case; missing it never costs the user the ability to recover, because the durable Restore action has no time limit.
 
 ## Non-goals
 
@@ -197,20 +197,18 @@ EDITED
 
 ## Part 3 — Undismiss
 
-### Two layers
+### Two complementary paths, no time limit on recovery
 
-The misclick problem has two distinct windows:
+Dismiss must be reversible at **any point in the future** — there is no expiring window. Two paths surface the same `reviewApplication(id, 'pending_review')` action, layered for ergonomics:
 
-- **Immediate (within seconds).** User just dismissed and realises right away. Best fix: an undo toast.
-- **Later (after navigation).** User dismissed earlier, comes back to look for the job, can't find it. Best fix: restore action surfaced on the dismissed match.
+- **Durable path (primary).** A "Restore" action on every dismissed match (kebab in the Dismissed list and the detail-page kebab). This is the canonical undo. It has no TTL; it works next week, next month, indefinitely. Whenever a match is in `dismissed`, this affordance is visible.
+- **Toast shortcut (secondary).** Right after a fresh dismiss, an "Undo" button on the success toast lets the user reverse the action without navigating to the Dismissed tab. The toast disappears after 8 seconds — but missing it has zero impact on recoverability because the durable path remains. The toast is only a convenience; it is **not** the undismiss feature.
 
-Both are cheap and complementary — ship both.
-
-### Layer 3a — Undo toast on dismiss
+### Layer 3a — Undo toast on dismiss (convenience shortcut)
 
 After every successful `dismiss.mutate()`, the toast that currently says "Dismissed {title}" gets an "Undo" action. Clicking it calls `reviewApplication(id, 'pending_review')`, which the backend already supports and which clears `applied_at` server-side (`applications.py:143-145`).
 
-Toast TTL increases to **8 seconds** for actionable toasts (current default 5s is too tight to react to a swipe-dismiss). Non-actionable toasts keep the 5s default.
+Toast TTL is **8 seconds** for actionable toasts (current default 5s is too tight to react to a swipe-dismiss). Non-actionable toasts keep the 5s default. The TTL on the toast does not constrain the undismiss feature itself — it only governs how long the convenience shortcut stays on screen.
 
 **Toast component extension.** `Toast.tsx` currently has no action support. Extend the API:
 
@@ -308,8 +306,8 @@ The implementation plan treats these as three independent task tracks — parall
 - On mobile, the existing bottom sticky bar is unchanged.
 - `rg -wi 'coach' frontend/src` returns zero hits.
 - `rg 'Job (Agent|Application Agent)' frontend/` returns zero hits; the `<title>`, header brand link, and landing hero all read "Job Search".
-- Dismissing a match anywhere in the app (swipe, kebab, mobile sticky Skip, detail kebab) shows a toast with an "Undo" button that, when clicked within 8s, restores the match to `pending_review`. (Tested.)
-- The Dismissed tab shows "Restore" in the kebab; the detail page kebab shows "Restore to pending" when the application is dismissed. Both successfully transition the application back to `pending_review`. (Tested.)
+- A dismissed match can be restored to `pending_review` at any point in the future — there is no time limit. The Dismissed-tab `MatchCard` kebab shows "Restore" and the detail-page kebab shows "Restore to pending"; both successfully POST the transition. (Tested.)
+- As a convenience, dismissing a match anywhere in the app (swipe, kebab, mobile sticky Skip, detail kebab) also shows a toast with an "Undo" button for 8 seconds. Clicking it within that window restores the match. The toast's TTL is purely cosmetic — it does not bound the user's ability to undo, because the durable Restore action above remains available indefinitely. (Tested.)
 - Stale comment + type cast in `ApplicationReview.tsx` removed; `reviewApplication` client signature includes `'pending_review'`.
 - All frontend tests, type-check, and lint pass.
 - A single PR contains all four tracks with screenshots and a note in the body that the rename includes telemetry events (`coach.*` → `chat.*`) and the URL param (`?coach=1` → `?chat=1`), plus the "Job Search" rebrand.
