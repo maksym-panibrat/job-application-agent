@@ -3,7 +3,7 @@ import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { IconButton } from './ui/IconButton'
 import { ActionSheet, ActionSheetItem } from './ui/ActionSheet'
-import { Settings, Coach, Hamburger, Sync } from './ui/icons'
+import { Settings, Chat, Hamburger, Sync } from './ui/icons'
 import { useSyncControl } from '../lib/useSyncControl'
 
 export interface AppShellProps {
@@ -19,9 +19,9 @@ export function AppShell({ children }: AppShellProps) {
   const syncBusy = sync.isLive || sync.isPending
   const syncLabel = sync.isLive ? sync.label : 'Sync now'
 
-  function openCoach() {
+  function openChat() {
     const next = new URLSearchParams(location.search)
-    next.set('coach', '1')
+    next.set('chat', '1')
     navigate({ pathname: location.pathname, search: `?${next.toString()}` })
   }
 
@@ -29,7 +29,7 @@ export function AppShell({ children }: AppShellProps) {
     <div className="min-h-screen bg-bg text-text">
       <header className="sticky top-0 z-30 bg-surface border-b border-border">
         <div className="max-w-3xl mx-auto px-4 h-14 flex items-center justify-between gap-2">
-          <Link to="/" className="font-bold text-text text-sm tracking-tight">Job Agent</Link>
+          <Link to="/" className="font-bold text-text text-sm tracking-tight">Job Search</Link>
 
           <nav className="flex items-center gap-1">
             {user && (
@@ -59,8 +59,8 @@ export function AppShell({ children }: AppShellProps) {
                   >
                     <Settings className="w-5 h-5" />
                   </Link>
-                  <IconButton aria-label="Coach" onClick={openCoach}>
-                    <Coach className="w-5 h-5" />
+                  <IconButton aria-label="Chat" onClick={openChat}>
+                    <Chat className="w-5 h-5" />
                   </IconButton>
                   <button
                     type="button"
@@ -104,9 +104,9 @@ export function AppShell({ children }: AppShellProps) {
           Settings
         </ActionSheetItem>
         <ActionSheetItem
-          onClick={() => { setMenuOpen(false); openCoach() }}
+          onClick={() => { setMenuOpen(false); openChat() }}
         >
-          Coach
+          Chat
         </ActionSheetItem>
         <ActionSheetItem intent="danger" onClick={() => { setMenuOpen(false); signOut() }}>
           Sign out

@@ -37,14 +37,14 @@ describe('ProfileSummary', () => {
     expect(screen.getByText(/1 experience/i)).toBeInTheDocument()
   })
 
-  it('Open Coach CTA links to ?coach=1&prompt=change_profile', () => {
+  it('Open Chat CTA links to ?chat=1&prompt=change_profile', () => {
     render(
       <MemoryRouter>
         <ProfileSummary profile={fullProfile()} />
       </MemoryRouter>
     )
-    const link = screen.getByRole('link', { name: /open coach/i })
-    expect(link.getAttribute('href')).toMatch(/coach=1/)
+    const link = screen.getByRole('link', { name: /open chat/i })
+    expect(link.getAttribute('href')).toMatch(/chat=1/)
     expect(link.getAttribute('href')).toMatch(/prompt=change_profile/)
   })
 })

@@ -1,6 +1,6 @@
 export { Close } from './Close'
 export { Settings } from './Settings'
-export { Coach } from './Coach'
+export { Chat } from './Chat'
 export { Hamburger } from './Hamburger'
 export { Kebab } from './Kebab'
 export { Sync } from './Sync'

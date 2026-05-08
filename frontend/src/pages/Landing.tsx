@@ -56,7 +56,7 @@ export default function Landing() {
   return (
     <div className="min-h-screen bg-bg flex flex-col items-center justify-center gap-8 px-4">
       <div className="text-center max-w-lg">
-        <h1 className="text-3xl font-bold text-text mb-3 tracking-tight">Job Application Agent</h1>
+        <h1 className="text-3xl font-bold text-text mb-3 tracking-tight">Job Search</h1>
         <p className="text-muted">
           AI-powered job matching. Upload your resume, set your preferences, and get
           tailored applications generated automatically.

@@ -83,8 +83,8 @@ describe('ProfileCompletenessCard', () => {
     await waitFor(() => expect(body).toEqual({ search_active: true }))
   })
 
-  it('shows "Tell coach" CTA when in setup state', () => {
+  it('shows "Open chat" CTA when in setup state', () => {
     renderCard(fullProfile({ target_locations: [], remote_ok: false }))
-    expect(screen.getAllByText(/tell coach/i).length).toBeGreaterThan(0)
+    expect(screen.getAllByText(/open chat/i).length).toBeGreaterThan(0)
   })
 })

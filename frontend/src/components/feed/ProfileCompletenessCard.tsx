@@ -74,10 +74,10 @@ export function ProfileCompletenessCard({ profile }: { profile: Profile }) {
             </span>
             {!c.done && (
               <Link
-                to={`/?coach=1&prompt=${c.promptSlug}`}
+                to={`/?chat=1&prompt=${c.promptSlug}`}
                 className="text-xs text-accent font-semibold px-2 py-1 rounded-md-token hover:bg-accent/10"
               >
-                Tell coach →
+                Open chat →
               </Link>
             )}
           </li>

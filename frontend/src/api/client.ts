@@ -173,7 +173,7 @@ export const api = {
     return apiFetch<Application[]>(`/api/applications?${q}`)
   },
   getApplication: (id: string) => apiFetch<ApplicationDetail>(`/api/applications/${id}`),
-  reviewApplication: (id: string, status: 'dismissed' | 'applied') =>
+  reviewApplication: (id: string, status: 'dismissed' | 'applied' | 'pending_review') =>
     apiFetch<{ id: string; status: string }>(`/api/applications/${id}`, {
       method: 'PATCH',
       body: JSON.stringify({ status }),

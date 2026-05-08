@@ -12,6 +12,7 @@ import { MatchAnalysis } from '../components/match-detail/MatchAnalysis'
 import { JobDescription } from '../components/match-detail/JobDescription'
 import { CoverLetterEditor } from '../components/match-detail/CoverLetterEditor'
 import { StickyActions } from '../components/match-detail/StickyActions'
+import { HeaderApplyButton } from '../components/match-detail/HeaderApplyButton'
 
 export default function ApplicationReview() {
   const { id } = useParams<{ id: string }>()
@@ -37,14 +38,9 @@ export default function ApplicationReview() {
   })
 
   const moveBackToPending = useMutation({
-    mutationFn: async () => {
-      // Backend currently accepts only 'dismissed' or 'applied' on this PATCH;
-      // 'pending_review' will error-toast until a backend follow-up extends
-      // the API. Cast bypasses the client type so the wire intent is clear.
-      return api.reviewApplication(id!, 'pending_review' as 'dismissed' | 'applied')
-    },
+    mutationFn: () => api.reviewApplication(id!, 'pending_review'),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['application', id] }),
-    onError: (e) => show((e as Error)?.message ?? 'Backend does not yet allow un-applying', 'error'),
+    onError: (e) => show((e as Error)?.message ?? 'Could not move back to pending', 'error'),
   })
 
   if (isLoading || !app) {
@@ -62,9 +58,12 @@ export default function ApplicationReview() {
         <IconButton aria-label="Back" onClick={() => navigate(-1)}>
           <Close className="w-4 h-4" />
         </IconButton>
-        <IconButton aria-label="More actions" onClick={() => setMenuOpen(true)}>
-          <Kebab className="w-4 h-4" />
-        </IconButton>
+        <div className="flex items-center gap-2">
+          <HeaderApplyButton appId={app.id} status={app.status} applyUrl={app.job.apply_url} />
+          <IconButton aria-label="More actions" onClick={() => setMenuOpen(true)}>
+            <Kebab className="w-4 h-4" />
+          </IconButton>
+        </div>
       </header>
 
       <div className="mt-4">
@@ -89,13 +88,17 @@ export default function ApplicationReview() {
         <ActionSheetItem onClick={() => { setMenuOpen(false); window.open(app.job!.apply_url, '_blank', 'noopener') }}>
           Open original posting ↗
         </ActionSheetItem>
-        {app.status === 'applied' && (
+        {(app.status === 'applied' || app.status === 'dismissed') && (
           <ActionSheetItem onClick={() => {
             setMenuOpen(false)
-            track('match.unapplied', { application_id: id })
+            if (app.status === 'dismissed') {
+              track('match.undismissed', { application_id: id, source: 'detail_kebab' })
+            } else {
+              track('match.unapplied', { application_id: id })
+            }
             moveBackToPending.mutate()
           }}>
-            Move back to pending
+            {app.status === 'applied' ? 'Move back to pending' : 'Restore to pending'}
           </ActionSheetItem>
         )}
         {app.status !== 'dismissed' && (
