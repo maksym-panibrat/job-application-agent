@@ -72,6 +72,7 @@ async def test_mark_stale_jobs(db_session):
 async def test_sync_profile_returns_202_shape_and_enqueues_stale_slugs(db_session):
     """The new contract: sync_profile is enqueue-only + score-cached, returns
     {status:'queued', queued_slugs:[...], matched_now:int}, never blocks on fetch."""
+    from app.models.company import Company
     from app.models.user import User
     from app.services.profile_service import get_or_create_profile
 
@@ -79,7 +80,20 @@ async def test_sync_profile_returns_202_shape_and_enqueues_stale_slugs(db_sessio
     db_session.add(user)
     await db_session.commit()
     profile = await get_or_create_profile(user.id, db_session)
+    company_ids: list[uuid.UUID] = []
+    for slug in ("airbnb", "stripe"):
+        company = Company(
+            canonical_name=slug.title(),
+            normalized_key=f"{slug}-{uuid.uuid4()}",
+            provider_slugs={"greenhouse": slug},
+            resolved_at=datetime.now(UTC),
+        )
+        db_session.add(company)
+        await db_session.commit()
+        await db_session.refresh(company)
+        company_ids.append(company.id)
     profile.target_company_slugs = {"greenhouse": ["airbnb", "stripe"]}
+    profile.target_company_ids = company_ids
     db_session.add(profile)
     await db_session.commit()
     await db_session.refresh(profile)
@@ -120,6 +134,15 @@ async def test_sync_profile_prunes_invalid_slugs_from_profile(db_session):
 
 @pytest.mark.asyncio
 async def test_sync_profile_seeds_defaults_when_empty(db_session):
+    """seed_defaults_if_empty still operates on the legacy target_company_slugs
+    field (its rewrite is a later task in this plan). Until then, the
+    queue-relevant invariant tested here is that the new enqueue_stale path
+    fires when target_company_ids is populated. This test pre-seeds Company
+    rows + target_company_ids so the seeding side-effect on target_company_slugs
+    AND the queueing side-effect via target_company_ids both observable.
+    """
+    from app.data.default_slugs import DEFAULT_SLUGS
+    from app.models.company import Company
     from app.models.user import User
     from app.services.profile_service import get_or_create_profile
 
@@ -127,8 +150,23 @@ async def test_sync_profile_seeds_defaults_when_empty(db_session):
     db_session.add(user)
     await db_session.commit()
     profile = await get_or_create_profile(user.id, db_session)
-    # explicitly empty
+    # explicitly empty target_company_slugs to trigger seed_defaults_if_empty,
+    # but pre-populate target_company_ids with Companies wrapping the same
+    # default slugs so the new enqueue_stale path queues them.
+    company_ids: list[uuid.UUID] = []
+    for slug in DEFAULT_SLUGS[:5]:
+        company = Company(
+            canonical_name=slug.title(),
+            normalized_key=f"{slug}-{uuid.uuid4()}",
+            provider_slugs={"greenhouse": slug},
+            resolved_at=datetime.now(UTC),
+        )
+        db_session.add(company)
+        await db_session.commit()
+        await db_session.refresh(company)
+        company_ids.append(company.id)
     profile.target_company_slugs = {}
+    profile.target_company_ids = company_ids
     db_session.add(profile)
     await db_session.commit()
     await db_session.refresh(profile)

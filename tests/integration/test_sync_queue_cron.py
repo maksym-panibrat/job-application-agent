@@ -10,6 +10,7 @@ import sqlalchemy as sa
 
 from app.data.slug_company import slug_to_company_name
 from app.models.application import Application
+from app.models.company import Company
 from app.models.job import Job
 from app.models.user import User
 from app.models.user_profile import UserProfile
@@ -19,13 +20,30 @@ from app.sources.greenhouse_board import GREENHOUSE_BOARDS_BASE
 
 
 async def _seed_profile(db_session, *slugs: str) -> UserProfile:
-    """Seed a User + UserProfile (FK constraint requires the user row first)."""
+    """Seed a User + UserProfile (FK constraint requires the user row first).
+
+    Sets BOTH target_company_slugs (legacy — still read by seed_defaults_if_empty
+    and _prune_invalid_slugs) and target_company_ids (new — read by enqueue_stale).
+    """
     user = User(id=uuid.uuid4(), email=f"sync-{uuid.uuid4()}@test.com")
     db_session.add(user)
     await db_session.commit()
+    company_ids: list[uuid.UUID] = []
+    for slug in slugs:
+        company = Company(
+            canonical_name=slug.title(),
+            normalized_key=f"{slug}-{uuid.uuid4()}",
+            provider_slugs={"greenhouse": slug},
+            resolved_at=datetime.now(UTC),
+        )
+        db_session.add(company)
+        await db_session.commit()
+        await db_session.refresh(company)
+        company_ids.append(company.id)
     profile = UserProfile(
         user_id=user.id,
         target_company_slugs={"greenhouse": list(slugs)},
+        target_company_ids=company_ids,
         search_active=True,
     )
     db_session.add(profile)

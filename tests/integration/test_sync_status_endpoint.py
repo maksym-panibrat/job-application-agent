@@ -1,11 +1,14 @@
 """GET /api/sync/status — used by the dashboard chip to poll progress."""
 
+from datetime import UTC, datetime
+
 import pytest
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlmodel import SQLModel
 
 import app.models  # noqa: F401
+from app.models.company import Company
 from app.services import slug_registry_service
 
 
@@ -36,7 +39,17 @@ async def test_status_idle_when_nothing_queued(client, auth_headers, seeded_user
 @pytest.mark.asyncio
 async def test_status_syncing_when_user_slug_queued(client, auth_headers, seeded_user, db_session):
     _, profile = seeded_user
+    company = Company(
+        canonical_name="Airbnb",
+        normalized_key="airbnb",
+        provider_slugs={"greenhouse": "airbnb"},
+        resolved_at=datetime.now(UTC),
+    )
+    db_session.add(company)
+    await db_session.commit()
+    await db_session.refresh(company)
     profile.target_company_slugs = {"greenhouse": ["airbnb"]}
+    profile.target_company_ids = [company.id]
     db_session.add(profile)
     await db_session.commit()
     await slug_registry_service.enqueue_stale(profile, db_session, ttl_hours=6)
