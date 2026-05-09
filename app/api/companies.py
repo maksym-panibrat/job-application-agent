@@ -1,11 +1,14 @@
-"""Company resolution endpoint."""
+"""Company resolution + catalog endpoints."""
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
+from sqlalchemy import func
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlmodel import select
 
 from app.api.deps import get_current_profile
 from app.database import get_db
+from app.models.company import Company
 from app.models.user_profile import UserProfile
 from app.services import company_resolver
 
@@ -46,3 +49,24 @@ async def resolve_company(
             "providers": list(company.provider_slugs.keys()),
         }
     }
+
+
+@router.get("/catalog")
+async def get_catalog(
+    profile: UserProfile = Depends(get_current_profile),
+    session: AsyncSession = Depends(get_db),
+):
+    """Return the full curated company catalog, alphabetical by canonical_name.
+
+    ~50 rows post-curation; sub-1KB JSON. Auth-gated for consistency with
+    the rest of /api/companies, even though the data is identical for every
+    caller (no per-user filtering).
+    """
+    rows = (
+        await session.execute(
+            select(Company.id, Company.canonical_name)
+            .where(Company.is_curated.is_(True))
+            .order_by(func.lower(Company.canonical_name))
+        )
+    ).all()
+    return [{"id": str(r.id), "canonical_name": r.canonical_name} for r in rows]
