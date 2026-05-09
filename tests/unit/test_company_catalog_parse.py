@@ -1,6 +1,7 @@
 """Tests for catalog YAML parsing + validation."""
 
 import pytest
+
 from app.services.company_catalog import Catalog, parse_catalog
 
 
@@ -77,7 +78,7 @@ companies:
 
 
 def test_parse_rejects_malformed_yaml():
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="invalid YAML"):
         parse_catalog("not: valid: yaml: at: all")
 
 
