@@ -20,6 +20,7 @@ from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from langgraph.graph import END, StateGraph
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode
+from sqlalchemy import func
 from sqlmodel import select
 from typing_extensions import TypedDict
 
@@ -222,6 +223,27 @@ def get_llm():
     )
 
 
+@tool
+async def list_curated_companies(config: RunnableConfig) -> str:
+    """Return the curated company catalog as a JSON array.
+    Each entry has: canonical_name (str) and tags (list of strings).
+    Call this when the user asks for company suggestions or to see
+    what companies are available. Prefer suggesting from this list;
+    you may suggest off-list names too — those get resolved against
+    live ATS boards but won't have tags to reason over."""
+    db_factory = config["configurable"]["db_factory"]
+    async with db_factory() as session:
+        rows = (
+            await session.execute(
+                select(Company.canonical_name, Company.tags)
+                .where(Company.is_curated)
+                .order_by(func.lower(Company.canonical_name))
+            )
+        ).all()
+    payload = [{"canonical_name": r.canonical_name, "tags": list(r.tags)} for r in rows]
+    return json.dumps(payload)
+
+
 def build_graph(checkpointer: AsyncPostgresSaver) -> StateGraph:
     @tool
     def save_profile_updates(updates: str) -> str:
@@ -241,7 +263,7 @@ def build_graph(checkpointer: AsyncPostgresSaver) -> StateGraph:
         """
         return f"Profile update queued: {updates}"
 
-    tools = [save_profile_updates]
+    tools = [save_profile_updates, list_curated_companies]
     llm = get_llm().bind_tools(tools)
     tool_node = ToolNode(tools)
 
