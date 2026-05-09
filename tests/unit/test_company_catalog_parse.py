@@ -93,3 +93,38 @@ companies:
 """
     catalog = parse_catalog(raw)
     assert catalog.companies[0].normalized_key == "meta-platforms"
+
+
+def test_parse_row_with_tags():
+    raw = """
+companies:
+  - canonical_name: Stripe
+    providers:
+      greenhouse: stripe
+    tags: [fintech, infra, b2b]
+"""
+    catalog = parse_catalog(raw)
+    assert catalog.companies[0].tags == ["fintech", "infra", "b2b"]
+
+
+def test_parse_row_without_tags_defaults_to_empty():
+    raw = """
+companies:
+  - canonical_name: Stripe
+    providers:
+      greenhouse: stripe
+"""
+    catalog = parse_catalog(raw)
+    assert catalog.companies[0].tags == []
+
+
+def test_parse_row_with_empty_tags_list():
+    raw = """
+companies:
+  - canonical_name: Stripe
+    providers:
+      greenhouse: stripe
+    tags: []
+"""
+    catalog = parse_catalog(raw)
+    assert catalog.companies[0].tags == []

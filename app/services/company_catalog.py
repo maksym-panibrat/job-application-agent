@@ -19,7 +19,7 @@ from pathlib import Path
 
 import structlog
 import yaml
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -43,6 +43,7 @@ class CatalogProviderSlugs(BaseModel):
 class CatalogRow(BaseModel):
     canonical_name: str
     providers: CatalogProviderSlugs
+    tags: list[str] = Field(default_factory=list)
 
     @property
     def normalized_key(self) -> str:
