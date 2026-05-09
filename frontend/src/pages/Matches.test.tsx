@@ -28,7 +28,7 @@ function fullProfile(): Profile {
     base_resume_md: 'resume', target_roles: ['Backend'], target_locations: ['Berlin'],
     remote_ok: true, seniority: 'senior', search_keywords: ['python'],
     search_active: true, search_expires_at: null,
-    target_company_slugs: { greenhouse: ['stripe'] },
+    target_companies: [{ id: 'co-1', canonical_name: 'Stripe' }],
     skills: [], work_experiences: [],
   }
 }

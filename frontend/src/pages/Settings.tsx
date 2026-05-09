@@ -4,7 +4,7 @@ import { api } from '../api/client'
 import { track } from '../lib/track'
 import { SearchToggleSection } from '../components/settings/SearchToggleSection'
 import { ResumeSection } from '../components/settings/ResumeSection'
-import { TargetSlugsSection } from '../components/settings/TargetSlugsSection'
+import { FollowedCompaniesSection } from '../components/settings/FollowedCompaniesSection'
 import { PrunedSlugsSection } from '../components/settings/PrunedSlugsSection'
 import { ProfileSummary } from '../components/settings/ProfileSummary'
 import { AccountSection } from '../components/settings/AccountSection'
@@ -26,7 +26,7 @@ export default function Settings() {
       <h1 className="text-xl font-bold text-text mb-6">Settings</h1>
       <SearchToggleSection active={profile.search_active} expiresAt={profile.search_expires_at} />
       <ResumeSection hasResume={!!profile.base_resume_md} />
-      <TargetSlugsSection slugs={profile.target_company_slugs ?? {}} />
+      <FollowedCompaniesSection companies={profile.target_companies ?? []} />
       <PrunedSlugsSection />
       <ProfileSummary profile={profile} />
       <AccountSection />
