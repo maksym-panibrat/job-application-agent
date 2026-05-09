@@ -25,7 +25,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.company import Company
-from app.services.company_resolver import _normalize
+from app.services.company_resolver import normalize
 
 log = structlog.get_logger()
 
@@ -47,7 +47,7 @@ class CatalogRow(BaseModel):
 
     @property
     def normalized_key(self) -> str:
-        return _normalize(self.canonical_name)
+        return normalize(self.canonical_name)
 
     @property
     def provider_slugs_dict(self) -> dict[str, str]:

@@ -2,7 +2,7 @@
 
 These tests rely on real Postgres semantics (INSERT ... ON CONFLICT) and the
 testcontainer-backed `db_session` fixture from tests/integration/conftest.py.
-The pure-function `_normalize` test lives under tests/unit/.
+The pure-function `normalize` test lives under tests/unit/.
 """
 
 from datetime import UTC, datetime
