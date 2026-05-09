@@ -20,6 +20,10 @@ class Company(SQLModel, table=True):
         default=False,
         sa_column=Column(sa.Boolean, nullable=False, server_default=sa.text("false")),
     )
+    is_curated: bool = Field(
+        default=False,
+        sa_column=Column(sa.Boolean, nullable=False, index=True, server_default=sa.text("false")),
+    )
     resolved_at: datetime = Field(
         default_factory=lambda: datetime.now(UTC),
         sa_column=Column(sa.DateTime(timezone=True), nullable=False),
