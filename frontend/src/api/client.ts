@@ -185,6 +185,8 @@ export const api = {
     const body = await resp.json()
     return body.company
   },
+  getCompanyCatalog: () =>
+    apiFetch<{ id: string; canonical_name: string }[]>('/api/companies/catalog'),
 
   // Jobs
   triggerSync: () =>
