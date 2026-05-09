@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../api/client'
 import { useToast } from '../ui/Toast'
@@ -25,6 +25,11 @@ export function FollowedCompaniesSection({ companies }: FollowedCompaniesSection
   const [highlight, setHighlight] = useState<number>(-1)
   const [open, setOpen] = useState(false)
   const prevCompaniesRef = useRef(companies)
+  const catalogFailedReportedRef = useRef(false)
+
+  // Stable ids for combobox WAI-ARIA wiring.
+  const listboxId = useId()
+  const optionId = (i: number) => `${listboxId}-opt-${i}`
 
   // Sync optimistic with prop changes (parent refetched profile). The !busy
   // guard prevents a parent refetch from clobbering the freshly-set optimistic
@@ -36,11 +41,20 @@ export function FollowedCompaniesSection({ companies }: FollowedCompaniesSection
     }
   }, [companies, busy])
 
-  const { data: catalog = [] } = useQuery({
+  const { data: catalog = [], isPending, isError } = useQuery({
     queryKey: ['companies', 'catalog'],
     queryFn: api.getCompanyCatalog,
     staleTime: Infinity,
   })
+
+  // Catalog fetch failure is silent for the user (typed-name fallback still
+  // works) but we emit telemetry once per mount so the regression is visible.
+  useEffect(() => {
+    if (isError && !catalogFailedReportedRef.current) {
+      catalogFailedReportedRef.current = true
+      track('settings.catalog_failed', {})
+    }
+  }, [isError])
 
   const followedIds = useMemo(() => new Set(optimistic.map(c => c.id)), [optimistic])
 
@@ -156,10 +170,15 @@ export function FollowedCompaniesSection({ companies }: FollowedCompaniesSection
         <div className="relative">
           <input
             type="text"
+            role="combobox"
+            aria-expanded={open}
+            aria-controls={listboxId}
+            aria-autocomplete="list"
+            aria-activedescendant={highlight >= 0 ? optionId(highlight) : undefined}
             value={draft}
             onChange={e => { setDraft(e.target.value); setOpen(e.target.value.trim().length > 0) }}
             onFocus={() => setOpen(draft.trim().length > 0)}
-            onBlur={() => setTimeout(() => setOpen(false), 100)}
+            onBlur={() => setOpen(false)}
             onKeyDown={onKeyDown}
             placeholder="Add a company you want to follow"
             disabled={busy}
@@ -167,18 +186,19 @@ export function FollowedCompaniesSection({ companies }: FollowedCompaniesSection
           />
           {open && (
             <div
+              id={listboxId}
               role="listbox"
               className="absolute left-0 right-0 mt-1 bg-surface border border-border rounded-md-token shadow-lg z-10"
             >
-              {matches.length === 0 ? (
+              {isPending ? null : matches.length === 0 ? (
                 <p className="px-2 py-1.5 text-xs text-subtle">No matches — press Enter to search the boards</p>
               ) : (
                 matches.map((c, i) => (
                   <div
                     key={c.id}
+                    id={optionId(i)}
                     role="option"
                     aria-selected={highlight === i}
-                    aria-label={c.canonical_name}
                     onMouseDown={(e) => { e.preventDefault(); void commit(c.canonical_name) }}
                     onMouseEnter={() => setHighlight(i)}
                     className={`px-2 py-1.5 text-sm cursor-pointer ${highlight === i ? 'bg-surface-2' : ''}`}

@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { ToastProvider } from '../ui/Toast'
 import { FollowedCompaniesSection } from './FollowedCompaniesSection'
 import { api } from '../../api/client'
+import { track } from '../../lib/track'
 
 vi.mock('../../api/client', () => ({
   api: {
@@ -16,6 +17,10 @@ vi.mock('../../api/client', () => ({
       { id: 'cat-3', canonical_name: 'Stripe' },
     ]),
   },
+}))
+
+vi.mock('../../lib/track', () => ({
+  track: vi.fn(),
 }))
 
 function withCtx(ui: React.ReactNode) {
@@ -218,5 +223,51 @@ describe('FollowedCompaniesSection', () => {
     await waitFor(() => expect(screen.queryByRole('option', { name: 'Linear' })).not.toBeInTheDocument())
     // Draft text stays in the input.
     expect(input).toHaveValue('lin')
+  })
+
+  it('does not show "No matches" while the catalog is loading', async () => {
+    // Deferred mock — the promise never resolves during this test, so
+    // useQuery stays in the isPending state.
+    ;(api.getCompanyCatalog as unknown as ReturnType<typeof vi.fn>).mockImplementation(
+      () => new Promise(() => {})
+    )
+
+    render(withCtx(<FollowedCompaniesSection companies={[]} />))
+    const input = screen.getByPlaceholderText(/Add a company/i)
+    await userEvent.type(input, 'lin')
+
+    // The listbox should be open (user has typed) but no match copy should
+    // render because the catalog query is still pending.
+    expect(screen.queryByText(/No matches/i)).not.toBeInTheDocument()
+  })
+
+  it('falls through to typed-name resolve when catalog fetch fails', async () => {
+    ;(api.getCompanyCatalog as unknown as ReturnType<typeof vi.fn>).mockRejectedValue(
+      new Error('catalog server down')
+    )
+    ;(api.resolveCompany as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({
+      id: 'fallback-id',
+      canonical_name: 'typed-name',
+      providers: ['greenhouse'],
+    })
+    ;(api.updateProfile as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({
+      id: 'p',
+      updated: true,
+    })
+
+    render(withCtx(<FollowedCompaniesSection companies={[]} />))
+
+    // Wait for the catalog query to settle into the error state, which
+    // is when the once-per-mount telemetry fires.
+    await waitFor(() =>
+      expect(track).toHaveBeenCalledWith('settings.catalog_failed', expect.anything())
+    )
+
+    const input = screen.getByPlaceholderText(/Add a company/i)
+    await userEvent.type(input, 'typed-name{Enter}')
+
+    await waitFor(() =>
+      expect(api.resolveCompany).toHaveBeenCalledWith('typed-name')
+    )
   })
 })
