@@ -1,0 +1,9 @@
+companies:
+  - canonical_name: TestStripe
+    providers:
+      greenhouse: teststripe
+    tags: [fintech, infra]
+  - canonical_name: TestLinear
+    providers:
+      ashby: testlinear
+    tags: [dev-tools, b2b]

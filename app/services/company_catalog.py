@@ -153,6 +153,7 @@ async def seed_catalog(
                 canonical_name=row.canonical_name,
                 normalized_key=row.normalized_key,
                 provider_slugs=row.provider_slugs_dict,
+                tags=row.tags,
                 is_curated=True,
                 resolved_at=now,
                 created_at=now,
@@ -162,6 +163,7 @@ async def seed_catalog(
                 set_={
                     "canonical_name": row.canonical_name,
                     "provider_slugs": row.provider_slugs_dict,
+                    "tags": row.tags,
                     "is_curated": True,
                 },
             )
