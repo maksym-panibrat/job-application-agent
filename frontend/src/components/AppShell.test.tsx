@@ -125,7 +125,7 @@ describe('AppShell sync (header button)', () => {
     server.use(
       http.post('/api/jobs/sync', () => {
         posted = true
-        return HttpResponse.json({ status: 'queued', queued_slugs: ['stripe'], matched_now: 2, seeded_defaults: false })
+        return HttpResponse.json({ status: 'queued', queued_slugs: ['stripe'], matched_now: 2 })
       }),
     )
     const user = userEvent.setup()
@@ -195,7 +195,7 @@ describe('AppShell sync (mobile menu)', () => {
     server.use(
       http.post('/api/jobs/sync', () => {
         posted = true
-        return HttpResponse.json({ status: 'queued', queued_slugs: [], matched_now: 0, seeded_defaults: false })
+        return HttpResponse.json({ status: 'queued', queued_slugs: [], matched_now: 0 })
       }),
     )
     const user = userEvent.setup()

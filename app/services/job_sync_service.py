@@ -5,7 +5,7 @@ Two contracts here, by design (#80):
   prune_and_enqueue(profile, session)
     Bulk-cron-safe and HTTP-warm-up: drop slugs marked is_invalid, enqueue
     stale slugs for background fetch, update profile.last_sync_*. Fast (no
-    LLM). Returns {queued_slugs, matched_now=0, seeded_defaults, pruned_slugs}.
+    LLM). Returns {queued_slugs, matched_now=0, pruned_slugs}.
 
   sync_profile(profile, session)
     User-triggered HTTP path (POST /api/jobs/sync). Calls prune_and_enqueue
@@ -94,7 +94,6 @@ async def prune_and_enqueue(profile: UserProfile, session: AsyncSession) -> dict
     summary = {
         "queued_slugs": queued,
         "matched_now": 0,
-        "seeded_defaults": False,
         "pruned_slugs": pruned,
     }
     profile.last_sync_requested_at = datetime.now(UTC)
@@ -127,6 +126,5 @@ async def sync_profile(profile: UserProfile, session: AsyncSession) -> dict:
         profile_id=str(profile.id),
         queued_slugs=summary["queued_slugs"],
         matched_now=summary["matched_now"],
-        seeded_defaults=summary["seeded_defaults"],
     )
     return {"status": "queued", **summary}
