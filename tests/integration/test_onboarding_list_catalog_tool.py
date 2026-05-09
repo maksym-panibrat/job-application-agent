@@ -59,6 +59,22 @@ async def test_list_curated_companies_returns_curated_rows_with_tags(
 
 
 @pytest.mark.asyncio
+async def test_list_curated_companies_handles_missing_db_factory():
+    """Missing config[configurable][db_factory] - graceful degrade.
+
+    Mirrors the soft-fail pattern used by _fetch_profile_snapshot /
+    process_tool_results so a misconfigured RunnableConfig doesn't crash
+    the whole graph turn — return an empty JSON array and log a warning."""
+    # configurable present but db_factory key missing
+    result = await list_curated_companies.ainvoke({}, config={"configurable": {}})
+    assert result == "[]"
+
+    # configurable itself missing
+    result = await list_curated_companies.ainvoke({}, config={})
+    assert result == "[]"
+
+
+@pytest.mark.asyncio
 async def test_list_curated_companies_response_shape(db_session, asyncpg_url, monkeypatch):
     """Each row has exactly the keys {canonical_name, tags}; no id leaks."""
     monkeypatch.setenv("DATABASE_URL", asyncpg_url)

@@ -239,7 +239,10 @@ async def list_curated_companies(config: RunnableConfig) -> str:
     what companies are available. Prefer suggesting from this list;
     you may suggest off-list names too — those get resolved against
     live ATS boards but won't have tags to reason over."""
-    db_factory = config["configurable"]["db_factory"]
+    db_factory = (config or {}).get("configurable", {}).get("db_factory")
+    if db_factory is None:
+        await log.awarning("onboarding.list_curated_companies.no_db_factory")
+        return "[]"
     async with db_factory() as session:
         rows = (
             await session.execute(
