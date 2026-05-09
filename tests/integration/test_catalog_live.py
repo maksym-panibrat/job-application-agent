@@ -8,6 +8,7 @@ companies.yaml. Each parametrized case fails independently so a single
 broken entry doesn't mask the others.
 """
 
+import asyncio
 from pathlib import Path
 
 import httpx
@@ -15,10 +16,20 @@ import pytest
 
 from app.services.company_catalog import parse_catalog
 from app.sources import SOURCES
+from app.sources.base import TransientFetchError
 
 CATALOG_PATH = (
     Path(__file__).resolve().parent.parent.parent / "app" / "data" / "catalog" / "companies.yaml"
 )
+
+# 30s — Ashby's public posting-api downloads the full board JSON on GET;
+# large boards (OpenAI ~10MB) routinely take >10s on a typical home connection.
+HTTP_TIMEOUT = 30.0
+# Two retries on transient failures (5xx, network blip, slow read) before
+# we conclude a board is broken. Without this the nightly cron opens
+# tracking issues on every upstream hiccup.
+TRANSIENT_RETRIES = 2
+RETRY_DELAY = 5.0
 
 
 def _all_pairs():
@@ -39,10 +50,21 @@ def _all_pairs():
 )
 async def test_catalog_entry_resolves(canonical_name: str, provider: str, slug: str):
     """Each (provider, slug) in the catalog must validate against the real
-    public board. A True return = the board exists. False = 404; raise = transient."""
+    public board. True = exists; False = confirmed 404; TransientFetchError
+    = retry; persistent transient = surface as failure (board likely down)."""
     adapter = SOURCES[provider]
-    # 30s — Ashby's public posting-api downloads the full board JSON on GET;
-    # large boards (OpenAI ~10MB) routinely take >10s.
-    async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
-        ok = await adapter.validate(slug, client=client)
-    assert ok, f"{canonical_name!r}: {provider}={slug!r} returned False (board missing?)"
+    last_exc: TransientFetchError | None = None
+    for attempt in range(TRANSIENT_RETRIES + 1):
+        try:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(HTTP_TIMEOUT)) as client:
+                ok = await adapter.validate(slug, client=client)
+            assert ok, f"{canonical_name!r}: {provider}={slug!r} returned False (board missing?)"
+            return
+        except TransientFetchError as exc:
+            last_exc = exc
+            if attempt < TRANSIENT_RETRIES:
+                await asyncio.sleep(RETRY_DELAY)
+    raise AssertionError(
+        f"{canonical_name!r}: {provider}={slug!r} transient after "
+        f"{TRANSIENT_RETRIES + 1} attempts: {last_exc}"
+    )

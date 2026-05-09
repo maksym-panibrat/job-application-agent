@@ -172,9 +172,9 @@ export function FollowedCompaniesSection({ companies }: FollowedCompaniesSection
             type="text"
             role="combobox"
             aria-expanded={open}
-            aria-controls={listboxId}
+            aria-controls={open ? listboxId : undefined}
             aria-autocomplete="list"
-            aria-activedescendant={highlight >= 0 ? optionId(highlight) : undefined}
+            aria-activedescendant={open && highlight >= 0 ? optionId(highlight) : undefined}
             value={draft}
             onChange={e => { setDraft(e.target.value); setOpen(e.target.value.trim().length > 0) }}
             onFocus={() => setOpen(draft.trim().length > 0)}

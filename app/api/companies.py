@@ -65,7 +65,7 @@ async def get_catalog(
     rows = (
         await session.execute(
             select(Company.id, Company.canonical_name)
-            .where(Company.is_curated.is_(True))
+            .where(Company.is_curated)
             .order_by(func.lower(Company.canonical_name))
         )
     ).all()
