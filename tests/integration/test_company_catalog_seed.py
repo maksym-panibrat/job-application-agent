@@ -20,10 +20,14 @@ async def test_seed_catalog_inserts_yaml_rows_as_curated(db_session):
     assert count == 2
 
     rows = (
-        await db_session.execute(
-            select(Company).where(Company.normalized_key.in_(["teststripe", "testlinear"]))
+        (
+            await db_session.execute(
+                select(Company).where(Company.normalized_key.in_(["teststripe", "testlinear"]))
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     assert len(rows) == 2
     by_key = {r.normalized_key: r for r in rows}
     assert by_key["teststripe"].canonical_name == "TestStripe"
@@ -47,16 +51,22 @@ async def test_seed_catalog_is_idempotent(db_session):
             await db_session.execute(
                 select(Company).where(Company.normalized_key.in_(["teststripe", "testlinear"]))
             )
-        ).scalars().all()
+        )
+        .scalars()
+        .all()
     }
 
     await seed_catalog(db_session, source=yaml_path)
 
     second_rows = (
-        await db_session.execute(
-            select(Company).where(Company.normalized_key.in_(["teststripe", "testlinear"]))
+        (
+            await db_session.execute(
+                select(Company).where(Company.normalized_key.in_(["teststripe", "testlinear"]))
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     assert len(second_rows) == 2
     second_ids = {r.normalized_key: r.id for r in second_rows}
     assert first_ids == second_ids
@@ -81,18 +91,17 @@ async def test_seed_catalog_promotes_organic_company_to_curated(db_session):
     organic_id = organic.id
     assert organic.is_curated is False
 
-    yaml_path = FIXTURES / "two_rows.yaml"
+    yaml_path = FIXTURES / "two_rows_with_tags.yaml"
     await seed_catalog(db_session, source=yaml_path)
 
     refreshed = (
-        await db_session.execute(
-            select(Company).where(Company.normalized_key == "teststripe")
-        )
+        await db_session.execute(select(Company).where(Company.normalized_key == "teststripe"))
     ).scalar_one()
     assert refreshed.id == organic_id  # stable across promotion
     assert refreshed.is_curated is True
     assert refreshed.canonical_name == "TestStripe"  # YAML casing wins
     assert refreshed.provider_slugs == {"greenhouse": "teststripe"}  # YAML slugs win
+    assert refreshed.tags == ["fintech", "infra"]  # tags from YAML on promotion
 
 
 @pytest.mark.asyncio
@@ -108,10 +117,14 @@ async def test_seed_catalog_drops_curated_flag_when_row_removed_from_yaml(db_ses
     await seed_catalog(db_session, source=FIXTURES / "empty.yaml")
 
     rows = (
-        await db_session.execute(
-            select(Company).where(Company.normalized_key.in_(["teststripe", "testlinear"]))
+        (
+            await db_session.execute(
+                select(Company).where(Company.normalized_key.in_(["teststripe", "testlinear"]))
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     assert len(rows) == 2  # not deleted
     assert all(r.is_curated is False for r in rows)
 
@@ -122,3 +135,71 @@ async def test_seed_catalog_raises_on_malformed_file(db_session, tmp_path):
     bad.write_text("companies:\n  - canonical_name: NoProvider\n    providers: {}\n")
     with pytest.raises(ValueError, match="no provider slugs"):
         await seed_catalog(db_session, source=bad)
+
+
+@pytest.mark.asyncio
+async def test_seed_catalog_writes_tags(db_session):
+    """YAML rows with tags land in the DB with their tags."""
+    yaml_path = FIXTURES / "two_rows_with_tags.yaml"
+    await seed_catalog(db_session, source=yaml_path)
+
+    rows = (
+        (
+            await db_session.execute(
+                select(Company).where(Company.normalized_key.in_(["teststripe", "testlinear"]))
+            )
+        )
+        .scalars()
+        .all()
+    )
+    by_key = {r.normalized_key: r for r in rows}
+    assert by_key["teststripe"].tags == ["fintech", "infra"]
+    assert by_key["testlinear"].tags == ["dev-tools", "b2b"]
+
+
+@pytest.mark.asyncio
+async def test_seed_catalog_tags_idempotent(db_session):
+    """Re-running the seed leaves tags unchanged."""
+    yaml_path = FIXTURES / "two_rows_with_tags.yaml"
+    await seed_catalog(db_session, source=yaml_path)
+    await seed_catalog(db_session, source=yaml_path)
+
+    rows = (
+        (
+            await db_session.execute(
+                select(Company).where(Company.normalized_key.in_(["teststripe", "testlinear"]))
+            )
+        )
+        .scalars()
+        .all()
+    )
+    by_key = {r.normalized_key: r for r in rows}
+    assert by_key["teststripe"].tags == ["fintech", "infra"]
+    assert by_key["testlinear"].tags == ["dev-tools", "b2b"]
+
+
+@pytest.mark.asyncio
+async def test_seed_catalog_drift_keeps_tags_but_clears_curated(db_session):
+    """A row dropped from the YAML keeps its old tags but flips
+    is_curated=false. The chat tool's WHERE is_curated filter excludes
+    it, so the stale tags are invisible to the LLM."""
+    yaml_path = FIXTURES / "two_rows_with_tags.yaml"
+    await seed_catalog(db_session, source=yaml_path)
+
+    # Now seed against an empty catalog.
+    await seed_catalog(db_session, source=FIXTURES / "empty.yaml")
+
+    rows = (
+        (
+            await db_session.execute(
+                select(Company).where(Company.normalized_key.in_(["teststripe", "testlinear"]))
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert len(rows) == 2
+    for r in rows:
+        assert r.is_curated is False
+        # Tags persist - the seeder doesn't pre-reset the column.
+        assert r.tags  # non-empty list

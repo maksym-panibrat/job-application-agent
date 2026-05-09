@@ -3,7 +3,7 @@ from datetime import UTC, datetime
 
 import sqlalchemy as sa
 from sqlalchemy import Column
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlmodel import Field, SQLModel
 
 
@@ -23,6 +23,14 @@ class Company(SQLModel, table=True):
     is_curated: bool = Field(
         default=False,
         sa_column=Column(sa.Boolean, nullable=False, index=True, server_default=sa.text("false")),
+    )
+    tags: list[str] = Field(
+        default_factory=list,
+        sa_column=Column(
+            ARRAY(sa.Text),
+            nullable=False,
+            server_default=sa.text("'{}'::text[]"),
+        ),
     )
     resolved_at: datetime = Field(
         default_factory=lambda: datetime.now(UTC),

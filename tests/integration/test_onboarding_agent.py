@@ -7,7 +7,9 @@ from datetime import UTC, datetime
 from unittest.mock import patch
 
 import pytest
+from langgraph.checkpoint.memory import MemorySaver
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+from langgraph.prebuilt import ToolNode
 
 from app.agents.onboarding import build_graph
 from app.agents.test_llm import ToolCapableFakeLLM
@@ -253,6 +255,29 @@ async def test_persist_inferred_companies_handles_fanout_timeout(db_session, mon
 
     assert resolved == ["Stripe"]
     assert profile.target_company_ids == [stripe.id]
+
+
+def test_list_curated_companies_is_registered_with_tool_node():
+    """Regression guard: list_curated_companies must be wired into the
+    ToolNode so the LLM can actually dispatch it. Invoking the tool
+    directly via .ainvoke() (in test_onboarding_list_catalog_tool.py)
+    does not prove this — a refactor that drops the tool from the
+    `tools = [...]` list in build_graph would silently break Layer 3
+    chat-driven company suggestions with no test failure.
+
+    Uses an in-memory checkpointer so this test stays fast and DB-free."""
+    graph = build_graph(MemorySaver())
+    tool_node_wrapper = graph.nodes["tools"]
+    # LangGraph wraps user-supplied nodes in a Pregel `PregelNode`; the
+    # original ToolNode lives on `.bound`.
+    tool_node = tool_node_wrapper.bound
+    assert isinstance(tool_node, ToolNode), f"Expected ToolNode, got {type(tool_node).__name__}"
+    registered = set(tool_node.tools_by_name.keys())
+    assert "list_curated_companies" in registered, (
+        f"list_curated_companies missing from ToolNode; registered tools: {registered}"
+    )
+    # Sanity: save_profile_updates is the other half of the contract.
+    assert "save_profile_updates" in registered
 
 
 @pytest.mark.asyncio
