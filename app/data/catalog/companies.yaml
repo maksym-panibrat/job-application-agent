@@ -63,25 +63,19 @@ companies:
       ashby: linear
   - canonical_name: Notion
     providers:
-      greenhouse: notion
+      ashby: notion
   - canonical_name: Figma
     providers:
       greenhouse: figma
   - canonical_name: OpenAI
     providers:
-      greenhouse: openai
-  - canonical_name: GitHub
-    providers:
-      greenhouse: github
+      ashby: openai
   - canonical_name: Brex
     providers:
       greenhouse: brex
   - canonical_name: Mercury
     providers:
       ashby: mercury
-  - canonical_name: Replicate
-    providers:
-      ashby: replicate
   - canonical_name: Posthog
     providers:
       ashby: posthog
