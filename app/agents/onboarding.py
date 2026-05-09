@@ -20,12 +20,14 @@ from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from langgraph.graph import END, StateGraph
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode
+from sqlmodel import select
 from typing_extensions import TypedDict
 
 from app.agents.llm_safe import safe_ainvoke
 from app.config import get_settings
+from app.models.company import Company
 from app.models.user_profile import UserProfile
-from app.services import profile_service, slug_registry_service
+from app.services import company_resolver, profile_service
 
 log = structlog.get_logger()
 
@@ -38,14 +40,14 @@ Your goals:
    - Ask for a city or metro area (e.g. "San Francisco Bay Area", "New York", "Austin")
    - OR confirm they want remote-only positions (set remote_ok=true, leave target_locations empty)
    - A vague answer like "open to anything" is not enough — pin down a location or remote-only
-4. Learn which companies' job boards to follow — REQUIRED. Job sourcing is built
-   on Greenhouse public boards, so an empty company list = zero jobs ever. Always
-   ask for at least one target company, even if the user did not volunteer any.
-   Offer concrete suggestions to make the ask actionable, e.g. stripe, openai,
-   anthropic, datadog, figma, notion, vercel, airtable. Store the slugs as
-   {"greenhouse": ["slug1", "slug2"]} in target_company_slugs. Slugs are
-   lowercase, no spaces (boards.greenhouse.io/{slug}). Confirm any slug that is
-   not obvious.
+4. Learn which **companies** the user wants to follow — REQUIRED. Job sourcing
+   is built around the companies the user explicitly tracks. Ask for company
+   names as the user would say them (e.g. "Stripe", "Linear", "ByteDance").
+   Examples to suggest if the user is unsure: stripe, anthropic, datadog,
+   figma, notion, vercel, airtable, linear. Save them as
+   `target_companies: ["Stripe", "Linear", ...]` (a flat list of display
+   names — the backend resolves each to the right ATS automatically).
+   Confirm any company that is unfamiliar.
 5. Understand their key skills and experience highlights they want to emphasize.
 6. Note any companies or industries to exclude.
 7. Confirm their contact info (LinkedIn, GitHub, portfolio).
@@ -72,10 +74,11 @@ You can call `save_profile_updates` multiple times as you learn more.
 
 Do not consider the profile search-ready until ALL of the following hold:
   - target_locations is set OR remote_ok is true, AND
-  - target_company_slugs.greenhouse contains at least one slug.
+  - target_companies contains at least one company.
 
-A profile that satisfies only the location gate but has zero greenhouse slugs
-will produce zero job matches forever — finish the slug ask before wrapping up.
+A profile that satisfies only the location gate but has zero followed
+companies will produce zero job matches forever — finish the company ask
+before wrapping up.
 
 Once the profile is search-ready, summarize what you've captured and tell the
 user they can update preferences anytime by chatting here."""
@@ -93,7 +96,6 @@ PROFILE_SCALAR_FIELDS = frozenset(
         "linkedin_url",
         "github_url",
         "portfolio_url",
-        "target_company_slugs",
         "first_name",
         "last_name",
     }
@@ -126,7 +128,7 @@ def _format_current_profile(data: dict) -> str:
         s = str(v).strip()
         return s if s else "(none)"
 
-    greenhouse_slugs = (data.get("target_company_slugs") or {}).get("greenhouse", [])
+    company_names = data.get("target_company_names") or []
     lines = [
         "## Current Profile (ground truth from the database)",
         f"- full_name: {_val(data.get('full_name'))}",
@@ -135,31 +137,37 @@ def _format_current_profile(data: dict) -> str:
         f"- target_locations: {_val(data.get('target_locations'))}",
         f"- remote_ok: {_val(data.get('remote_ok'))}",
         f"- search_keywords: {_val(data.get('search_keywords'))}",
-        f"- target_company_slugs.greenhouse: {_val(greenhouse_slugs)}",
+        f"- target_companies: {_val(company_names)}",
     ]
     return "\n".join(lines)
 
 
-async def persist_inferred_slugs(profile, slugs: list[str], session) -> list[str]:
-    """Validate each slug against Greenhouse before persisting.
+async def persist_inferred_companies(profile, names: list[str], session) -> list[str]:
+    """Resolve each company name via the resolver and append to
+    profile.target_company_ids. Returns the list of canonical names that
+    resolved successfully.
 
-    Returns the list of slugs that survived validation. The profile's
-    target_company_slugs["greenhouse"] is replaced with that list and
-    committed. Slugs that fail validate_slug (e.g. 404s) are dropped so
-    the sync queue never sees a non-existent board.
+    Names that fail to resolve are logged and skipped — onboarding does not
+    block on them; the agent's transcript can mention which were dropped.
     """
-    valid: list[str] = []
-    for s in slugs:
-        if await slug_registry_service.validate_slug("greenhouse", s, session):
-            valid.append(s)
-    profile.target_company_slugs = {
-        **(profile.target_company_slugs or {}),
-        "greenhouse": valid,
-    }
+    resolved_ids: list[uuid.UUID] = list(profile.target_company_ids or [])
+    resolved_names: list[str] = []
+    for name in names:
+        try:
+            company = await company_resolver.resolve(name, session)
+        except company_resolver.FanoutTimeoutError:
+            await log.awarning("onboarding.company_resolve_timeout", name=name)
+            continue
+        if company is None:
+            await log.awarning("onboarding.company_unresolved", name=name)
+            continue
+        if company.id not in resolved_ids:
+            resolved_ids.append(company.id)
+            resolved_names.append(company.canonical_name)
+    profile.target_company_ids = resolved_ids
     session.add(profile)
     await session.commit()
-    await session.refresh(profile)
-    return valid
+    return resolved_names
 
 
 async def _fetch_profile_snapshot(state: dict, config: RunnableConfig) -> dict | None:
@@ -181,6 +189,15 @@ async def _fetch_profile_snapshot(state: dict, config: RunnableConfig) -> dict |
         profile = await session.get(UserProfile, profile_uuid)
         if profile is None:
             return None
+        company_ids = list(profile.target_company_ids or [])
+        company_names: list[str] = []
+        if company_ids:
+            rows = (
+                (await session.execute(select(Company).where(Company.id.in_(company_ids))))
+                .scalars()
+                .all()
+            )
+            company_names = [r.canonical_name for r in rows]
         return {
             "full_name": profile.full_name,
             "target_roles": list(profile.target_roles or []),
@@ -188,7 +205,8 @@ async def _fetch_profile_snapshot(state: dict, config: RunnableConfig) -> dict |
             "target_locations": list(profile.target_locations or []),
             "remote_ok": profile.remote_ok,
             "search_keywords": list(profile.search_keywords or []),
-            "target_company_slugs": dict(profile.target_company_slugs or {}),
+            "target_company_ids": company_ids,
+            "target_company_names": company_names,
         }
 
 
@@ -214,8 +232,9 @@ def build_graph(checkpointer: AsyncPostgresSaver) -> StateGraph:
         remote_ok (bool), search_keywords (list), full_name (str),
         first_name (str), last_name (str),
         email (str), phone (str), linkedin_url (str), github_url (str),
-        portfolio_url (str), target_company_slugs (dict, e.g.
-        {"greenhouse": ["stripe", "airbnb"], "lever": [], "ashby": []}),
+        portfolio_url (str),
+        target_companies (list of display names, e.g.
+        ["Stripe", "Linear", "ByteDance"] — backend resolves each automatically),
         skills (list of {name, category, proficiency, years}),
         work_experiences (list of {company, title, start_date (YYYY-MM-DD), end_date,
         description_md, technologies (list)}).
@@ -300,11 +319,10 @@ def build_graph(checkpointer: AsyncPostgresSaver) -> StateGraph:
                 skills = list(updates.pop("skills", None) or [])
                 experiences = list(updates.pop("work_experiences", None) or [])
 
-                # target_company_slugs needs per-slug validation against
-                # Greenhouse before persisting; route it through the dedicated
-                # helper instead of letting profile_service.update_profile blob
-                # the LLM-inferred dict in unchecked.
-                slug_payload = updates.pop("target_company_slugs", None)
+                # target_companies is routed through company_resolver to map
+                # display names to Company.id; never written to the deprecated
+                # target_company_slugs blob anymore.
+                companies_payload = updates.pop("target_companies", None)
 
                 # Update flat profile fields (only recognised fields)
                 flat = {k: v for k, v in updates.items() if k in PROFILE_SCALAR_FIELDS}
@@ -317,22 +335,24 @@ def build_graph(checkpointer: AsyncPostgresSaver) -> StateGraph:
                             error=str(exc),
                         )
 
-                if isinstance(slug_payload, dict):
-                    inferred = slug_payload.get("greenhouse") or []
-                    if isinstance(inferred, list) and inferred:
-                        profile = await session.get(UserProfile, profile_uuid)
-                        if profile is not None:
-                            try:
-                                await persist_inferred_slugs(
-                                    profile,
-                                    [str(s) for s in inferred if isinstance(s, str)],
-                                    session,
-                                )
-                            except Exception as exc:
-                                await log.awarning(
-                                    "onboarding.process_tool_results.slug_validate_failed",
-                                    error=str(exc),
-                                )
+                if companies_payload:
+                    # Defensive: coerce single string to a list
+                    if isinstance(companies_payload, str):
+                        companies_payload = [companies_payload]
+                    if isinstance(companies_payload, list):
+                        names = [
+                            str(n) for n in companies_payload if isinstance(n, str) and n.strip()
+                        ]
+                        if names:
+                            profile = await session.get(UserProfile, profile_uuid)
+                            if profile is not None:
+                                try:
+                                    await persist_inferred_companies(profile, names, session)
+                                except Exception as exc:
+                                    await log.awarning(
+                                        "onboarding.process_tool_results.company_resolve_failed",
+                                        error=str(exc),
+                                    )
 
                 for skill in skills:
                     if not isinstance(skill, dict) or not skill.get("name"):

@@ -2,7 +2,7 @@
 
 Covers issues:
   #40 — silent profile-update claims (no tool call but agent says "I've updated")
-  #43 — empty target_company_slugs.greenhouse → 0 jobs forever
+  #43 — empty target companies → 0 jobs forever
 
 These tests assert the prompt contract; tool-call behavior is covered separately
 by the integration suite that runs the graph end-to-end.
@@ -15,22 +15,19 @@ os.environ.setdefault("GOOGLE_API_KEY", "fake-test-key")
 os.environ.setdefault("ENVIRONMENT", "test")
 
 
-def test_prompt_makes_slugs_part_of_search_ready_gate():
-    """Search-ready check must require at least one greenhouse slug, not just location.
+def test_prompt_makes_companies_part_of_search_ready_gate():
+    """Search-ready check must require at least one company, not just location.
 
-    The original prompt gated only on location/remote — empty target_company_slugs.greenhouse
-    silently produced 0-job syncs forever. The gate must include slugs too.
+    The original prompt gated only on location/remote — empty target companies
+    silently produced 0-job syncs forever. The gate must include companies too.
     """
     from app.agents.onboarding import SYSTEM_PROMPT
 
-    # Look for a single sentence/clause that ties "search-ready" (or equivalent) to
-    # both the location AND slug requirement. Crude but effective: split on
-    # "search-ready" / "ready" / "complete" and check the surrounding window mentions slugs.
     lower = SYSTEM_PROMPT.lower()
-    assert "target_company_slugs" in SYSTEM_PROMPT or "greenhouse slug" in lower
+    assert "target_companies" in lower or "companies" in lower
 
     # Find a clause that defines the search-ready gate (the operational sentence,
-    # not just a heading). It must mention slugs/companies in the same paragraph.
+    # not just a heading). It must mention companies in the same paragraph.
     candidates = [
         m for m in ("search-ready until", "do not consider", "search-ready when") if m in lower
     ]
@@ -38,21 +35,21 @@ def test_prompt_makes_slugs_part_of_search_ready_gate():
         "Prompt must contain an operational search-ready gate clause "
         "(e.g. 'search-ready until ...' or 'do not consider ...')."
     )
-    found_slug_clause = False
+    found_company_clause = False
     for needle in candidates:
         idx = lower.index(needle)
         paragraph_end = lower.find("\n\n", idx)
         if paragraph_end == -1:
             paragraph_end = len(lower)
         clause = lower[idx:paragraph_end]
-        if "slug" in clause or "target_company" in clause or "company" in clause:
-            found_slug_clause = True
+        if "company" in clause or "companies" in clause:
+            found_company_clause = True
             break
-    assert found_slug_clause, "At least one search-ready clause must require slugs/companies."
+    assert found_company_clause, "At least one search-ready clause must require companies."
 
 
 def test_prompt_proactively_asks_for_target_companies():
-    """Prompt instructs the agent to PROACTIVELY ask for slugs, not just IF the user
+    """Prompt instructs the agent to PROACTIVELY ask for companies, not just IF the user
     volunteers them. The old conditional ('if the user names...') let the agent skip
     the step entirely."""
     from app.agents.onboarding import SYSTEM_PROMPT
@@ -62,11 +59,20 @@ def test_prompt_proactively_asks_for_target_companies():
     lower = SYSTEM_PROMPT.lower()
     assert "ask" in lower
     # A curated list of suggestions makes the ask actionable
-    suggestions = ["stripe", "openai", "anthropic", "datadog"]
+    suggestions = ["stripe", "anthropic", "datadog", "linear"]
     assert any(s in lower for s in suggestions), (
-        "Prompt should include at least one curated Greenhouse slug suggestion "
+        "Prompt should include at least one curated company suggestion "
         "so the agent can offer concrete examples to the user."
     )
+
+
+def test_prompt_does_not_mention_target_company_slugs():
+    """After E1 the agent talks in company display names only — no slugs,
+    no provider buckets in the user-facing instruction."""
+    from app.agents.onboarding import SYSTEM_PROMPT
+
+    assert "target_company_slugs" not in SYSTEM_PROMPT
+    assert "boards.greenhouse.io" not in SYSTEM_PROMPT
 
 
 def test_prompt_mandates_tool_call_before_claiming_save():
@@ -89,7 +95,7 @@ def test_prompt_mandates_tool_call_before_claiming_save():
 def test_format_current_profile_includes_relevant_fields():
     """The helper that injects the current profile snapshot must surface the
     fields the LLM needs as ground truth: roles, seniority, location, remote_ok,
-    search keywords, target company slugs."""
+    search keywords, target companies."""
     from app.agents.onboarding import _format_current_profile
 
     snapshot = _format_current_profile(
@@ -99,7 +105,7 @@ def test_format_current_profile_includes_relevant_fields():
             "target_locations": ["San Diego, CA"],
             "remote_ok": True,
             "search_keywords": ["Python", "distributed systems"],
-            "target_company_slugs": {"greenhouse": ["stripe", "openai"]},
+            "target_company_names": ["Stripe", "OpenAI"],
             "full_name": "Maksym P.",
         }
     )
@@ -111,8 +117,8 @@ def test_format_current_profile_includes_relevant_fields():
     assert "San Diego" in snapshot
     assert "remote_ok" in snapshot.lower() or "remote" in snapshot.lower()
     assert "Python" in snapshot
-    assert "stripe" in snapshot
-    assert "openai" in snapshot
+    assert "Stripe" in snapshot
+    assert "OpenAI" in snapshot
 
 
 def test_format_current_profile_handles_missing_fields():
@@ -126,7 +132,7 @@ def test_format_current_profile_handles_missing_fields():
             "target_locations": [],
             "remote_ok": False,
             "search_keywords": [],
-            "target_company_slugs": {},
+            "target_company_names": [],
             "full_name": None,
         }
     )
@@ -134,4 +140,4 @@ def test_format_current_profile_handles_missing_fields():
     assert snapshot.strip()
     # Should NOT contain fabricated values
     assert "Backend Engineer" not in snapshot
-    assert "stripe" not in snapshot
+    assert "Stripe" not in snapshot
