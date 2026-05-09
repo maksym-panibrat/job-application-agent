@@ -125,8 +125,15 @@ class AshbyBoardSource(JobSource):
             else:
                 async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as c:
                     resp = await c.get(url, params={"includeCompensation": "false"})
-        except httpx.HTTPError:
-            return False
+        except httpx.HTTPError as exc:
+            # Network blip looks identical to a confirmed 404 if we collapse to
+            # False here. Raise so company_resolver._fan_out maps this to
+            # "error" — a later sync cycle's SlugFetch retry can repair the gap.
+            raise TransientFetchError(slug, str(exc)) from exc
+        if resp.status_code == 404:
+            return False  # confirmed miss
+        if resp.status_code >= 500:
+            raise TransientFetchError(slug, f"upstream {resp.status_code}")
         return resp.status_code == 200
 
     async def fetch_jobs(

@@ -55,6 +55,30 @@ async def test_validate_returns_false_on_404(src):
 
 @respx.mock
 @pytest.mark.asyncio
+async def test_validate_5xx_raises_transient(src):
+    """5xx upstream is a transient error, not a confirmed miss. _fan_out
+    distinguishes 'error' from False, so the next sync cycle's SlugFetch
+    retry can repair the gap if the validate happened during a blip."""
+    respx.get(f"{LEVER_POSTINGS_BASE}/flaky").respond(502)
+    async with httpx.AsyncClient() as client:
+        with pytest.raises(TransientFetchError):
+            await src.validate("flaky", client=client)
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_validate_network_error_raises_transient(src):
+    """A connection-level failure is a transient error, not a confirmed miss."""
+    respx.get(f"{LEVER_POSTINGS_BASE}/blip").mock(
+        side_effect=httpx.ConnectError("connection refused")
+    )
+    async with httpx.AsyncClient() as client:
+        with pytest.raises(TransientFetchError):
+            await src.validate("blip", client=client)
+
+
+@respx.mock
+@pytest.mark.asyncio
 async def test_fetch_jobs_single_page(src):
     respx.get(f"{LEVER_POSTINGS_BASE}/acme").mock(
         side_effect=[

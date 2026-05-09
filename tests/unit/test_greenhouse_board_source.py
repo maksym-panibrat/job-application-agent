@@ -197,12 +197,31 @@ async def test_validate_slug_returns_false_on_404():
 
 
 @pytest.mark.asyncio
-async def test_validate_slug_returns_false_on_5xx():
-    """Transient errors should fail-closed for validate (don't add a slug we can't verify)."""
+async def test_validate_5xx_raises_transient():
+    """5xx upstream is a transient error, not a confirmed miss. _fan_out
+    distinguishes 'error' from False, so the next sync cycle's SlugFetch
+    retry can repair the gap if the validate happened during a blip."""
+    from app.sources.base import TransientFetchError
+
     source = GreenhouseBoardSource()
     with respx.mock:
         respx.get(f"{GREENHOUSE_BOARDS_BASE}/flaky").mock(return_value=httpx.Response(503))
-        assert await source.validate("flaky") is False
+        with pytest.raises(TransientFetchError):
+            await source.validate("flaky")
+
+
+@pytest.mark.asyncio
+async def test_validate_network_error_raises_transient():
+    """A connection-level failure is a transient error, not a confirmed miss."""
+    from app.sources.base import TransientFetchError
+
+    source = GreenhouseBoardSource()
+    with respx.mock:
+        respx.get(f"{GREENHOUSE_BOARDS_BASE}/blip").mock(
+            side_effect=httpx.ConnectError("connection refused")
+        )
+        with pytest.raises(TransientFetchError):
+            await source.validate("blip")
 
 
 @pytest.mark.asyncio

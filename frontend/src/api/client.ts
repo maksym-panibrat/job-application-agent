@@ -51,8 +51,8 @@ export interface Job {
   workplace_type: string | null
   salary: string | null
   contract_type: string | null
-  description_md: string | null
-  description_clean: string | null
+  description_raw: string | null
+  description: string | null
   apply_url: string
   posted_at: string | null
 }

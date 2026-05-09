@@ -90,6 +90,35 @@ def upgrade() -> None:
     op.execute("UPDATE jobs SET source = 'greenhouse' WHERE source = 'greenhouse_board'")
     op.execute("UPDATE slug_fetches SET source = 'greenhouse' WHERE source = 'greenhouse_board'")
 
+    # 5b. Observability: log Lever/Ashby slugs that will be dropped (the new
+    # target_company_ids backfill below only reads .greenhouse). One-shot
+    # log line per profile that had non-empty lever/ashby entries — preserves
+    # an audit trail in logs even though the data is gone from the DB.
+    bind = op.get_bind()
+    rows = bind.execute(
+        sa.text(
+            """
+            SELECT user_id,
+                   target_company_slugs->'lever' AS lever,
+                   target_company_slugs->'ashby' AS ashby
+            FROM user_profiles
+            WHERE jsonb_array_length(COALESCE(target_company_slugs->'lever', '[]'::jsonb)) > 0
+               OR jsonb_array_length(COALESCE(target_company_slugs->'ashby', '[]'::jsonb)) > 0
+            """
+        )
+    ).fetchall()
+    if rows:
+        import logging
+
+        log = logging.getLogger("alembic")
+        for row in rows:
+            log.warning(
+                "migration.dropped_dead_slugs user_id=%s lever=%s ashby=%s",
+                row.user_id,
+                row.lever,
+                row.ashby,
+            )
+
     # 6. data backfill — Company rows from existing greenhouse slugs
     op.execute("""
         INSERT INTO companies (
