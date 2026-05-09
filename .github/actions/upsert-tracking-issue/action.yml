@@ -1,0 +1,77 @@
+name: 'Upsert tracking issue'
+description: >-
+  Find an existing operator-alert issue by title (preferring OPEN, falling back
+  to the most-recently-closed) and append a comment; reopen it first if it was
+  closed; create a new issue if none exists.
+
+  Hardened after the #70 -> #72 churn (2026-05-04): a `closes #N` keyword on a
+  fix PR closes the tracker, so the next failure must reopen it rather than
+  spawn a fresh issue number. Searching state:all + preferring OPEN + falling
+  back to most-recently-closed implements that.
+
+inputs:
+  title:
+    description: >-
+      Issue title; also used as the dedup key (substring match in:title).
+    required: true
+  body:
+    description: >-
+      Markdown body to post as a new comment on the existing issue, or as the
+      initial body of a freshly created issue.
+    required: true
+  labels:
+    description: >-
+      Comma-separated label names to attach when CREATING a new issue. Ignored
+      if the tracker already exists. Falls back to no-label create if any of
+      the requested labels do not yet exist in the repo.
+    required: false
+    default: ''
+  reopen-comment:
+    description: >-
+      Comment posted when reopening a closed tracker. Defaults to a generic
+      "Reopened by <workflow>" line; override for a more specific message.
+    required: false
+    default: 'Reopened by ${{ github.workflow }} after this issue was closed.'
+  github-token:
+    description: >-
+      Token used for `gh issue list / create / comment / reopen`. The calling
+      job needs `permissions: issues: write`. Defaults to the repository
+      GITHUB_TOKEN.
+    required: false
+    default: ${{ github.token }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Find or upsert tracking issue
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        REPO: ${{ github.repository }}
+        TITLE: ${{ inputs.title }}
+        BODY: ${{ inputs.body }}
+        LABELS: ${{ inputs.labels }}
+        REOPEN_COMMENT: ${{ inputs.reopen-comment }}
+      run: |
+        set -euo pipefail
+        existing=$(gh issue list --repo "$REPO" --state all \
+          --search "$TITLE in:title" \
+          --json number,state,closedAt --limit 20 \
+          --jq '([.[] | select(.state == "OPEN")] + ([.[] | select(.state == "CLOSED")] | sort_by(.closedAt) | reverse))[0] // empty' \
+          || echo "")
+        if [ -n "$existing" ]; then
+          num=$(echo "$existing" | jq -r '.number')
+          state=$(echo "$existing" | jq -r '.state')
+          if [ "$state" = "CLOSED" ]; then
+            gh issue reopen "$num" --repo "$REPO" --comment "$REOPEN_COMMENT"
+          fi
+          gh issue comment "$num" --repo "$REPO" --body "$BODY"
+        else
+          if [ -n "$LABELS" ]; then
+            gh issue create --repo "$REPO" --title "$TITLE" \
+              --label "$LABELS" --body "$BODY" \
+              || gh issue create --repo "$REPO" --title "$TITLE" --body "$BODY"
+          else
+            gh issue create --repo "$REPO" --title "$TITLE" --body "$BODY"
+          fi
+        fi
