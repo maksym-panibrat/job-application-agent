@@ -270,7 +270,9 @@ async def run_sync_queue(*, max_slugs: int = 64, deadline_seconds: int = 240) ->
                 async with factory() as s:
                     new_count = 0
                     for jd in jobs:
-                        job, created = await job_service.upsert_job(jd, row.source, s)
+                        job, created = await job_service.upsert_job(
+                            jd, row.source, s, slug=row.slug
+                        )
                         if created:
                             new_count += 1
                             await match_queue_service.enqueue_for_interested_profiles(job, s)

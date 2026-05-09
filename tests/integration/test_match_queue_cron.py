@@ -1,6 +1,7 @@
 """Integration test for run_match_queue cron worker."""
 
 import uuid
+from datetime import UTC, datetime
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -8,6 +9,7 @@ import sqlalchemy as sa
 
 from app.data.slug_company import slug_to_company_name
 from app.models.application import Application
+from app.models.company import Company
 from app.models.job import Job
 from app.models.user import User
 from app.models.user_profile import UserProfile
@@ -15,14 +17,40 @@ from app.scheduler.tasks import run_match_queue
 from app.services import match_queue_service
 
 
+async def _ensure_company(db_session, slug: str) -> Company:
+    existing = (
+        await db_session.execute(sa.select(Company).where(Company.normalized_key == slug))
+    ).scalar_one_or_none()
+    if existing is not None:
+        return existing
+    company = Company(
+        canonical_name=slug_to_company_name(slug),
+        normalized_key=slug,
+        provider_slugs={"greenhouse": slug},
+        resolved_at=datetime.now(UTC),
+    )
+    db_session.add(company)
+    await db_session.commit()
+    await db_session.refresh(company)
+    return company
+
+
 async def _seed_profile(db_session, *slugs: str) -> UserProfile:
-    """Seed a User + UserProfile (FK constraint requires the user row first)."""
+    """Seed a User + UserProfile (FK constraint requires the user row first).
+
+    Also seeds Company rows + UserProfile.target_company_ids — the matching
+    pipeline reads the new column post-D6.
+    """
     user = User(id=uuid.uuid4(), email=f"mqcron-{uuid.uuid4()}@test.com")
     db_session.add(user)
     await db_session.commit()
+    company_ids: list[uuid.UUID] = []
+    for slug in slugs:
+        company = await _ensure_company(db_session, slug)
+        company_ids.append(company.id)
     profile = UserProfile(
         user_id=user.id,
-        target_company_slugs={"greenhouse": list(slugs)},
+        target_company_ids=company_ids,
         search_active=True,
     )
     db_session.add(profile)
@@ -31,17 +59,24 @@ async def _seed_profile(db_session, *slugs: str) -> UserProfile:
     return profile
 
 
+async def _job_for(db_session, slug: str, *, external_id: str, **kwargs) -> Job:
+    company = await _ensure_company(db_session, slug)
+    return Job(
+        source="greenhouse",
+        external_id=external_id,
+        title=kwargs.pop("title", "Engineer"),
+        company_name=slug_to_company_name(slug),
+        company_id=company.id,
+        apply_url=kwargs.pop("apply_url", f"https://x/{external_id}"),
+        is_active=True,
+        **kwargs,
+    )
+
+
 @pytest.mark.asyncio
 async def test_run_match_queue_drains_pending(db_session):
     await _seed_profile(db_session, "airbnb")
-    job = Job(
-        source="greenhouse",
-        external_id="x-1",
-        title="Engineer",
-        company_name=slug_to_company_name("airbnb"),
-        apply_url="https://x",
-        is_active=True,
-    )
+    job = await _job_for(db_session, "airbnb", external_id="x-1")
     db_session.add(job)
     await db_session.commit()
     await db_session.refresh(job)
@@ -97,13 +132,12 @@ async def test_run_match_queue_releases_leases_without_failing_attempts_on_budge
 
     jobs = []
     for i in range(3):
-        job = Job(
-            source="greenhouse",
+        job = await _job_for(
+            db_session,
+            "airbnb",
             external_id=f"budget-{i}",
             title=f"Engineer {i}",
-            company_name=slug_to_company_name("airbnb"),
             apply_url=f"https://x/{i}",
-            is_active=True,
         )
         db_session.add(job)
         jobs.append(job)
@@ -162,13 +196,12 @@ async def test_run_match_queue_uses_settings_for_default_caps(db_session, monkey
 
     jobs = []
     for i in range(5):
-        job = Job(
-            source="greenhouse",
+        job = await _job_for(
+            db_session,
+            "airbnb",
             external_id=f"settings-{i}",
             title=f"Engineer {i}",
-            company_name=slug_to_company_name("airbnb"),
             apply_url=f"https://x/{i}",
-            is_active=True,
         )
         db_session.add(job)
         jobs.append(job)
@@ -233,13 +266,12 @@ async def test_run_match_queue_caps_jobs_per_profile_per_tick(db_session):
     # Seed 8 jobs + 8 pending_match Applications for the same profile
     jobs = []
     for i in range(8):
-        job = Job(
-            source="greenhouse",
+        job = await _job_for(
+            db_session,
+            "airbnb",
             external_id=f"cap-{i}",
             title=f"Engineer {i}",
-            company_name=slug_to_company_name("airbnb"),
             apply_url=f"https://x/{i}",
-            is_active=True,
         )
         db_session.add(job)
         jobs.append(job)
@@ -328,13 +360,12 @@ async def test_run_match_queue_reprocesses_deferred_apps_after_lease_expiry(db_s
     # Seed 5 apps, cap=2 → 2 matched first tick, 3 deferred (claimed_at set)
     jobs = []
     for i in range(5):
-        job = Job(
-            source="greenhouse",
+        job = await _job_for(
+            db_session,
+            "airbnb",
             external_id=f"reproc-{i}",
             title=f"Engineer {i}",
-            company_name=slug_to_company_name("airbnb"),
             apply_url=f"https://x/{i}",
-            is_active=True,
         )
         db_session.add(job)
         jobs.append(job)

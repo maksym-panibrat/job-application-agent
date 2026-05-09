@@ -1,24 +1,51 @@
 """Integration tests for the per-(profile, job) match queue."""
 
 import uuid
+from datetime import UTC, datetime
 
 import pytest
 import sqlalchemy as sa
 
 from app.data.slug_company import slug_to_company_name
 from app.models.application import Application
+from app.models.company import Company
 from app.models.job import Job
 from app.models.user import User
 from app.models.user_profile import UserProfile
 from app.services import match_queue_service
 
 
-def _job(slug: str, ext: str = "1") -> Job:
+async def _ensure_company(db_session, slug: str) -> Company:
+    """Find-or-create a Company keyed on (greenhouse, slug). Other tests in the
+    same session may have already created a Company for this slug — reuse it
+    instead of violating uq_companies_normalized_key."""
+    existing = (
+        await db_session.execute(sa.select(Company).where(Company.normalized_key == slug))
+    ).scalar_one_or_none()
+    if existing is not None:
+        return existing
+    company = Company(
+        canonical_name=slug_to_company_name(slug),
+        normalized_key=slug,
+        provider_slugs={"greenhouse": slug},
+        resolved_at=datetime.now(UTC),
+    )
+    db_session.add(company)
+    await db_session.commit()
+    await db_session.refresh(company)
+    return company
+
+
+async def _job(db_session, slug: str, ext: str = "1") -> Job:
+    """Seed a Job linked to its Company so enqueue_for_interested_profiles
+    matches via target_company_ids (D6 read path)."""
+    company = await _ensure_company(db_session, slug)
     return Job(
         source="greenhouse",
         external_id=f"{slug}-{ext}",
         title="Engineer",
         company_name=slug_to_company_name(slug),
+        company_id=company.id,
         apply_url=f"https://x/{slug}/{ext}",
         is_active=True,
     )
@@ -29,9 +56,13 @@ async def _seed_profile(db_session, *slugs: str) -> UserProfile:
     user = User(id=uuid.uuid4(), email=f"mq-{uuid.uuid4()}@test.com")
     db_session.add(user)
     await db_session.commit()
+    company_ids: list[uuid.UUID] = []
+    for slug in slugs:
+        company = await _ensure_company(db_session, slug)
+        company_ids.append(company.id)
     profile = UserProfile(
         user_id=user.id,
-        target_company_slugs={"greenhouse": list(slugs)},
+        target_company_ids=company_ids,
         search_active=True,
     )
     db_session.add(profile)
@@ -42,14 +73,14 @@ async def _seed_profile(db_session, *slugs: str) -> UserProfile:
 
 @pytest.mark.asyncio
 async def test_enqueue_creates_application_for_each_interested_profile(db_session):
-    job = _job("airbnb")
-    db_session.add(job)
-    await db_session.commit()
-    await db_session.refresh(job)
-
     p_a = await _seed_profile(db_session, "airbnb", "stripe")
     p_b = await _seed_profile(db_session, "airbnb")
     await _seed_profile(db_session, "notion")  # not interested
+
+    job = await _job(db_session, "airbnb")
+    db_session.add(job)
+    await db_session.commit()
+    await db_session.refresh(job)
 
     enqueued = await match_queue_service.enqueue_for_interested_profiles(job, db_session)
     assert enqueued == 2
@@ -68,11 +99,11 @@ async def test_enqueue_creates_application_for_each_interested_profile(db_sessio
 
 @pytest.mark.asyncio
 async def test_enqueue_is_idempotent_on_conflict(db_session):
-    job = _job("airbnb")
+    await _seed_profile(db_session, "airbnb")
+    job = await _job(db_session, "airbnb")
     db_session.add(job)
     await db_session.commit()
     await db_session.refresh(job)
-    await _seed_profile(db_session, "airbnb")
 
     first = await match_queue_service.enqueue_for_interested_profiles(job, db_session)
     second = await match_queue_service.enqueue_for_interested_profiles(job, db_session)
@@ -82,12 +113,11 @@ async def test_enqueue_is_idempotent_on_conflict(db_session):
 
 @pytest.mark.asyncio
 async def test_enqueue_skips_inactive_profiles(db_session):
-    job = _job("airbnb")
+    inactive = await _seed_profile(db_session, "airbnb")
+    job = await _job(db_session, "airbnb")
     db_session.add(job)
     await db_session.commit()
     await db_session.refresh(job)
-
-    inactive = await _seed_profile(db_session, "airbnb")
     inactive.search_active = False
     db_session.add(inactive)
     await db_session.commit()
@@ -99,7 +129,8 @@ async def test_enqueue_skips_inactive_profiles(db_session):
 @pytest.mark.asyncio
 async def test_next_batch_claims_oldest_first(db_session):
     await _seed_profile(db_session, "airbnb")
-    db_session.add_all([_job("airbnb", str(i)) for i in range(3)])
+    for i in range(3):
+        db_session.add(await _job(db_session, "airbnb", str(i)))
     await db_session.commit()
     for j in (await db_session.execute(sa.select(Job))).scalars():
         await match_queue_service.enqueue_for_interested_profiles(j, db_session)
@@ -112,7 +143,7 @@ async def test_next_batch_claims_oldest_first(db_session):
 @pytest.mark.asyncio
 async def test_mark_done_clears_claim(db_session):
     await _seed_profile(db_session, "airbnb")
-    db_session.add(_job("airbnb"))
+    db_session.add(await _job(db_session, "airbnb"))
     await db_session.commit()
     job = (await db_session.execute(sa.select(Job))).scalar_one()
     await match_queue_service.enqueue_for_interested_profiles(job, db_session)
@@ -130,7 +161,7 @@ async def test_mark_done_clears_claim(db_session):
 @pytest.mark.asyncio
 async def test_mark_error_after_3_attempts(db_session):
     await _seed_profile(db_session, "airbnb")
-    db_session.add(_job("airbnb"))
+    db_session.add(await _job(db_session, "airbnb"))
     await db_session.commit()
     job = (await db_session.execute(sa.select(Job))).scalar_one()
     await match_queue_service.enqueue_for_interested_profiles(job, db_session)
@@ -159,7 +190,7 @@ async def test_audit_and_recover_error_apps(db_session):
     # Seed jobs for each profile + create their pending applications
     for slug, profile in (("airbnb", p1), ("stripe", p2)):
         for ext in ("a", "b"):
-            db_session.add(_job(slug, ext))
+            db_session.add(await _job(db_session, slug, ext))
     await db_session.commit()
     jobs = (await db_session.execute(sa.select(Job))).scalars().all()
     for job in jobs:

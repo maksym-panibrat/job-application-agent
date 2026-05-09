@@ -10,13 +10,33 @@ import pytest
 import sqlalchemy as sa
 from sqlmodel import select
 
+from app.data.slug_company import slug_to_company_name
 from app.models.application import Application
+from app.models.company import Company
 from app.models.job import Job
 from app.models.user import User
 from app.models.user_profile import UserProfile
 from app.services import match_service
 from app.services.match_service import list_applications, score_and_match
 from tests.conftest import patch_llm
+
+
+async def _ensure_company(db_session, slug: str) -> Company:
+    existing = (
+        await db_session.execute(sa.select(Company).where(Company.normalized_key == slug))
+    ).scalar_one_or_none()
+    if existing is not None:
+        return existing
+    company = Company(
+        canonical_name=slug_to_company_name(slug),
+        normalized_key=slug,
+        provider_slugs={"greenhouse": slug},
+        resolved_at=datetime.now(UTC),
+    )
+    db_session.add(company)
+    await db_session.commit()
+    await db_session.refresh(company)
+    return company
 
 
 async def _seed_profile(db_session) -> UserProfile:
@@ -218,14 +238,23 @@ async def test_score_and_match_picks_unscored_jobs_when_pool_is_largely_scored(d
     extra = 5
 
     profile = await _seed_profile(db_session)
-    # Match the slug for jobs whose company_name == "Acme Corp"
-    # (slug_to_company_name("acme-corp") == "Acme Corp").
-    profile.target_company_slugs = {"greenhouse": ["acme-corp"]}
+    # Match by company_id rather than legacy company_name slug — the candidate
+    # query now filters Job.company_id.in_(profile.target_company_ids).
+    company = await _ensure_company(db_session, "acme-corp")
+    profile.target_company_ids = [company.id]
     db_session.add(profile)
     await db_session.commit()
 
+    async def _seed_acme_job(title: str) -> Job:
+        job = await _seed_job(db_session, title=title)
+        job.company_id = company.id
+        db_session.add(job)
+        await db_session.commit()
+        await db_session.refresh(job)
+        return job
+
     # First `batch` jobs: pre-create scored Applications so they appear in matched_ids.
-    pre_scored_jobs = [await _seed_job(db_session, title=f"Pre-scored {i}") for i in range(batch)]
+    pre_scored_jobs = [await _seed_acme_job(title=f"Pre-scored {i}") for i in range(batch)]
     for j in pre_scored_jobs:
         db_session.add(
             Application(
@@ -238,7 +267,7 @@ async def test_score_and_match_picks_unscored_jobs_when_pool_is_largely_scored(d
     await db_session.commit()
 
     # Next `extra` jobs: unscored, must be picked up.
-    fresh_jobs = [await _seed_job(db_session, title=f"Fresh {i}") for i in range(extra)]
+    fresh_jobs = [await _seed_acme_job(title=f"Fresh {i}") for i in range(extra)]
     fresh_ids = {j.id for j in fresh_jobs}
 
     responses = [
@@ -287,14 +316,16 @@ async def test_list_applications_returns_job_data(db_session):
 
 @pytest.mark.asyncio
 async def test_score_and_match_filters_by_profile_slugs(db_session):
-    """A profile with only ['airbnb'] must NOT see Stripe jobs as candidates,
+    """A profile that follows only Airbnb must NOT see Stripe jobs as candidates,
     even if Stripe jobs exist in the global pool from other users (spec 2026-04-28)."""
-    # Two jobs, two companies
+    airbnb_co = await _ensure_company(db_session, "airbnb")
+    stripe_co = await _ensure_company(db_session, "stripe")
     airbnb_job = Job(
         source="greenhouse",
         external_id="a-1",
         title="X",
         company_name="Airbnb",
+        company_id=airbnb_co.id,
         apply_url="https://x",
         is_active=True,
     )
@@ -303,6 +334,7 @@ async def test_score_and_match_filters_by_profile_slugs(db_session):
         external_id="s-1",
         title="Y",
         company_name="Stripe",
+        company_id=stripe_co.id,
         apply_url="https://y",
         is_active=True,
     )
@@ -312,7 +344,7 @@ async def test_score_and_match_filters_by_profile_slugs(db_session):
     await db_session.commit()
     profile = UserProfile(
         user_id=user.id,
-        target_company_slugs={"greenhouse": ["airbnb"]},
+        target_company_ids=[airbnb_co.id],
     )
     db_session.add(profile)
     await db_session.commit()
@@ -340,14 +372,15 @@ async def test_score_and_match_filters_by_profile_slugs(db_session):
 
 @pytest.mark.asyncio
 async def test_score_cached_only_uses_existing_jobs(db_session):
-    """score_cached must NOT enqueue any fetches and must respect the slug filter
+    """score_cached must NOT enqueue any fetches and must respect the company filter
     and matching_jobs_per_batch cap."""
+    airbnb_co = await _ensure_company(db_session, "airbnb")
     user = User(id=uuid.uuid4(), email=f"cached-{uuid.uuid4()}@test.com")
     db_session.add(user)
     await db_session.commit()
     profile = UserProfile(
         user_id=user.id,
-        target_company_slugs={"greenhouse": ["airbnb"]},
+        target_company_ids=[airbnb_co.id],
     )
     db_session.add(profile)
     db_session.add(
@@ -356,6 +389,7 @@ async def test_score_cached_only_uses_existing_jobs(db_session):
             external_id="a-2",
             title="Z",
             company_name="Airbnb",
+            company_id=airbnb_co.id,
             apply_url="https://z",
             is_active=True,
         )
@@ -377,6 +411,7 @@ async def test_score_and_match_flips_match_status_to_matched(db_session):
     from app.models.application import Application
     from app.models.user import User
 
+    airbnb_co = await _ensure_company(db_session, "airbnb")
     user = User(
         id=uuid.uuid4(),
         email="t@t.com",
@@ -388,7 +423,7 @@ async def test_score_and_match_flips_match_status_to_matched(db_session):
     db_session.add(user)
     profile = UserProfile(
         user_id=user.id,
-        target_company_slugs={"greenhouse": ["airbnb"]},
+        target_company_ids=[airbnb_co.id],
     )
     db_session.add(profile)
     job = Job(
@@ -396,6 +431,7 @@ async def test_score_and_match_flips_match_status_to_matched(db_session):
         external_id="m-1",
         title="Eng",
         company_name="Airbnb",
+        company_id=airbnb_co.id,
         apply_url="https://x",
         is_active=True,
     )
@@ -460,8 +496,9 @@ async def test_score_cached_skips_jobs_with_fresh_match_claim(db_session):
     )
     db_session.add(user)
     await db_session.commit()
+    airbnb_co = await _ensure_company(db_session, "airbnb")
     profile = await get_or_create_profile(user.id, db_session)
-    profile.target_company_slugs = {"greenhouse": ["airbnb"]}
+    profile.target_company_ids = [airbnb_co.id]
     db_session.add(profile)
     await db_session.commit()
     await db_session.refresh(profile)
@@ -471,6 +508,7 @@ async def test_score_cached_skips_jobs_with_fresh_match_claim(db_session):
         external_id="r-1",
         title="Eng",
         company_name="Airbnb",
+        company_id=airbnb_co.id,
         apply_url="https://x",
         is_active=True,
     )

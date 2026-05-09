@@ -48,7 +48,6 @@ async def test_status_syncing_when_user_slug_queued(client, auth_headers, seeded
     db_session.add(company)
     await db_session.commit()
     await db_session.refresh(company)
-    profile.target_company_slugs = {"greenhouse": ["airbnb"]}
     profile.target_company_ids = [company.id]
     db_session.add(profile)
     await db_session.commit()
@@ -63,7 +62,16 @@ async def test_status_syncing_when_user_slug_queued(client, auth_headers, seeded
 @pytest.mark.asyncio
 async def test_status_lists_invalid_slugs(client, auth_headers, seeded_user, db_session):
     _, profile = seeded_user
-    profile.target_company_slugs = {"greenhouse": ["openai"]}
+    company = Company(
+        canonical_name="OpenAI",
+        normalized_key="openai",
+        provider_slugs={"greenhouse": "openai"},
+        resolved_at=datetime.now(UTC),
+    )
+    db_session.add(company)
+    await db_session.commit()
+    await db_session.refresh(company)
+    profile.target_company_ids = [company.id]
     db_session.add(profile)
     await db_session.commit()
     # Two strikes → invalid

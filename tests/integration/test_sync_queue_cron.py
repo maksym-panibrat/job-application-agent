@@ -22,10 +22,10 @@ from app.sources.greenhouse_board import GREENHOUSE_BOARDS_BASE
 async def _seed_profile(db_session, *slugs: str) -> UserProfile:
     """Seed a User + UserProfile (FK constraint requires the user row first).
 
-    Sets BOTH target_company_slugs (still read by match_queue_service —
-    enqueue_for_interested_profiles, migrated in a later track) and
-    target_company_ids (read by enqueue_stale + _prune_invalid_provider_slugs
-    after D4).
+    Sets target_company_ids (read by enqueue_stale,
+    _prune_invalid_provider_slugs, and the matching pipeline post-D6). The
+    legacy target_company_slugs JSONB is left at its default ({}) — every
+    read path now goes through Company.
     """
     user = User(id=uuid.uuid4(), email=f"sync-{uuid.uuid4()}@test.com")
     db_session.add(user)
@@ -44,7 +44,6 @@ async def _seed_profile(db_session, *slugs: str) -> UserProfile:
         company_ids.append(company.id)
     profile = UserProfile(
         user_id=user.id,
-        target_company_slugs={"greenhouse": list(slugs)},
         target_company_ids=company_ids,
         search_active=True,
     )
