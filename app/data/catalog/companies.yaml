@@ -10,75 +10,108 @@
 # canonical_name MUST be unique across the file. normalized_key (lowercase +
 # whitespace collapsed to hyphens) MUST also be unique — the parser rejects
 # both kinds of duplicate at startup.
+#
+# Common tags (soft convention, not enforced):
+#   sector:      ai · fintech · dev-tools · biotech · climate · gaming · social
+#   shape:       b2b · b2c · infra · platform · marketplace
+#   stage:       early-stage · late-stage · public
+#   region/mode: remote-first · us · eu
+# Tags are read by the chat agent to suggest companies that fit a user's
+# profile. Synonyms (fintech vs finance) work but cost clarity for the
+# curator - pick one and stick with it. Rows without tags are tolerated
+# but the LLM has less grounding for them.
 companies:
   # — Layer 1 starter set (Greenhouse-only) —
   - canonical_name: Airbnb
     providers:
       greenhouse: airbnb
+    tags: [marketplace, b2c, public]
   - canonical_name: Stripe
     providers:
       greenhouse: stripe
+    tags: [fintech, infra, b2b, late-stage]
   - canonical_name: Dropbox
     providers:
       greenhouse: dropbox
+    tags: [b2b, b2c, public, dev-tools]
   - canonical_name: Vercel
     providers:
       greenhouse: vercel
+    tags: [dev-tools, infra, b2b, late-stage]
   - canonical_name: Instacart
     providers:
       greenhouse: instacart
+    tags: [marketplace, b2c, public]
   - canonical_name: Gusto
     providers:
       greenhouse: gusto
+    tags: [fintech, b2b, late-stage]
   - canonical_name: Robinhood
     providers:
       greenhouse: robinhood
+    tags: [fintech, b2c, public]
   - canonical_name: DoorDash
     providers:
       greenhouse: doordashusa
+    tags: [marketplace, b2c, public]
   - canonical_name: Scale AI
     providers:
       greenhouse: scaleai
+    tags: [ai, b2b, late-stage]
   - canonical_name: Ramp
     providers:
       greenhouse: rampnetwork
+    tags: [fintech, b2b, late-stage]
   - canonical_name: Anthropic
     providers:
       greenhouse: anthropic
+    tags: [ai, b2b, late-stage]
   - canonical_name: Samsara
     providers:
       greenhouse: samsara
+    tags: [infra, b2b, public]
   - canonical_name: Datadog
     providers:
       greenhouse: datadog
+    tags: [dev-tools, infra, b2b, public]
   - canonical_name: Cloudflare
     providers:
       greenhouse: cloudflare
+    tags: [infra, b2b, public]
   - canonical_name: Asana
     providers:
       greenhouse: asana
+    tags: [b2b, dev-tools, public]
   # — Multi-provider / Lever / Ashby examples (curator additions) —
   - canonical_name: Linear
     providers:
       ashby: linear
+    tags: [dev-tools, b2b, late-stage]
   - canonical_name: Notion
     providers:
       ashby: notion
+    tags: [b2c, b2b, late-stage]
   - canonical_name: Figma
     providers:
       greenhouse: figma
+    tags: [dev-tools, b2c, b2b, public]
   - canonical_name: OpenAI
     providers:
       ashby: openai
+    tags: [ai, b2b, b2c, late-stage]
   - canonical_name: Brex
     providers:
       greenhouse: brex
+    tags: [fintech, b2b, late-stage]
   - canonical_name: Mercury
     providers:
       ashby: mercury
+    tags: [fintech, b2b, late-stage]
   - canonical_name: Posthog
     providers:
       ashby: posthog
+    tags: [dev-tools, b2b, early-stage]
   - canonical_name: Modal
     providers:
       ashby: modal
+    tags: [dev-tools, infra, ai, b2b, early-stage]
