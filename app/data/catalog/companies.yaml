@@ -11,7 +11,7 @@
 # whitespace collapsed to hyphens) MUST also be unique — the parser rejects
 # both kinds of duplicate at startup.
 companies:
-  # — Migrated from app/data/default_slugs.py (Layer 1 starter set) —
+  # — Layer 1 starter set (Greenhouse-only) —
   - canonical_name: Airbnb
     providers:
       greenhouse: airbnb
