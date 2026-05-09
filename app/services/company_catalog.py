@@ -1,4 +1,4 @@
-"""Catalog YAML parser + (in Task B2) idempotent seeder.
+"""Catalog YAML parser + idempotent boot-time seeder.
 
 The catalog source is hand-curated at app/data/catalog/companies.yaml.
 Each row maps to one Company entity (one row per company across all the
@@ -7,14 +7,31 @@ ATSs it appears on). The parser enforces:
   - unique canonical_name across the file
   - unique normalized_key across the file (so two casings of the same name
     don't collide at INSERT time)
+
+seed_catalog() runs on FastAPI startup: resets is_curated=false on every
+existing companies row, then upserts each YAML row with is_curated=true.
 """
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+from pathlib import Path
+
+import structlog
 import yaml
 from pydantic import BaseModel, model_validator
+from sqlalchemy import update
+from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.company import Company
 from app.services.company_resolver import _normalize
+
+log = structlog.get_logger()
+
+DEFAULT_CATALOG_PATH = (
+    Path(__file__).resolve().parent.parent / "data" / "catalog" / "companies.yaml"
+)
 
 
 class CatalogProviderSlugs(BaseModel):
@@ -85,3 +102,72 @@ def parse_catalog(raw: str) -> Catalog:
     if not isinstance(data, dict):
         raise ValueError(f"catalog must be a mapping at the top level, got {type(data).__name__}")
     return Catalog.model_validate(data)
+
+
+async def seed_catalog(
+    session: AsyncSession,
+    *,
+    source: Path = DEFAULT_CATALOG_PATH,
+) -> int:
+    """Seed the curated catalog into the companies table.
+
+    Idempotent — every call:
+      1. Resets is_curated=false on every row (via UPDATE).
+      2. Upserts each YAML row, setting is_curated=true. Existing rows
+         (matched by normalized_key) get their canonical_name + provider_slugs
+         refreshed and the curated flag set; their id is preserved.
+
+    Returns the number of YAML rows that were upserted (NOT the row count
+    in the DB after the run).
+
+    Raises ValueError on parser errors (malformed YAML, duplicates,
+    rows with no providers). The caller should let that propagate so app
+    startup fails loudly rather than silently shipping a broken catalog.
+
+    Calls session.expire_all() after commit because the bulk UPDATE +
+    ON CONFLICT DO UPDATE statements bypass the ORM identity map. Without
+    expiry, any Company instance the caller had in this session before
+    seed_catalog runs would still report its pre-seed attribute values on
+    subsequent reads. Cost is zero on the boot-time call path (no other
+    Company objects in that session); benefit is no footgun for future
+    in-process callers.
+    """
+    raw = Path(source).read_text()
+    catalog = parse_catalog(raw)
+
+    # Reset stale curated flags first.
+    await session.execute(update(Company).values(is_curated=False))
+
+    if not catalog.companies:
+        await session.commit()
+        session.expire_all()
+        await log.ainfo("catalog.seeded", count=0, source=str(source))
+        return 0
+
+    now = datetime.now(UTC)
+    for row in catalog.companies:
+        stmt = (
+            insert(Company)
+            .values(
+                canonical_name=row.canonical_name,
+                normalized_key=row.normalized_key,
+                provider_slugs=row.provider_slugs_dict,
+                is_curated=True,
+                resolved_at=now,
+                created_at=now,
+            )
+            .on_conflict_do_update(
+                index_elements=["normalized_key"],
+                set_={
+                    "canonical_name": row.canonical_name,
+                    "provider_slugs": row.provider_slugs_dict,
+                    "is_curated": True,
+                },
+            )
+        )
+        await session.execute(stmt)
+
+    await session.commit()
+    session.expire_all()
+    await log.ainfo("catalog.seeded", count=len(catalog.companies), source=str(source))
+    return len(catalog.companies)
