@@ -15,8 +15,9 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
+from app.models.company import Company
 from app.models.slug_fetch import SlugFetch
-from app.sources.greenhouse_board import GreenhouseBoardSource
+from app.sources import SOURCES
 
 INVALID_THRESHOLD = 2
 log = structlog.get_logger()
@@ -30,12 +31,15 @@ async def get(source: str, slug: str, session: AsyncSession) -> SlugFetch | None
 
 
 async def validate_slug(source: str, slug: str, session: AsyncSession) -> bool:
-    """Returns True if the slug exists on Greenhouse. On True, upserts a row
-    with last_status='ok' (no last_fetched_at — that's set by an actual fetch)."""
-    if source != "greenhouse_board":
-        raise ValueError(f"validate_slug only supports greenhouse_board (got {source})")
-    src = GreenhouseBoardSource()
-    ok = await src.validate(slug)
+    """Returns True if the slug exists on the given provider's board.
+
+    Looks up the adapter in app.sources.SOURCES; raises ValueError on unknown
+    provider. On True, upserts a SlugFetch row with last_status='ok'.
+    """
+    adapter = SOURCES.get(source)
+    if adapter is None:
+        raise ValueError(f"unknown provider: {source}")
+    ok = await adapter.validate(slug)
     if not ok:
         return False
     stmt = (
@@ -98,29 +102,48 @@ async def mark_fetched(
 
 
 async def enqueue_stale(profile, session: AsyncSession, *, ttl_hours: int = 6) -> list[str]:
-    """For each greenhouse slug on the profile that's not invalid:
-    if its last_fetched_at is NULL or older than now-ttl_hours, set queued_at=now().
-    Returns the list of slugs newly queued (excluding ones already queued)."""
-    slugs = (profile.target_company_slugs or {}).get("greenhouse", []) or []
-    if not slugs:
+    """For each (provider, slug) pair in the user's followed Company rows,
+    queue a SlugFetch if its last_fetched_at is NULL or older than now-ttl_hours.
+
+    Returns the list of slugs newly queued (one entry per provider+slug pair;
+    duplicates allowed — same slug under two providers counts twice).
+    Skips Company rows marked unfollowable=True.
+    """
+    company_ids = list(profile.target_company_ids or [])
+    if not company_ids:
+        return []
+    companies = (
+        (
+            await session.execute(
+                select(Company).where(
+                    Company.id.in_(company_ids),
+                    Company.unfollowable.is_(False),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if not companies:
         return []
 
     cutoff = datetime.now(UTC) - timedelta(hours=ttl_hours)
     queued: list[str] = []
-    for slug in slugs:
-        row = await get("greenhouse_board", slug, session)
-        if row is None:
-            row = SlugFetch(source="greenhouse_board", slug=slug, queued_at=datetime.now(UTC))
-            session.add(row)
-            queued.append(slug)
-            continue
-        if row.is_invalid:
-            continue
-        already_queued = row.queued_at is not None
-        is_stale = row.last_fetched_at is None or row.last_fetched_at < cutoff
-        if is_stale and not already_queued:
-            row.queued_at = datetime.now(UTC)
-            queued.append(slug)
+    for company in companies:
+        for provider, slug in (company.provider_slugs or {}).items():
+            row = await get(provider, slug, session)
+            if row is None:
+                row = SlugFetch(source=provider, slug=slug, queued_at=datetime.now(UTC))
+                session.add(row)
+                queued.append(slug)
+                continue
+            if row.is_invalid:
+                continue
+            already_queued = row.queued_at is not None
+            is_stale = row.last_fetched_at is None or row.last_fetched_at < cutoff
+            if is_stale and not already_queued:
+                row.queued_at = datetime.now(UTC)
+                queued.append(slug)
     await session.commit()
     return queued
 

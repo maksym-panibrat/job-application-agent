@@ -201,12 +201,9 @@ async def run_sync_queue(*, max_slugs: int = 64, deadline_seconds: int = 240) ->
 
     from app.database import get_session_factory
     from app.services import job_service, match_queue_service, slug_registry_service
-    from app.sources.greenhouse_board import (
-        DEFAULT_TIMEOUT,
-        GreenhouseBoardSource,
-        InvalidSlugError,
-        TransientFetchError,
-    )
+    from app.sources import SOURCES
+    from app.sources.base import InvalidSlugError, TransientFetchError
+    from app.sources.greenhouse_board import DEFAULT_TIMEOUT
 
     factory = get_session_factory()
     deadline = time.monotonic() + deadline_seconds
@@ -218,7 +215,6 @@ async def run_sync_queue(*, max_slugs: int = 64, deadline_seconds: int = 240) ->
         return {**counts, "remaining": 0}
 
     async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as client:
-        source = GreenhouseBoardSource()
         sem = asyncio.Semaphore(8)
 
         async def _one(row):
@@ -229,6 +225,24 @@ async def run_sync_queue(*, max_slugs: int = 64, deadline_seconds: int = 240) ->
                 if time.monotonic() > deadline:
                     counts["skipped_deadline"] += 1
                     return
+                adapter = SOURCES.get(row.source)
+                if adapter is None:
+                    await log.aerror(
+                        "slug_fetch.unknown_provider",
+                        source=row.source,
+                        slug=row.slug,
+                    )
+                    # Mark the row as fetched-with-error so it doesn't loop forever.
+                    async with factory() as s:
+                        await slug_registry_service.mark_fetched(
+                            row.source,
+                            row.slug,
+                            "transient_error",
+                            s,
+                            error="unknown provider",
+                        )
+                    counts["transient"] += 1
+                    return
                 # Compute `since`: existing slug → last_fetched_at - 1h overlap;
                 # new slug (last_fetched_at IS NULL) → now - 14d.
                 since = (
@@ -237,7 +251,7 @@ async def run_sync_queue(*, max_slugs: int = 64, deadline_seconds: int = 240) ->
                     else datetime.now(UTC) - timedelta(days=14)
                 )
                 try:
-                    jobs = await source.fetch_jobs(row.slug, since=since, client=client)
+                    jobs = await adapter.fetch_jobs(row.slug, since=since, client=client)
                 except InvalidSlugError as exc:
                     async with factory() as s:
                         await slug_registry_service.mark_fetched(
@@ -256,7 +270,9 @@ async def run_sync_queue(*, max_slugs: int = 64, deadline_seconds: int = 240) ->
                 async with factory() as s:
                     new_count = 0
                     for jd in jobs:
-                        job, created = await job_service.upsert_job(jd, row.source, s)
+                        job, created = await job_service.upsert_job(
+                            jd, row.source, s, slug=row.slug
+                        )
                         if created:
                             new_count += 1
                             await match_queue_service.enqueue_for_interested_profiles(job, s)

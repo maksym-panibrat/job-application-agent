@@ -18,7 +18,9 @@ export interface Profile {
   search_keywords: string[]
   search_active: boolean
   search_expires_at: string | null
-  target_company_slugs?: { greenhouse?: string[]; lever?: string[]; ashby?: string[] }
+  target_companies?: { id: string; canonical_name: string }[]
+  /** Write-side only; not surfaced from GET /api/profile. */
+  target_company_ids?: string[]
   skills: Skill[]
   work_experiences: WorkExperience[]
 }
@@ -49,8 +51,8 @@ export interface Job {
   workplace_type: string | null
   salary: string | null
   contract_type: string | null
-  description_md: string | null
-  description_clean: string | null
+  description_raw: string | null
+  description: string | null
   apply_url: string
   posted_at: string | null
 }
@@ -150,6 +152,39 @@ export const api = {
       '/api/profile/search',
       { method: 'PATCH', body: JSON.stringify({ search_active: active }) }
     ),
+
+  // Companies
+  resolveCompany: async (
+    name: string,
+  ): Promise<{ id: string; canonical_name: string; providers: string[] }> => {
+    const token = sessionStorage.getItem('access_token')
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+    if (token) headers['Authorization'] = `Bearer ${token}`
+    const resp = await fetch('/api/companies/resolve', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ name }),
+    })
+    if (resp.status === 404) {
+      throw new Error("Couldn't find that company on any of our supported boards.")
+    }
+    if (resp.status === 503) {
+      throw new Error("Couldn't reach our boards right now, try again.")
+    }
+    if (!resp.ok) {
+      const text = await resp.text()
+      let detail: string | null = null
+      try {
+        const parsed = JSON.parse(text)
+        if (parsed && typeof parsed.detail === 'string') detail = parsed.detail
+      } catch {
+        // body wasn't JSON
+      }
+      throw new Error(detail ?? `${resp.status}: ${text}`)
+    }
+    const body = await resp.json()
+    return body.company
+  },
 
   // Jobs
   triggerSync: () =>

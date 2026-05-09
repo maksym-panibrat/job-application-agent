@@ -10,6 +10,7 @@ import sqlalchemy as sa
 
 from app.data.slug_company import slug_to_company_name
 from app.models.application import Application
+from app.models.company import Company
 from app.models.job import Job
 from app.models.user import User
 from app.models.user_profile import UserProfile
@@ -19,13 +20,31 @@ from app.sources.greenhouse_board import GREENHOUSE_BOARDS_BASE
 
 
 async def _seed_profile(db_session, *slugs: str) -> UserProfile:
-    """Seed a User + UserProfile (FK constraint requires the user row first)."""
+    """Seed a User + UserProfile (FK constraint requires the user row first).
+
+    Sets target_company_ids (read by enqueue_stale,
+    _prune_invalid_provider_slugs, and the matching pipeline post-D6). The
+    legacy target_company_slugs JSONB is left at its default ({}) — every
+    read path now goes through Company.
+    """
     user = User(id=uuid.uuid4(), email=f"sync-{uuid.uuid4()}@test.com")
     db_session.add(user)
     await db_session.commit()
+    company_ids: list[uuid.UUID] = []
+    for slug in slugs:
+        company = Company(
+            canonical_name=slug.title(),
+            normalized_key=f"{slug}-{uuid.uuid4()}",
+            provider_slugs={"greenhouse": slug},
+            resolved_at=datetime.now(UTC),
+        )
+        db_session.add(company)
+        await db_session.commit()
+        await db_session.refresh(company)
+        company_ids.append(company.id)
     profile = UserProfile(
         user_id=user.id,
-        target_company_slugs={"greenhouse": list(slugs)},
+        target_company_ids=company_ids,
         search_active=True,
     )
     db_session.add(profile)
@@ -100,12 +119,12 @@ async def test_run_job_sync_does_not_synchronously_score_cached_jobs(db_session)
     profile = await _seed_profile(db_session, "airbnb")
     profile_id = profile.id
     job = Job(
-        source="greenhouse_board",
+        source="greenhouse",
         external_id="9001",
         title="Backend Engineer",
         company_name=slug_to_company_name("airbnb"),
         apply_url="https://boards.greenhouse.io/airbnb/jobs/9001",
-        description_clean="job",
+        description="job",
     )
     db_session.add(job)
     await db_session.commit()
@@ -136,14 +155,15 @@ async def test_run_job_sync_does_not_synchronously_score_cached_jobs(db_session)
 
 @pytest.mark.asyncio
 async def test_run_job_sync_prunes_invalid_slugs_for_active_profiles(db_session):
-    """The 6h /internal/cron/sync now also prunes is_invalid=True slugs from
-    each active profile (closes the gap where prune only ran on user-initiated
-    sync, never on the cron sweep)."""
+    """The 6h /internal/cron/sync now also prunes is_invalid=True (provider, slug)
+    pairs from the Company rows the profile follows (closes the gap where prune
+    only ran on user-initiated sync, never on the cron sweep). Companies whose
+    provider_slugs become empty are flagged unfollowable=True."""
     from app.models.slug_fetch import SlugFetch
     from app.scheduler.tasks import run_job_sync
 
     profile = await _seed_profile(db_session, "airbnb", "deadcorp", "stripe")
-    db_session.add(SlugFetch(source="greenhouse_board", slug="deadcorp", is_invalid=True))
+    db_session.add(SlugFetch(source="greenhouse", slug="deadcorp", is_invalid=True))
     await db_session.commit()
 
     summary = await run_job_sync()
@@ -151,7 +171,15 @@ async def test_run_job_sync_prunes_invalid_slugs_for_active_profiles(db_session)
     assert summary["slugs_pruned"] == 1
     db_session.expire_all()
     await db_session.refresh(profile)
-    assert profile.target_company_slugs["greenhouse"] == ["airbnb", "stripe"]
+    # The deadcorp Company row should have empty provider_slugs and be unfollowable.
+    stmt = sa.select(Company).where(Company.id.in_(profile.target_company_ids))
+    rows = (await db_session.execute(stmt)).scalars().all()
+    by_slug = {r.canonical_name.lower(): r for r in rows}
+    assert by_slug["deadcorp"].provider_slugs == {}
+    assert by_slug["deadcorp"].unfollowable is True
+    assert by_slug["airbnb"].provider_slugs == {"greenhouse": "airbnb"}
+    assert by_slug["airbnb"].unfollowable is False
+    assert by_slug["stripe"].provider_slugs == {"greenhouse": "stripe"}
 
 
 @pytest.mark.asyncio
@@ -162,7 +190,7 @@ async def test_run_sync_queue_marks_invalid_after_2_404s(db_session):
     with respx.mock:
         respx.get(f"{GREENHOUSE_BOARDS_BASE}/openai/jobs").mock(return_value=httpx.Response(404))
         await run_sync_queue()
-    row = await slug_registry_service.get("greenhouse_board", "openai", db_session)
+    row = await slug_registry_service.get("greenhouse", "openai", db_session)
     assert row.consecutive_404_count == 1
     assert row.is_invalid is False
 
@@ -175,6 +203,6 @@ async def test_run_sync_queue_marks_invalid_after_2_404s(db_session):
     # Drop in-memory cache so we re-read the row state the worker (in a separate
     # session) committed.
     db_session.expire_all()
-    row = await slug_registry_service.get("greenhouse_board", "openai", db_session)
+    row = await slug_registry_service.get("greenhouse", "openai", db_session)
     assert row.consecutive_404_count == 2
     assert row.is_invalid is True

@@ -3,6 +3,7 @@ Integration test for the onboarding LangGraph agent with a real PostgreSQL check
 """
 
 import uuid
+from datetime import UTC, datetime
 from unittest.mock import patch
 
 import pytest
@@ -92,8 +93,27 @@ async def test_agent_node_injects_current_profile_snapshot(checkpointer, db_sess
     saving — issue #40)."""
     from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
+    from app.models.company import Company
     from app.models.user import User
     from app.models.user_profile import UserProfile
+
+    # Seed two companies that the profile will follow.
+    stripe = Company(
+        canonical_name="Stripe",
+        normalized_key="stripe",
+        provider_slugs={"greenhouse": "stripe"},
+        resolved_at=datetime.now(UTC),
+    )
+    openai = Company(
+        canonical_name="OpenAI",
+        normalized_key="openai",
+        provider_slugs={"greenhouse": "openai"},
+        resolved_at=datetime.now(UTC),
+    )
+    db_session.add_all([stripe, openai])
+    await db_session.commit()
+    await db_session.refresh(stripe)
+    await db_session.refresh(openai)
 
     user_id = uuid.uuid4()
     user = User(id=user_id, email=f"snap-{user_id}@local")
@@ -101,7 +121,7 @@ async def test_agent_node_injects_current_profile_snapshot(checkpointer, db_sess
     profile = UserProfile(
         user_id=user_id,
         target_roles=["Backend Engineer"],
-        target_company_slugs={"greenhouse": ["stripe", "openai"]},
+        target_company_ids=[stripe.id, openai.id],
     )
     db_session.add(profile)
     await db_session.commit()
@@ -131,8 +151,8 @@ async def test_agent_node_injects_current_profile_snapshot(checkpointer, db_sess
     system_blob = "\n".join(_SpyLLM.captured_system)
     assert "Current Profile" in system_blob
     assert "Backend Engineer" in system_blob
-    assert "stripe" in system_blob
-    assert "openai" in system_blob
+    assert "Stripe" in system_blob
+    assert "OpenAI" in system_blob
 
 
 async def _make_profile(db_session):
@@ -141,7 +161,7 @@ async def _make_profile(db_session):
     from app.models.user_profile import UserProfile
 
     user_id = uuid.uuid4()
-    user = User(id=user_id, email=f"slug-test-{user_id}@local")
+    user = User(id=user_id, email=f"company-test-{user_id}@local")
     db_session.add(user)
     profile = UserProfile(user_id=user_id)
     db_session.add(profile)
@@ -151,27 +171,88 @@ async def _make_profile(db_session):
 
 
 @pytest.mark.asyncio
-async def test_onboarding_filters_invalid_slugs(db_session, monkeypatch):
-    """The onboarding agent must call validate_slug for each inferred slug
-    and persist only the ones that exist on Greenhouse."""
-    from app.services import slug_registry_service
+async def test_persist_inferred_companies_resolves_and_appends_ids(db_session, monkeypatch):
+    """persist_inferred_companies must route every name through company_resolver
+    and append the resulting Company.id to profile.target_company_ids. Names
+    that fail to resolve are skipped (logged) rather than exploding."""
+    from app.models.company import Company
+    from app.services import company_resolver
 
-    seen = []
+    stripe = Company(
+        canonical_name="Stripe",
+        normalized_key="stripe",
+        provider_slugs={"greenhouse": "stripe"},
+        resolved_at=datetime.now(UTC),
+    )
+    airbnb = Company(
+        canonical_name="Airbnb",
+        normalized_key="airbnb",
+        provider_slugs={"greenhouse": "airbnb"},
+        resolved_at=datetime.now(UTC),
+    )
+    db_session.add_all([stripe, airbnb])
+    await db_session.commit()
+    await db_session.refresh(stripe)
+    await db_session.refresh(airbnb)
 
-    async def fake_validate(source, slug, session):
-        seen.append(slug)
-        return slug != "openai"  # openai is dead; everything else valid
+    seen: list[str] = []
 
-    monkeypatch.setattr(slug_registry_service, "validate_slug", fake_validate)
+    async def fake_resolve(name, session):
+        seen.append(name)
+        if name.lower() == "stripe":
+            return stripe
+        if name.lower() == "airbnb":
+            return airbnb
+        return None  # "openai" → unresolved, must be skipped
 
-    from app.agents.onboarding import persist_inferred_slugs
+    monkeypatch.setattr(company_resolver, "resolve", fake_resolve)
+
+    from app.agents.onboarding import persist_inferred_companies
 
     profile = await _make_profile(db_session)
-    await persist_inferred_slugs(profile, ["airbnb", "openai", "stripe"], db_session)
+    resolved = await persist_inferred_companies(profile, ["Airbnb", "OpenAI", "Stripe"], db_session)
     await db_session.refresh(profile)
 
-    assert profile.target_company_slugs["greenhouse"] == ["airbnb", "stripe"]
-    assert "openai" in seen
+    assert sorted(resolved) == ["Airbnb", "Stripe"]
+    assert sorted(profile.target_company_ids) == sorted([airbnb.id, stripe.id])
+    # OpenAI was attempted but did not resolve.
+    assert "OpenAI" in seen
+
+
+@pytest.mark.asyncio
+async def test_persist_inferred_companies_handles_fanout_timeout(db_session, monkeypatch):
+    """A FanoutTimeoutError on one name must not abort the whole batch — the
+    name is logged and skipped, the rest still resolve."""
+    from app.models.company import Company
+    from app.services import company_resolver
+
+    stripe = Company(
+        canonical_name="Stripe",
+        normalized_key="stripe",
+        provider_slugs={"greenhouse": "stripe"},
+        resolved_at=datetime.now(UTC),
+    )
+    db_session.add(stripe)
+    await db_session.commit()
+    await db_session.refresh(stripe)
+
+    async def fake_resolve(name, session):
+        if name.lower() == "flaky":
+            raise company_resolver.FanoutTimeoutError(name)
+        if name.lower() == "stripe":
+            return stripe
+        return None
+
+    monkeypatch.setattr(company_resolver, "resolve", fake_resolve)
+
+    from app.agents.onboarding import persist_inferred_companies
+
+    profile = await _make_profile(db_session)
+    resolved = await persist_inferred_companies(profile, ["Flaky", "Stripe"], db_session)
+    await db_session.refresh(profile)
+
+    assert resolved == ["Stripe"]
+    assert profile.target_company_ids == [stripe.id]
 
 
 @pytest.mark.asyncio

@@ -19,7 +19,7 @@ function detail(over: Partial<ApplicationDetail> = {}): ApplicationDetail {
     job: {
       id: 'j', title: 'Senior Backend Engineer', company_name: 'Acme',
       location: 'Berlin', workplace_type: 'hybrid', salary: '€100k',
-      contract_type: null, description_md: 'Acme is hiring.', description_clean: null,
+      contract_type: null, description_raw: null, description: 'Acme is hiring.',
       apply_url: 'https://x.com/', posted_at: null,
     },
     documents: [],
@@ -66,10 +66,10 @@ describe('Match detail (ApplicationReview)', () => {
     expect(screen.getByRole('button', { name: /save edits/i })).toBeInTheDocument()
   })
 
-  it('renders description_clean (markdownified) instead of raw description_md HTML (regression: re #69)', async () => {
-    // Greenhouse delivers HTML in description_md; the API also exposes
-    // description_clean which is the markdownified version. The match
-    // detail page MUST prefer description_clean so users don't see raw
+  it('renders description (markdownified) instead of raw description_raw HTML (regression: re #69)', async () => {
+    // Greenhouse delivers HTML in description_raw; the API also exposes
+    // description which is the markdownified version. The match
+    // detail page MUST prefer description so users don't see raw
     // <p>/<h2>/<strong> tags as visible text. Plan B's rewrite reverted
     // PR #89's fix; this test guards against that recurring.
     renderAt('/matches/a1', detail({
@@ -77,8 +77,8 @@ describe('Match detail (ApplicationReview)', () => {
         id: 'j', title: 'Senior Backend Engineer', company_name: 'Acme',
         location: null, workplace_type: null, salary: null,
         contract_type: null,
-        description_md: '<p>Raw HTML — engineers wanted.</p>',
-        description_clean: 'Clean markdown — engineers wanted.',
+        description_raw: '<p>Raw HTML — engineers wanted.</p>',
+        description: 'Clean markdown — engineers wanted.',
         apply_url: 'https://x.com/', posted_at: null,
       },
     }))
@@ -88,14 +88,14 @@ describe('Match detail (ApplicationReview)', () => {
     expect(screen.queryByText(/<p>/i)).not.toBeInTheDocument()
   })
 
-  it('falls back to description_md when description_clean is null (legacy rows)', async () => {
+  it('falls back to description_raw when description is null (legacy rows)', async () => {
     renderAt('/matches/a1', detail({
       job: {
         id: 'j', title: 'Senior Backend Engineer', company_name: 'Acme',
         location: null, workplace_type: null, salary: null,
         contract_type: null,
-        description_md: 'Legacy row text.',
-        description_clean: null,
+        description_raw: 'Legacy row text.',
+        description: null,
         apply_url: 'https://x.com/', posted_at: null,
       },
     }))

@@ -50,7 +50,7 @@ def _make_job(job_id: uuid.UUID | None = None) -> Job:
         title="Software Engineer",
         company_name="Acme Corp",
         apply_url="https://example.com/apply",
-        description_md="A great job.",
+        description="A great job.",
     )
 
 

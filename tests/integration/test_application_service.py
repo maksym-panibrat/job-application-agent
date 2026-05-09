@@ -38,7 +38,7 @@ async def _seed_db(db_session):
         title="Senior Python Engineer",
         company_name="Beta Corp",
         apply_url="https://jobs.lever.co/beta/abc-123",
-        description_md="We need a Python expert for distributed systems.",
+        description="We need a Python expert for distributed systems.",
     )
     db_session.add(job)
     await db_session.commit()

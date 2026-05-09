@@ -142,12 +142,9 @@ async def score_and_match(
     profile_text = format_profile_text(profile, skills, experiences)
 
     if jobs is None:
-        from app.data.slug_company import slug_to_company_name
-
-        slugs = (profile.target_company_slugs or {}).get("greenhouse", []) or []
-        if not slugs:
+        company_ids = list(profile.target_company_ids or [])
+        if not company_ids:
             return []
-        company_names = [slug_to_company_name(s) for s in slugs]
 
         matched_result = await session.execute(
             select(Application.job_id).where(
@@ -161,8 +158,7 @@ async def score_and_match(
             select(Job)
             .where(
                 Job.is_active.is_(True),
-                Job.source == "greenhouse_board",
-                Job.company_name.in_(company_names),
+                Job.company_id.in_(company_ids),
             )
             .order_by(Job.posted_at.desc().nullslast(), Job.fetched_at.desc())
         )
@@ -200,7 +196,7 @@ async def score_and_match(
                     "company": job.company_name,
                     "location": job.location,
                     "workplace_type": job.workplace_type,
-                    "description": job.description_clean or job.description_md or "",
+                    "description": job.description or job.description_raw or "",
                 }
             )
             job_map[str(app.id)] = job
@@ -295,12 +291,9 @@ async def score_cached(
     settings = get_settings()
     cap = cap if cap is not None else settings.matching_jobs_per_batch
 
-    from app.data.slug_company import slug_to_company_name
-
-    slugs = (profile.target_company_slugs or {}).get("greenhouse", []) or []
-    if not slugs:
+    company_ids = list(profile.target_company_ids or [])
+    if not company_ids:
         return []
-    company_names = [slug_to_company_name(s) for s in slugs]
 
     # Exclude jobs that are either already scored OR currently leased by the
     # cron worker (run_match_queue). Without the lease check, a fresh
@@ -325,8 +318,7 @@ async def score_cached(
         select(Job)
         .where(
             Job.is_active.is_(True),
-            Job.source == "greenhouse_board",
-            Job.company_name.in_(company_names),
+            Job.company_id.in_(company_ids),
         )
         .order_by(Job.posted_at.desc().nullslast(), Job.fetched_at.desc())
     )

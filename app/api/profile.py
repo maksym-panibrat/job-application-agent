@@ -6,10 +6,12 @@ from datetime import UTC
 import structlog
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlmodel import select
 
 from app.api.deps import get_current_profile
 from app.config import Settings, get_settings
 from app.database import get_db
+from app.models.company import Company
 from app.models.user_profile import UserProfile
 from app.services import match_service, profile_service
 from app.services.rate_limit_service import check_daily_quota, check_rate_limit
@@ -25,6 +27,23 @@ async def get_profile(
 ):
     skills = await profile_service.get_skills(profile.id, session)
     experiences = await profile_service.get_work_experiences(profile.id, session)
+    target_companies: list[dict] = []
+    if profile.target_company_ids:
+        rows = (
+            (
+                await session.execute(
+                    select(Company).where(Company.id.in_(profile.target_company_ids))
+                )
+            )
+            .scalars()
+            .all()
+        )
+        by_id = {c.id: c for c in rows}
+        target_companies = [
+            {"id": str(by_id[cid].id), "canonical_name": by_id[cid].canonical_name}
+            for cid in profile.target_company_ids
+            if cid in by_id
+        ]
     return {
         "id": str(profile.id),
         "full_name": profile.full_name,
@@ -41,7 +60,7 @@ async def get_profile(
         "search_keywords": profile.search_keywords,
         "search_active": profile.search_active,
         "search_expires_at": profile.search_expires_at,
-        "target_company_slugs": profile.target_company_slugs,
+        "target_companies": target_companies,
         "first_name": profile.first_name,
         "last_name": profile.last_name,
         "skills": [
@@ -98,7 +117,7 @@ async def update_profile(
         "remote_ok",
         "seniority",
         "search_keywords",
-        "target_company_slugs",
+        "target_company_ids",
         "first_name",
         "last_name",
     }

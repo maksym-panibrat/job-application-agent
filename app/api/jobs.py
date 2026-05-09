@@ -3,7 +3,7 @@
 import structlog
 from fastapi import APIRouter, Depends, status
 from fastapi.responses import JSONResponse
-from sqlalchemy import func
+from sqlalchemy import and_, func, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
@@ -11,6 +11,7 @@ from app.api.deps import get_current_profile
 from app.config import Settings, get_settings
 from app.database import get_db
 from app.models.application import Application
+from app.models.company import Company
 from app.models.slug_fetch import SlugFetch
 from app.models.user_profile import UserProfile
 from app.services import job_sync_service
@@ -48,23 +49,32 @@ async def sync_status(
     profile: UserProfile = Depends(get_current_profile),
     session: AsyncSession = Depends(get_db),
 ):
-    user_slugs: list[str] = (profile.target_company_slugs or {}).get("greenhouse", []) or []
-
-    slugs_pending = 0
-    invalid_slugs: list[str] = []
-    if user_slugs:
-        rows = (
+    # Collect every (source, slug) pair the profile follows by walking the
+    # Company rows pointed at by target_company_ids. SlugFetch is keyed by
+    # (source, slug), so we query against the full pair set rather than the
+    # legacy greenhouse-only flat list.
+    company_ids = list(profile.target_company_ids or [])
+    pairs: list[tuple[str, str]] = []
+    if company_ids:
+        companies = (
             (
                 await session.execute(
-                    select(SlugFetch).where(
-                        SlugFetch.source == "greenhouse_board",
-                        SlugFetch.slug.in_(user_slugs),
-                    )
+                    select(Company.provider_slugs).where(Company.id.in_(company_ids))
                 )
             )
             .scalars()
             .all()
         )
+        for ps in companies:
+            for source, slug in (ps or {}).items():
+                if isinstance(slug, str) and slug:
+                    pairs.append((source, slug))
+
+    slugs_pending = 0
+    invalid_slugs: list[str] = []
+    if pairs:
+        pair_clauses = [and_(SlugFetch.source == p, SlugFetch.slug == s) for p, s in pairs]
+        rows = (await session.execute(select(SlugFetch).where(or_(*pair_clauses)))).scalars().all()
         for r in rows:
             if r.is_invalid:
                 invalid_slugs.append(r.slug)
@@ -93,7 +103,7 @@ async def sync_status(
 
     return {
         "state": state,
-        "slugs_total": len(user_slugs),
+        "slugs_total": len(pairs),
         "slugs_pending": slugs_pending,
         "matches_pending": matches_pending,
         "last_sync_requested_at": profile.last_sync_requested_at.isoformat()

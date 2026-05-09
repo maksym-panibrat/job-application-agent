@@ -14,12 +14,12 @@ from app.models.user_profile import UserProfile
 
 async def _make_job(db_session, external_id: str = None) -> Job:
     job = Job(
-        source="greenhouse_board",
+        source="greenhouse",
         external_id=external_id or str(uuid.uuid4()),
         title="Engineer",
         company_name="Co",
         apply_url="https://example.com/apply",
-        description_md="A role.",
+        description="A role.",
     )
     db_session.add(job)
     await db_session.commit()

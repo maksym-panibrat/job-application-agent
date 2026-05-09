@@ -2,8 +2,8 @@
 
 Lifecycle:
   enqueue_for_interested_profiles → INSERT pending_match rows for every active
-                                    profile whose target_company_slugs.greenhouse
-                                    contains the job's company.
+                                    profile whose target_company_ids array
+                                    contains the job's Company.
   next_batch                      → claim oldest pending_match rows.
   mark_done / mark_attempt_failed → terminal transitions.
 """
@@ -12,33 +12,50 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 import structlog
-from sqlalchemy import text
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
 from app.data.slug_company import company_name_to_slug
 from app.models.application import Application
+from app.models.company import Company
 from app.models.job import Job
+from app.models.user_profile import UserProfile
 
 MAX_ATTEMPTS = 3
 log = structlog.get_logger()
 
 
 async def enqueue_for_interested_profiles(job: Job, session: AsyncSession) -> int:
-    """For every active profile whose slug list contains job's company,
-    INSERT an Application(match_status='pending_match'). Idempotent on
-    (job_id, profile_id) — relies on uq_applications_job_profile."""
-    slug = company_name_to_slug(job.company_name)
-    # Postgres JSONB containment: target_company_slugs->'greenhouse' @> '"<slug>"'::jsonb
-    # CAST(... AS jsonb) avoids SQLAlchemy mis-parsing the `::` shortcut as a bind param
+    """For every active profile whose target_company_ids array contains the
+    job's Company, INSERT an Application(match_status='pending_match'). Idempotent
+    on (job_id, profile_id) — relies on uq_applications_job_profile.
+
+    Two paths:
+      1. job.company_id set (the post-D6 norm — populated by job_service.upsert_job
+         from the (source, slug) pair at write time): direct ARRAY @> match.
+      2. job.company_id is NULL (legacy rows whose canonical_name didn't equal
+         company_name at migration time): fall back to looking up Company by
+         (source, derived_slug) and matching that. This branch is the
+         belt-and-suspenders path — once every active job has been re-fetched
+         once after D6 deploy, every row has company_id set.
+    """
+    company_id = job.company_id
+    if company_id is None:
+        # Legacy fallback: derive slug from company_name and resolve Company.id.
+        slug = company_name_to_slug(job.company_name)
+        resolved = await session.execute(
+            select(Company.id).where(Company.provider_slugs[job.source].astext == slug)
+        )
+        company_id = resolved.scalar_one_or_none()
+        if company_id is None:
+            return 0
+
     result = await session.execute(
-        text(
-            "SELECT id FROM user_profiles "
-            "WHERE search_active = true "
-            "AND target_company_slugs->'greenhouse' @> CAST(:needle AS jsonb)"
-        ),
-        {"needle": f'"{slug}"'},
+        select(UserProfile.id).where(
+            UserProfile.search_active.is_(True),
+            UserProfile.target_company_ids.contains([company_id]),
+        )
     )
     profile_ids = [row[0] for row in result.all()]
     if not profile_ids:

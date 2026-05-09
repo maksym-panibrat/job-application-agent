@@ -27,7 +27,7 @@ async def client(patch_settings, asyncpg_url):
 async def sample_application(db_session, seeded_user) -> Application:
     _, profile = seeded_user
     job = Job(
-        source="greenhouse_board",
+        source="greenhouse",
         external_id="x-1",
         title="Backend Engineer",
         company_name="Acme",

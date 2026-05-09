@@ -2,6 +2,7 @@
 # and alembic autogenerate can discover every table.
 
 from app.models.application import Application, GeneratedDocument  # noqa: F401
+from app.models.company import Company  # noqa: F401
 from app.models.event import Event  # noqa: F401
 from app.models.job import Job  # noqa: F401
 from app.models.llm_status import LLMStatus  # noqa: F401
@@ -19,6 +20,7 @@ __all__ = [
     "Skill",
     "WorkExperience",
     "Job",
+    "Company",
     "Application",
     "GeneratedDocument",
     "LLMStatus",

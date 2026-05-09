@@ -31,12 +31,12 @@ async def sample_application(db_session, seeded_user) -> Application:
     await db_session.commit()
 
     job = Job(
-        source="greenhouse_board",
+        source="greenhouse",
         external_id="cl-1",
         title="Senior Python Engineer",
         company_name="Acme",
         apply_url="https://boards.greenhouse.io/acme/jobs/1",
-        description_md="Backend role on a distributed-systems team.",
+        description="Backend role on a distributed-systems team.",
     )
     db_session.add(job)
     await db_session.commit()
