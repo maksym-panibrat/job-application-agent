@@ -1,0 +1,7 @@
+companies:
+  - canonical_name: TestStripe
+    providers:
+      greenhouse: teststripe
+  - canonical_name: TestLinear
+    providers:
+      ashby: testlinear

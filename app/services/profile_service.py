@@ -259,11 +259,3 @@ async def upsert_work_experience(
         await session.refresh(existing)
         return existing
     return await add_work_experience(profile_id, exp_data, session)
-
-
-def seed_defaults_if_empty(profile) -> bool:
-    """Default-seeding now happens via the onboarding agent (which calls
-    company_resolver.resolve). This function is retained as a no-op for
-    backward-compat with existing callsites; remove once Track E confirms
-    the agent path is the single source of truth."""
-    return False

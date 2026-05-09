@@ -1,5 +1,5 @@
-import { useRef, useState } from 'react'
-import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { useEffect, useId, useMemo, useRef, useState } from 'react'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../api/client'
 import { useToast } from '../ui/Toast'
 import { track } from '../../lib/track'
@@ -13,6 +13,8 @@ export interface FollowedCompaniesSectionProps {
   companies: Company[]
 }
 
+const MAX_DROPDOWN_ROWS = 8
+
 export function FollowedCompaniesSection({ companies }: FollowedCompaniesSectionProps) {
   const qc = useQueryClient()
   const { show } = useToast()
@@ -20,24 +22,60 @@ export function FollowedCompaniesSection({ companies }: FollowedCompaniesSection
   const [error, setError] = useState<string | null>(null)
   const [optimistic, setOptimistic] = useState<Company[]>(companies)
   const [busy, setBusy] = useState(false)
-  const lastCompaniesRef = useRef<Company[]>(companies)
+  const [highlight, setHighlight] = useState<number>(-1)
+  const [open, setOpen] = useState(false)
+  const prevCompaniesRef = useRef(companies)
+  const catalogFailedReportedRef = useRef(false)
 
-  // Sync from parent only when the prop reference actually changes
-  // (e.g. profile refetch after a successful PATCH). Without the ref guard,
-  // any unrelated re-render would clobber a freshly-set optimistic value.
-  if (lastCompaniesRef.current !== companies) {
-    lastCompaniesRef.current = companies
-    setOptimistic(companies)
-  }
+  // Stable ids for combobox WAI-ARIA wiring.
+  const listboxId = useId()
+  const optionId = (i: number) => `${listboxId}-opt-${i}`
+
+  // Sync optimistic with prop changes (parent refetched profile). The !busy
+  // guard prevents a parent refetch from clobbering the freshly-set optimistic
+  // value while a PATCH is still in flight.
+  useEffect(() => {
+    if (prevCompaniesRef.current !== companies && !busy) {
+      setOptimistic(companies)
+      prevCompaniesRef.current = companies
+    }
+  }, [companies, busy])
+
+  const { data: catalog = [], isPending, isError } = useQuery({
+    queryKey: ['companies', 'catalog'],
+    queryFn: api.getCompanyCatalog,
+    staleTime: Infinity,
+  })
+
+  // Catalog fetch failure is silent for the user (typed-name fallback still
+  // works) but we emit telemetry once per mount so the regression is visible.
+  useEffect(() => {
+    if (isError && !catalogFailedReportedRef.current) {
+      catalogFailedReportedRef.current = true
+      track('settings.catalog_failed', {})
+    }
+  }, [isError])
+
+  const followedIds = useMemo(() => new Set(optimistic.map(c => c.id)), [optimistic])
+
+  const matches = useMemo(() => {
+    const q = draft.trim().toLowerCase()
+    if (!q) return [] as Company[]
+    return catalog
+      .filter(c => !followedIds.has(c.id))
+      .filter(c => c.canonical_name.toLowerCase().includes(q))
+      .slice(0, MAX_DROPDOWN_ROWS)
+  }, [draft, catalog, followedIds])
+
+  // Reset highlight whenever the match set changes.
+  useEffect(() => { setHighlight(-1) }, [matches])
 
   const patch = useMutation({
     mutationFn: (ids: string[]) => api.updateProfile({ target_company_ids: ids }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['profile'] }),
   })
 
-  async function add() {
-    const name = draft.trim()
-    if (!name) return
+  async function commit(name: string) {
     setError(null)
     setBusy(true)
     let resolved: { id: string; canonical_name: string } | null = null
@@ -51,6 +89,7 @@ export function FollowedCompaniesSection({ companies }: FollowedCompaniesSection
     const next = [...optimistic, { id: resolved.id, canonical_name: resolved.canonical_name }]
     setOptimistic(next)
     setDraft('')
+    setOpen(false)
     track('settings.company_added', { company_id: resolved.id, canonical_name: resolved.canonical_name })
     try {
       await patch.mutateAsync(next.map(c => c.id))
@@ -59,6 +98,35 @@ export function FollowedCompaniesSection({ companies }: FollowedCompaniesSection
       show((e as Error)?.message ?? 'Could not save', 'error')
     } finally {
       setBusy(false)
+    }
+  }
+
+  function onKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (e.key === 'Escape') {
+      e.preventDefault()
+      setOpen(false)
+      return
+    }
+    if (e.key === 'ArrowDown') {
+      e.preventDefault()
+      if (matches.length === 0) return
+      setHighlight(h => Math.min(h + 1, matches.length - 1))
+      return
+    }
+    if (e.key === 'ArrowUp') {
+      e.preventDefault()
+      if (matches.length === 0) return
+      setHighlight(h => Math.max(h - 1, 0))
+      return
+    }
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      if (matches.length > 0 && highlight >= 0 && highlight < matches.length) {
+        void commit(matches[highlight].canonical_name)
+      } else {
+        const trimmed = draft.trim()
+        if (trimmed) void commit(trimmed)
+      }
     }
   }
 
@@ -99,16 +167,48 @@ export function FollowedCompaniesSection({ companies }: FollowedCompaniesSection
             <p className="text-xs text-subtle">No companies followed yet.</p>
           )}
         </div>
-        <div>
+        <div className="relative">
           <input
             type="text"
+            role="combobox"
+            aria-expanded={open}
+            aria-controls={open ? listboxId : undefined}
+            aria-autocomplete="list"
+            aria-activedescendant={open && highlight >= 0 ? optionId(highlight) : undefined}
             value={draft}
-            onChange={e => setDraft(e.target.value)}
-            onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); void add() } }}
+            onChange={e => { setDraft(e.target.value); setOpen(e.target.value.trim().length > 0) }}
+            onFocus={() => setOpen(draft.trim().length > 0)}
+            onBlur={() => setOpen(false)}
+            onKeyDown={onKeyDown}
             placeholder="Add a company you want to follow"
             disabled={busy}
             className="w-full bg-bg text-text border border-border rounded-md-token px-2 py-1.5 text-sm min-h-[36px] focus:outline-2 focus:outline-accent/40 focus:border-accent"
           />
+          {open && (
+            <div
+              id={listboxId}
+              role="listbox"
+              className="absolute left-0 right-0 mt-1 bg-surface border border-border rounded-md-token shadow-lg z-10"
+            >
+              {isPending ? null : matches.length === 0 ? (
+                <p className="px-2 py-1.5 text-xs text-subtle">No matches — press Enter to search the boards</p>
+              ) : (
+                matches.map((c, i) => (
+                  <div
+                    key={c.id}
+                    id={optionId(i)}
+                    role="option"
+                    aria-selected={highlight === i}
+                    onMouseDown={(e) => { e.preventDefault(); void commit(c.canonical_name) }}
+                    onMouseEnter={() => setHighlight(i)}
+                    className={`px-2 py-1.5 text-sm cursor-pointer ${highlight === i ? 'bg-surface-2' : ''}`}
+                  >
+                    {c.canonical_name}
+                  </div>
+                ))
+              )}
+            </div>
+          )}
           {error && (
             <p role="alert" className="text-xs text-danger mt-1">{error}</p>
           )}

@@ -117,6 +117,13 @@ async def lifespan(app: FastAPI):
         app.state.checkpointer = AsyncPostgresSaver(pool)
         await log.ainfo("checkpointer.ready")
 
+        from app.database import get_session_factory
+        from app.services.company_catalog import seed_catalog
+
+        async with get_session_factory()() as session:
+            count = await seed_catalog(session)
+            await log.ainfo("catalog.ready", count=count)
+
         yield
 
     await log.ainfo("app.shutdown")

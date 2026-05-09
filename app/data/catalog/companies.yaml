@@ -1,0 +1,84 @@
+# Layer 2 catalog — companies surfaced in the Settings typeahead.
+#
+# Validate any new (provider, slug) pair against the real board before merging:
+#   curl -sI https://boards-api.greenhouse.io/v1/boards/{slug}
+#   curl -sI https://api.lever.co/v0/postings/{slug}
+#   curl -sI https://api.ashbyhq.com/posting-api/job-board/{slug}
+# The nightly validate-catalog cron alarms on dead entries but a curator who
+# checks first avoids ever shipping breakage.
+#
+# canonical_name MUST be unique across the file. normalized_key (lowercase +
+# whitespace collapsed to hyphens) MUST also be unique — the parser rejects
+# both kinds of duplicate at startup.
+companies:
+  # — Layer 1 starter set (Greenhouse-only) —
+  - canonical_name: Airbnb
+    providers:
+      greenhouse: airbnb
+  - canonical_name: Stripe
+    providers:
+      greenhouse: stripe
+  - canonical_name: Dropbox
+    providers:
+      greenhouse: dropbox
+  - canonical_name: Vercel
+    providers:
+      greenhouse: vercel
+  - canonical_name: Instacart
+    providers:
+      greenhouse: instacart
+  - canonical_name: Gusto
+    providers:
+      greenhouse: gusto
+  - canonical_name: Robinhood
+    providers:
+      greenhouse: robinhood
+  - canonical_name: DoorDash
+    providers:
+      greenhouse: doordashusa
+  - canonical_name: Scale AI
+    providers:
+      greenhouse: scaleai
+  - canonical_name: Ramp
+    providers:
+      greenhouse: rampnetwork
+  - canonical_name: Anthropic
+    providers:
+      greenhouse: anthropic
+  - canonical_name: Samsara
+    providers:
+      greenhouse: samsara
+  - canonical_name: Datadog
+    providers:
+      greenhouse: datadog
+  - canonical_name: Cloudflare
+    providers:
+      greenhouse: cloudflare
+  - canonical_name: Asana
+    providers:
+      greenhouse: asana
+  # — Multi-provider / Lever / Ashby examples (curator additions) —
+  - canonical_name: Linear
+    providers:
+      ashby: linear
+  - canonical_name: Notion
+    providers:
+      ashby: notion
+  - canonical_name: Figma
+    providers:
+      greenhouse: figma
+  - canonical_name: OpenAI
+    providers:
+      ashby: openai
+  - canonical_name: Brex
+    providers:
+      greenhouse: brex
+  - canonical_name: Mercury
+    providers:
+      ashby: mercury
+  - canonical_name: Posthog
+    providers:
+      ashby: posthog
+  - canonical_name: Modal
+    providers:
+      ashby: modal

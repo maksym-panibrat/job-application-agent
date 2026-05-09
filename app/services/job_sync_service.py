@@ -3,10 +3,9 @@
 Two contracts here, by design (#80):
 
   prune_and_enqueue(profile, session)
-    Bulk-cron-safe and HTTP-warm-up: seed defaults if the profile is empty,
-    drop slugs marked is_invalid, enqueue stale slugs for background fetch,
-    update profile.last_sync_*. Fast (no LLM). Returns
-    {queued_slugs, matched_now=0, seeded_defaults, pruned_slugs}.
+    Bulk-cron-safe and HTTP-warm-up: drop slugs marked is_invalid, enqueue
+    stale slugs for background fetch, update profile.last_sync_*. Fast (no
+    LLM). Returns {queued_slugs, matched_now=0, seeded_defaults, pruned_slugs}.
 
   sync_profile(profile, session)
     User-triggered HTTP path (POST /api/jobs/sync). Calls prune_and_enqueue
@@ -31,7 +30,6 @@ from app.models.company import Company
 from app.models.slug_fetch import SlugFetch
 from app.models.user_profile import UserProfile
 from app.services import match_service, slug_registry_service
-from app.services.profile_service import seed_defaults_if_empty
 
 log = structlog.get_logger()
 
@@ -84,24 +82,19 @@ async def _prune_invalid_provider_slugs(profile: UserProfile, session: AsyncSess
 
 
 async def prune_and_enqueue(profile: UserProfile, session: AsyncSession) -> dict:
-    """Cron-safe profile sync: seed defaults + prune invalid slugs + enqueue
-    stale slugs + update last_sync_*. No LLM, no synchronous scoring.
+    """Cron-safe profile sync: prune invalid slugs + enqueue stale slugs +
+    update last_sync_*. No LLM, no synchronous scoring.
 
     Returns the same summary shape as `sync_profile` but with `matched_now=0`,
     so callers can treat the two functions interchangeably for telemetry.
     """
-    seeded = seed_defaults_if_empty(profile)
-    if seeded:
-        session.add(profile)
-        await session.commit()
-
     pruned = await _prune_invalid_provider_slugs(profile, session)
 
     queued = await slug_registry_service.enqueue_stale(profile, session, ttl_hours=6)
     summary = {
         "queued_slugs": queued,
         "matched_now": 0,
-        "seeded_defaults": seeded,
+        "seeded_defaults": False,
         "pruned_slugs": pruned,
     }
     profile.last_sync_requested_at = datetime.now(UTC)
