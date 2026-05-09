@@ -19,8 +19,36 @@ async def test_lifespan_runs_seed_catalog(db_session):
     # lifespan we want to exercise.
     from app.main import app
 
-    async with LifespanManager(app):
-        rows = (await db_session.execute(select(Company).where(Company.is_curated))).scalars().all()
+    # `app` is a process-global FastAPI instance shared with every other test.
+    # Lifespan exit closes the AsyncConnectionPool the checkpointer wraps but
+    # leaves the AsyncPostgresSaver attached to app.state — so anything later
+    # in the same pytest process that reads app.state.checkpointer (e2e
+    # tests/e2e/test_chat_flow.py go down the chat code path that uses it)
+    # would hit a closed pool and emit "Stream error". Snapshot before, restore
+    # after. Cleanup is unconditional — if the test body raises, the next test
+    # still gets a clean app.state.
+    # `app` is a process-global FastAPI instance shared with every other test.
+    # Lifespan exit closes the AsyncConnectionPool the checkpointer wraps but
+    # leaves the AsyncPostgresSaver attached to app.state — so anything later
+    # in the same pytest process that reads app.state.checkpointer (e2e
+    # tests/e2e/test_chat_flow.py go down the chat code path that uses it)
+    # would hit a closed pool and emit "Stream error". Snapshot before, restore
+    # after. Cleanup is unconditional — if the test body raises, the next test
+    # still gets a clean app.state.
+    prior = getattr(app.state, "checkpointer", None)
+    try:
+        async with LifespanManager(app):
+            rows = (
+                (await db_session.execute(select(Company).where(Company.is_curated)))
+                .scalars()
+                .all()
+            )
+    finally:
+        if prior is None:
+            if hasattr(app.state, "checkpointer"):
+                delattr(app.state, "checkpointer")
+        else:
+            app.state.checkpointer = prior
 
     assert len(rows) >= 1, "lifespan completed but no curated rows landed"
     assert any(r.canonical_name == "Stripe" for r in rows), (
