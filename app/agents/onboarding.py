@@ -82,7 +82,15 @@ companies will produce zero job matches forever — finish the company ask
 before wrapping up.
 
 Once the profile is search-ready, summarize what you've captured and tell the
-user they can update preferences anytime by chatting here."""
+user they can update preferences anytime by chatting here.
+
+When the user asks about company suggestions, what companies you can
+recommend, or asks you to find companies that match their profile: call
+`list_curated_companies` first to see what's available. Then propose 3 to 8
+picks based on the user's `target_roles`, `seniority`, `search_keywords`, and
+`work_experiences`. Briefly explain each pick (one sentence is enough). Save
+the user's selections via `save_profile_updates({"target_companies": [...]})`.
+Prefer curated names; off-list names work but are slower and unverified."""
 
 PROFILE_SCALAR_FIELDS = frozenset(
     {
