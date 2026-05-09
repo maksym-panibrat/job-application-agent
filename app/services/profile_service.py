@@ -35,6 +35,11 @@ async def get_or_create_profile(user_id: uuid.UUID, session: AsyncSession) -> Us
 
 async def update_profile(profile_id: uuid.UUID, data: dict, session: AsyncSession) -> UserProfile:
     profile = await session.get(UserProfile, profile_id)
+    if "target_company_ids" in data:
+        raw = data["target_company_ids"]
+        if not isinstance(raw, list):
+            raise ValueError("target_company_ids must be a list")
+        data["target_company_ids"] = [uuid.UUID(x) if isinstance(x, str) else x for x in raw]
     for key, value in data.items():
         if hasattr(profile, key) and value is not None:
             setattr(profile, key, value)
@@ -257,15 +262,8 @@ async def upsert_work_experience(
 
 
 def seed_defaults_if_empty(profile) -> bool:
-    """If profile has no greenhouse slugs, seed the first 5 from the curated catalog.
-    Returns True if seeded, False if no-op. Mutates profile in place; caller commits."""
-    from app.data.default_slugs import DEFAULT_SLUGS
-
-    existing = (profile.target_company_slugs or {}).get("greenhouse", [])
-    if existing:
-        return False
-    profile.target_company_slugs = {
-        **(profile.target_company_slugs or {}),
-        "greenhouse": DEFAULT_SLUGS[:5],
-    }
-    return True
+    """Default-seeding now happens via the onboarding agent (which calls
+    company_resolver.resolve). This function is retained as a no-op for
+    backward-compat with existing callsites; remove once Track E confirms
+    the agent path is the single source of truth."""
+    return False

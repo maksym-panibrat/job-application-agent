@@ -106,10 +106,12 @@ async def test_sync_profile_returns_202_shape_and_enqueues_stale_slugs(db_sessio
 
 
 @pytest.mark.asyncio
-async def test_sync_profile_prunes_invalid_slugs_from_profile(db_session):
-    """sync_profile removes slugs from profile.target_company_slugs.greenhouse
-    when their SlugFetch row is marked is_invalid=True. The banner that says
-    "we removed [slugs]" was lying — this test pins the new behaviour."""
+async def test_sync_profile_prunes_invalid_provider_slugs_from_company(db_session):
+    """sync_profile drops (provider, slug) entries from Company.provider_slugs
+    when their SlugFetch row is marked is_invalid=True. The pruned-slugs summary
+    is now a list of "provider:slug" strings (was bare slug strings under the
+    legacy target_company_slugs path)."""
+    from app.models.company import Company
     from app.models.slug_fetch import SlugFetch
     from app.models.user import User
     from app.services.profile_service import get_or_create_profile
@@ -118,7 +120,21 @@ async def test_sync_profile_prunes_invalid_slugs_from_profile(db_session):
     db_session.add(user)
     await db_session.commit()
     profile = await get_or_create_profile(user.id, db_session)
-    profile.target_company_slugs = {"greenhouse": ["airbnb", "deadcorp", "stripe"]}
+
+    company_ids: list[uuid.UUID] = []
+    for slug in ("airbnb", "deadcorp", "stripe"):
+        company = Company(
+            canonical_name=slug.title(),
+            normalized_key=f"{slug}-{uuid.uuid4()}",
+            provider_slugs={"greenhouse": slug},
+            resolved_at=datetime.now(UTC),
+        )
+        db_session.add(company)
+        await db_session.commit()
+        await db_session.refresh(company)
+        company_ids.append(company.id)
+    deadcorp_id = company_ids[1]
+    profile.target_company_ids = company_ids
     db_session.add(profile)
     db_session.add(SlugFetch(source="greenhouse", slug="deadcorp", is_invalid=True))
     await db_session.commit()
@@ -126,22 +142,20 @@ async def test_sync_profile_prunes_invalid_slugs_from_profile(db_session):
 
     result = await job_sync_service.sync_profile(profile, db_session)
 
-    assert result["pruned_slugs"] == ["deadcorp"]
+    assert result["pruned_slugs"] == ["greenhouse:deadcorp"]
     assert "deadcorp" not in result["queued_slugs"]
-    await db_session.refresh(profile)
-    assert profile.target_company_slugs["greenhouse"] == ["airbnb", "stripe"]
+    deadcorp = await db_session.get(Company, deadcorp_id)
+    await db_session.refresh(deadcorp)
+    assert deadcorp.provider_slugs == {}
+    assert deadcorp.unfollowable is True
 
 
 @pytest.mark.asyncio
-async def test_sync_profile_seeds_defaults_when_empty(db_session):
-    """seed_defaults_if_empty still operates on the legacy target_company_slugs
-    field (its rewrite is a later task in this plan). Until then, the
-    queue-relevant invariant tested here is that the new enqueue_stale path
-    fires when target_company_ids is populated. This test pre-seeds Company
-    rows + target_company_ids so the seeding side-effect on target_company_slugs
-    AND the queueing side-effect via target_company_ids both observable.
-    """
-    from app.data.default_slugs import DEFAULT_SLUGS
+async def test_sync_profile_no_longer_seeds_defaults(db_session):
+    """seed_defaults_if_empty is now a no-op (default-seeding moved to the
+    onboarding agent + company_resolver path). sync_profile must always report
+    seeded_defaults=False, and must not write anything to the deprecated
+    target_company_slugs JSONB column."""
     from app.models.company import Company
     from app.models.user import User
     from app.services.profile_service import get_or_create_profile
@@ -150,11 +164,11 @@ async def test_sync_profile_seeds_defaults_when_empty(db_session):
     db_session.add(user)
     await db_session.commit()
     profile = await get_or_create_profile(user.id, db_session)
-    # explicitly empty target_company_slugs to trigger seed_defaults_if_empty,
-    # but pre-populate target_company_ids with Companies wrapping the same
-    # default slugs so the new enqueue_stale path queues them.
+    # Pre-seed two Company rows + target_company_ids so enqueue_stale has
+    # something to do, while leaving target_company_slugs empty to prove the
+    # legacy seeding path is gone.
     company_ids: list[uuid.UUID] = []
-    for slug in DEFAULT_SLUGS[:5]:
+    for slug in ("airbnb", "stripe"):
         company = Company(
             canonical_name=slug.title(),
             normalized_key=f"{slug}-{uuid.uuid4()}",
@@ -172,10 +186,11 @@ async def test_sync_profile_seeds_defaults_when_empty(db_session):
     await db_session.refresh(profile)
 
     result = await job_sync_service.sync_profile(profile, db_session)
-    assert result["seeded_defaults"] is True
-    assert len(result["queued_slugs"]) == 5
+    assert result["seeded_defaults"] is False
+    assert sorted(result["queued_slugs"]) == ["airbnb", "stripe"]
     await db_session.refresh(profile)
-    assert len(profile.target_company_slugs["greenhouse"]) == 5
+    # legacy column untouched
+    assert profile.target_company_slugs == {}
 
 
 @pytest.mark.asyncio

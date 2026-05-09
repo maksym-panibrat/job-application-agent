@@ -22,8 +22,10 @@ from app.sources.greenhouse_board import GREENHOUSE_BOARDS_BASE
 async def _seed_profile(db_session, *slugs: str) -> UserProfile:
     """Seed a User + UserProfile (FK constraint requires the user row first).
 
-    Sets BOTH target_company_slugs (legacy — still read by seed_defaults_if_empty
-    and _prune_invalid_slugs) and target_company_ids (new — read by enqueue_stale).
+    Sets BOTH target_company_slugs (still read by match_queue_service —
+    enqueue_for_interested_profiles, migrated in a later track) and
+    target_company_ids (read by enqueue_stale + _prune_invalid_provider_slugs
+    after D4).
     """
     user = User(id=uuid.uuid4(), email=f"sync-{uuid.uuid4()}@test.com")
     db_session.add(user)
@@ -154,9 +156,10 @@ async def test_run_job_sync_does_not_synchronously_score_cached_jobs(db_session)
 
 @pytest.mark.asyncio
 async def test_run_job_sync_prunes_invalid_slugs_for_active_profiles(db_session):
-    """The 6h /internal/cron/sync now also prunes is_invalid=True slugs from
-    each active profile (closes the gap where prune only ran on user-initiated
-    sync, never on the cron sweep)."""
+    """The 6h /internal/cron/sync now also prunes is_invalid=True (provider, slug)
+    pairs from the Company rows the profile follows (closes the gap where prune
+    only ran on user-initiated sync, never on the cron sweep). Companies whose
+    provider_slugs become empty are flagged unfollowable=True."""
     from app.models.slug_fetch import SlugFetch
     from app.scheduler.tasks import run_job_sync
 
@@ -169,7 +172,15 @@ async def test_run_job_sync_prunes_invalid_slugs_for_active_profiles(db_session)
     assert summary["slugs_pruned"] == 1
     db_session.expire_all()
     await db_session.refresh(profile)
-    assert profile.target_company_slugs["greenhouse"] == ["airbnb", "stripe"]
+    # The deadcorp Company row should have empty provider_slugs and be unfollowable.
+    stmt = sa.select(Company).where(Company.id.in_(profile.target_company_ids))
+    rows = (await db_session.execute(stmt)).scalars().all()
+    by_slug = {r.canonical_name.lower(): r for r in rows}
+    assert by_slug["deadcorp"].provider_slugs == {}
+    assert by_slug["deadcorp"].unfollowable is True
+    assert by_slug["airbnb"].provider_slugs == {"greenhouse": "airbnb"}
+    assert by_slug["airbnb"].unfollowable is False
+    assert by_slug["stripe"].provider_slugs == {"greenhouse": "stripe"}
 
 
 @pytest.mark.asyncio

@@ -22,10 +22,12 @@ The actual matching happens in app.scheduler.tasks.run_match_queue.
 from datetime import UTC, datetime
 
 import structlog
+from sqlalchemy import and_, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
 from app.config import get_settings
+from app.models.company import Company
 from app.models.slug_fetch import SlugFetch
 from app.models.user_profile import UserProfile
 from app.services import match_service, slug_registry_service
@@ -34,35 +36,51 @@ from app.services.profile_service import seed_defaults_if_empty
 log = structlog.get_logger()
 
 
-async def _prune_invalid_slugs(profile: UserProfile, session: AsyncSession) -> list[str]:
-    """Drop greenhouse slugs marked is_invalid=True from the profile. Returns
-    the list of removed slugs (sorted, possibly empty). Caller commits."""
-    user_slugs = (profile.target_company_slugs or {}).get("greenhouse") or []
-    if not user_slugs:
+async def _prune_invalid_provider_slugs(profile: UserProfile, session: AsyncSession) -> list[str]:
+    """For each Company the profile follows, drop any (provider, slug) entry
+    whose SlugFetch is marked is_invalid. If a Company ends up with zero
+    providers, flag it unfollowable. Returns 'provider:slug' strings pruned."""
+    company_ids = list(profile.target_company_ids or [])
+    if not company_ids:
         return []
-    rows = (
-        (
-            await session.execute(
-                select(SlugFetch).where(
-                    SlugFetch.source == "greenhouse",
-                    SlugFetch.slug.in_(user_slugs),
-                    SlugFetch.is_invalid.is_(True),
+    companies = (
+        (await session.execute(select(Company).where(Company.id.in_(company_ids)))).scalars().all()
+    )
+    if not companies:
+        return []
+
+    pruned: list[str] = []
+    for company in companies:
+        slugs = company.provider_slugs or {}
+        if not slugs:
+            continue
+        pair_clauses = [and_(SlugFetch.source == p, SlugFetch.slug == s) for p, s in slugs.items()]
+        invalid_pairs = (
+            (
+                await session.execute(
+                    select(SlugFetch).where(
+                        SlugFetch.is_invalid.is_(True),
+                        or_(*pair_clauses),
+                    )
                 )
             )
+            .scalars()
+            .all()
         )
-        .scalars()
-        .all()
-    )
-    invalid = {r.slug for r in rows}
-    if not invalid:
-        return []
-    cleaned = [s for s in user_slugs if s not in invalid]
-    profile.target_company_slugs = {
-        **(profile.target_company_slugs or {}),
-        "greenhouse": cleaned,
-    }
-    session.add(profile)
-    return sorted(invalid)
+        invalid_keys = {(r.source, r.slug) for r in invalid_pairs}
+        if not invalid_keys:
+            continue
+        cleaned = {p: s for p, s in slugs.items() if (p, s) not in invalid_keys}
+        for p, s in invalid_keys:
+            pruned.append(f"{p}:{s}")
+        company.provider_slugs = cleaned
+        if not cleaned:
+            company.unfollowable = True
+            await log.awarning("company.unfollowable", company_id=str(company.id))
+        session.add(company)
+    if pruned:
+        await session.commit()
+    return sorted(pruned)
 
 
 async def prune_and_enqueue(profile: UserProfile, session: AsyncSession) -> dict:
@@ -77,9 +95,7 @@ async def prune_and_enqueue(profile: UserProfile, session: AsyncSession) -> dict
         session.add(profile)
         await session.commit()
 
-    pruned = await _prune_invalid_slugs(profile, session)
-    if pruned:
-        await session.commit()
+    pruned = await _prune_invalid_provider_slugs(profile, session)
 
     queued = await slug_registry_service.enqueue_stale(profile, session, ttl_hours=6)
     summary = {
