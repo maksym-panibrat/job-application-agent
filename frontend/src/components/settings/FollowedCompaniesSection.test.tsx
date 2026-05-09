@@ -10,6 +10,11 @@ vi.mock('../../api/client', () => ({
   api: {
     resolveCompany: vi.fn(),
     updateProfile: vi.fn(),
+    getCompanyCatalog: vi.fn().mockResolvedValue([
+      { id: 'cat-1', canonical_name: 'Anthropic' },
+      { id: 'cat-2', canonical_name: 'Linear' },
+      { id: 'cat-3', canonical_name: 'Stripe' },
+    ]),
   },
 }))
 
@@ -120,5 +125,98 @@ describe('FollowedCompaniesSection', () => {
     await waitFor(() =>
       expect(api.updateProfile).toHaveBeenCalledWith({ target_company_ids: ['b'] })
     )
+  })
+
+  it('opens the typeahead dropdown when the user types', async () => {
+    render(withCtx(<FollowedCompaniesSection companies={[]} />))
+    const input = screen.getByPlaceholderText(/Add a company/i)
+
+    await userEvent.type(input, 'lin')
+
+    expect(await screen.findByText('Linear')).toBeInTheDocument()
+    // Anthropic and Stripe don't match "lin" — should NOT appear in dropdown.
+    expect(screen.queryByText('Anthropic')).not.toBeInTheDocument()
+    expect(screen.queryByText('Stripe')).not.toBeInTheDocument()
+  })
+
+  it('selecting a dropdown row via Enter resolves and adds the chip', async () => {
+    ;(api.resolveCompany as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({
+      id: 'cat-3',
+      canonical_name: 'Stripe',
+      providers: ['greenhouse'],
+    })
+    ;(api.updateProfile as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({ id: 'p', updated: true })
+
+    render(withCtx(<FollowedCompaniesSection companies={[]} />))
+    const input = screen.getByPlaceholderText(/Add a company/i)
+    await userEvent.type(input, 'str')
+
+    // First (and only) match should be highlighted on first ↓; Enter selects.
+    await screen.findByText('Stripe')
+    await userEvent.keyboard('{ArrowDown}')
+    await userEvent.keyboard('{Enter}')
+
+    await waitFor(() => expect(screen.getAllByText('Stripe')).toHaveLength(1))
+    expect(api.resolveCompany).toHaveBeenCalledWith('Stripe')
+  })
+
+  it('clicking a dropdown row resolves and adds the chip', async () => {
+    ;(api.resolveCompany as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({
+      id: 'cat-2',
+      canonical_name: 'Linear',
+      providers: ['ashby'],
+    })
+    ;(api.updateProfile as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({ id: 'p', updated: true })
+
+    render(withCtx(<FollowedCompaniesSection companies={[]} />))
+    const input = screen.getByPlaceholderText(/Add a company/i)
+    await userEvent.type(input, 'lin')
+
+    const row = await screen.findByRole('option', { name: 'Linear' })
+    await userEvent.click(row)
+
+    expect(api.resolveCompany).toHaveBeenCalledWith('Linear')
+  })
+
+  it('Enter with no matches falls through to the existing resolve flow', async () => {
+    ;(api.resolveCompany as unknown as ReturnType<typeof vi.fn>).mockRejectedValue(
+      new Error("Couldn't find that company on any of our supported boards.")
+    )
+
+    render(withCtx(<FollowedCompaniesSection companies={[]} />))
+    const input = screen.getByPlaceholderText(/Add a company/i)
+    await userEvent.type(input, 'totally-fake-co{Enter}')
+
+    // The dropdown shows the no-match copy.
+    expect(await screen.findByText(/No matches/i)).toBeInTheDocument()
+    // resolveCompany was called with the literal draft (not a catalog name).
+    expect(api.resolveCompany).toHaveBeenCalledWith('totally-fake-co')
+  })
+
+  it('already-followed companies are filtered out of the dropdown', async () => {
+    render(withCtx(
+      <FollowedCompaniesSection companies={[
+        { id: 'cat-1', canonical_name: 'Anthropic' },
+      ]} />
+    ))
+    const input = screen.getByPlaceholderText(/Add a company/i)
+    await userEvent.type(input, 'a')
+
+    // 'Linear' matches 'a'; 'Anthropic' does too but is filtered out.
+    expect(await screen.findByText('Linear')).toBeInTheDocument()
+    expect(screen.queryByRole('option', { name: 'Anthropic' })).not.toBeInTheDocument()
+  })
+
+  it('Esc closes the dropdown without selecting', async () => {
+    render(withCtx(<FollowedCompaniesSection companies={[]} />))
+    const input = screen.getByPlaceholderText(/Add a company/i)
+    await userEvent.type(input, 'lin')
+
+    await screen.findByText('Linear')
+    await userEvent.keyboard('{Escape}')
+
+    await waitFor(() => expect(screen.queryByRole('option', { name: 'Linear' })).not.toBeInTheDocument())
+    // Draft text stays in the input.
+    expect(input).toHaveValue('lin')
   })
 })
