@@ -152,10 +152,9 @@ async def test_sync_profile_prunes_invalid_provider_slugs_from_company(db_sessio
 
 @pytest.mark.asyncio
 async def test_sync_profile_no_longer_seeds_defaults(db_session):
-    """seed_defaults_if_empty is now a no-op (default-seeding moved to the
-    onboarding agent + company_resolver path). sync_profile must always report
-    seeded_defaults=False, and must not write anything to the deprecated
-    target_company_slugs JSONB column."""
+    """seed_defaults_if_empty is gone (default-seeding moved to the onboarding
+    agent + company_resolver path). sync_profile must not write anything to
+    the deprecated target_company_slugs JSONB column."""
     from app.models.company import Company
     from app.models.user import User
     from app.services.profile_service import get_or_create_profile
@@ -186,7 +185,6 @@ async def test_sync_profile_no_longer_seeds_defaults(db_session):
     await db_session.refresh(profile)
 
     result = await job_sync_service.sync_profile(profile, db_session)
-    assert result["seeded_defaults"] is False
     assert sorted(result["queued_slugs"]) == ["airbnb", "stripe"]
     await db_session.refresh(profile)
     # legacy column untouched

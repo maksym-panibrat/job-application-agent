@@ -70,7 +70,7 @@ describe('Chat', () => {
       if (url === '/api/jobs/sync' && init?.method === 'POST') {
         syncCalled = true
         return Promise.resolve(new Response(JSON.stringify({
-          status: 'queued', queued_slugs: [], matched_now: 0, seeded_defaults: false,
+          status: 'queued', queued_slugs: [], matched_now: 0,
         }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
       }
       return originalFetch(url)

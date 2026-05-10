@@ -194,7 +194,6 @@ export const api = {
       status: string
       queued_slugs: string[]
       matched_now: number
-      seeded_defaults: boolean
     }>('/api/jobs/sync', { method: 'POST' }),
 
   // Sync status (Task 19)
