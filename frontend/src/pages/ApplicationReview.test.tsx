@@ -66,42 +66,50 @@ describe('Match detail (ApplicationReview)', () => {
     expect(screen.getByRole('button', { name: /save edits/i })).toBeInTheDocument()
   })
 
-  it('renders description (markdownified) instead of raw description_raw HTML (regression: re #69)', async () => {
-    // Greenhouse delivers HTML in description_raw; the API also exposes
-    // description which is the markdownified version. The match
-    // detail page MUST prefer description so users don't see raw
-    // <p>/<h2>/<strong> tags as visible text. Plan B's rewrite reverted
-    // PR #89's fix; this test guards against that recurring.
+  it('renders only app.job.description and ignores description_raw entirely', async () => {
+    // description_raw is the unprocessed source payload, kept server-side
+    // for re-cleaning if the cleaner changes. The match detail page must
+    // never render it, including via a fallback — the prod bug logged
+    // 2026-05-10 was a buggy cleaner storing decoded HTML in description,
+    // not a fallback firing. Re-cleaning fixes the data; this test locks
+    // in that the page renders only `description`.
     renderAt('/matches/a1', detail({
       job: {
         id: 'j', title: 'Senior Backend Engineer', company_name: 'Acme',
         location: null, workplace_type: null, salary: null,
         contract_type: null,
-        description_raw: '<p>Raw HTML — engineers wanted.</p>',
-        description: 'Clean markdown — engineers wanted.',
+        description_raw: '<p>Raw HTML must not surface here.</p>',
+        description: 'Clean markdown body.',
         apply_url: 'https://x.com/', posted_at: null,
       },
     }))
     await waitFor(() =>
-      expect(screen.getByText(/clean markdown/i)).toBeInTheDocument()
+      expect(screen.getByText(/clean markdown body/i)).toBeInTheDocument()
     )
+    expect(screen.queryByText(/raw html must not surface/i)).not.toBeInTheDocument()
     expect(screen.queryByText(/<p>/i)).not.toBeInTheDocument()
   })
 
-  it('falls back to description_raw when description is null (legacy rows)', async () => {
+  it('hides the description section entirely when description is null', async () => {
+    // No fallback to description_raw — description_raw is by name and
+    // intent the source payload, not for display. JobDescription returns
+    // null when content is empty, so the whole "Job description" heading
+    // is gone.
     renderAt('/matches/a1', detail({
       job: {
         id: 'j', title: 'Senior Backend Engineer', company_name: 'Acme',
         location: null, workplace_type: null, salary: null,
         contract_type: null,
-        description_raw: 'Legacy row text.',
+        description_raw: '<p>Should not appear</p>',
         description: null,
         apply_url: 'https://x.com/', posted_at: null,
       },
     }))
     await waitFor(() =>
-      expect(screen.getByText(/legacy row text/i)).toBeInTheDocument()
+      expect(screen.getByRole('heading', { name: /senior backend engineer/i })).toBeInTheDocument()
     )
+    expect(screen.queryByText(/job description/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/should not appear/i)).not.toBeInTheDocument()
   })
 
   it('renders the desktop HeaderApplyButton when status is pending_review', async () => {
