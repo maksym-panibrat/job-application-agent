@@ -22,26 +22,26 @@ describe('HeaderApplyButton', () => {
     openSpy = vi.spyOn(window, 'open').mockImplementation(() => null)
   })
 
-  it('renders nothing when status is dismissed', () => {
-    const { container } = render(withCtx(
-      <HeaderApplyButton appId="a1" status="dismissed" applyUrl="https://x.com/" />
-    ))
-    expect(container).toBeEmptyDOMElement()
-  })
-
-  it('renders "Open posting ↗" when status is pending_review', () => {
+  it('renders "Apply ↗" when status is pending_review', () => {
     render(withCtx(
       <HeaderApplyButton appId="a1" status="pending_review" applyUrl="https://x.com/" />
     ))
-    expect(screen.getByRole('link', { name: /open posting/i })).toBeInTheDocument()
-    expect(screen.queryByRole('link', { name: /open posting again/i })).not.toBeInTheDocument()
+    expect(screen.getByRole('link', { name: /apply/i })).toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: /open again/i })).not.toBeInTheDocument()
   })
 
-  it('renders "Open posting again ↗" when status is applied', () => {
+  it('renders "Open again ↗" when status is applied', () => {
     render(withCtx(
       <HeaderApplyButton appId="a1" status="applied" applyUrl="https://x.com/" />
     ))
-    expect(screen.getByRole('link', { name: /open posting again/i })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: /open again/i })).toBeInTheDocument()
+  })
+
+  it('still renders "Apply ↗" when status is dismissed (desktop needs a path to reapply)', () => {
+    render(withCtx(
+      <HeaderApplyButton appId="a1" status="dismissed" applyUrl="https://x.com/" />
+    ))
+    expect(screen.getByRole('link', { name: /apply/i })).toBeInTheDocument()
   })
 
   it('clicking the button opens the URL and POSTs mark-applied when pending_review', async () => {
@@ -56,7 +56,7 @@ describe('HeaderApplyButton', () => {
     render(withCtx(
       <HeaderApplyButton appId="a1" status="pending_review" applyUrl="https://x.com/" />
     ))
-    await user.click(screen.getByRole('link', { name: /open posting/i }))
+    await user.click(screen.getByRole('link', { name: /apply/i }))
     expect(openSpy).toHaveBeenCalledWith('https://x.com/', '_blank', 'noopener')
     await waitFor(() => expect(posted).toBe(true))
   })
@@ -73,7 +73,7 @@ describe('HeaderApplyButton', () => {
     render(withCtx(
       <HeaderApplyButton appId="a1" status="applied" applyUrl="https://x.com/" />
     ))
-    await user.click(screen.getByRole('link', { name: /open posting again/i }))
+    await user.click(screen.getByRole('link', { name: /open again/i }))
     expect(openSpy).toHaveBeenCalledWith('https://x.com/', '_blank', 'noopener')
     await new Promise((r) => setTimeout(r, 20))
     expect(posted).toBe(false)
@@ -83,7 +83,7 @@ describe('HeaderApplyButton', () => {
     render(withCtx(
       <HeaderApplyButton appId="a1" status="pending_review" applyUrl="https://x.com/" />
     ))
-    const link = screen.getByRole('link', { name: /open posting/i })
+    const link = screen.getByRole('link', { name: /apply/i })
     expect(link.className).toContain('hidden')
     expect(link.className).toContain('md:inline-flex')
   })

@@ -112,15 +112,16 @@ describe('Match detail (ApplicationReview)', () => {
     expect(screen.queryByText(/should not appear/i)).not.toBeInTheDocument()
   })
 
-  it('renders the desktop HeaderApplyButton when status is pending_review', async () => {
+  it('renders the desktop HeaderActions (Dismiss + Apply) in the header when status is pending_review', async () => {
     renderAt('/matches/a1', detail({ status: 'pending_review' }))
     await waitFor(() => expect(screen.getByRole('heading', { name: /senior backend engineer/i })).toBeInTheDocument())
-    // Both HeaderApplyButton (header, md+) and StickyActions (footer, mobile) render an "Open posting" link
-    const links = screen.getAllByRole('link', { name: /open posting/i })
+    // Both HeaderActions (header, md+) and StickyActions (footer, mobile) render an Apply link
+    const links = screen.getAllByRole('link', { name: /apply/i })
     expect(links.length).toBeGreaterThanOrEqual(1)
-    // The HeaderApplyButton link lives inside the <header> element
+    // The header-level Apply link AND the Dismiss button both live inside the <header>
     const header = document.querySelector('header')!
     expect(header.querySelector('a[href]')).not.toBeNull()
+    expect(header.textContent).toMatch(/dismiss/i)
   })
 
   it('shows the loading state before the fetch completes', () => {
@@ -143,7 +144,7 @@ describe('Match detail (ApplicationReview)', () => {
     expect(screen.getByText(/loading/i)).toBeInTheDocument()
   })
 
-  it('shows "Restore to pending" in the kebab when status is dismissed and POSTs pending_review', async () => {
+  it('shows "Restore" in both header (desktop) and bottom nav (mobile) when status is dismissed', async () => {
     let patched: unknown = null
     server.use(
       http.patch('/api/applications/a1', async ({ request }) => {
@@ -153,9 +154,18 @@ describe('Match detail (ApplicationReview)', () => {
     )
     renderAt('/matches/a1', detail({ status: 'dismissed' }))
     await waitFor(() => expect(screen.getByRole('heading', { name: /senior backend engineer/i })).toBeInTheDocument())
+    // Both the header and the bottom nav render a Restore button (one is hidden via CSS
+    // per breakpoint, but jsdom doesn't apply media queries — so both are in the DOM).
+    const restoreButtons = screen.getAllByRole('button', { name: /^restore$/i })
+    expect(restoreButtons).toHaveLength(2)
     const user = userEvent.setup()
-    await user.click(screen.getByRole('button', { name: /more actions/i }))
-    await user.click(screen.getByText(/restore to pending/i))
+    await user.click(restoreButtons[0])
     await waitFor(() => expect(patched).toEqual({ status: 'pending_review' }))
+  })
+
+  it('no longer renders the redundant "More actions" kebab in the details header', async () => {
+    renderAt('/matches/a1', detail({ status: 'pending_review' }))
+    await waitFor(() => expect(screen.getByRole('heading', { name: /senior backend engineer/i })).toBeInTheDocument())
+    expect(screen.queryByRole('button', { name: /more actions/i })).not.toBeInTheDocument()
   })
 })
