@@ -20,7 +20,7 @@ Resume upload + onboarding chat
 
 ## Tech stack
 
-FastAPI · SQLModel · LangGraph · Google Gemini · React + Vite · Postgres (Neon) · Cloud Run · GitHub Actions.
+FastAPI · SQLModel · LangGraph · Google Gemini · React + Vite · Postgres (Neon) · Docker on Hetzner (managed by [panibrat-infra](https://github.com/maksym-panibrat/panibrat-infra)) · GitHub Actions.
 
 ## Quickstart
 
