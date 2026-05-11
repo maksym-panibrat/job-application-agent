@@ -9,9 +9,7 @@ export interface HeaderApplyButtonProps {
 export function HeaderApplyButton({ appId, status, applyUrl }: HeaderApplyButtonProps) {
   const { onOpen, isApplied } = useApplyAction({ appId, status, applyUrl })
 
-  if (status === 'dismissed') return null
-
-  const label = isApplied ? 'Open posting again ↗' : 'Open posting ↗'
+  const label = isApplied ? 'Open again ↗' : 'Apply ↗'
   const intentClass = isApplied
     ? 'bg-success/10 text-success border border-success/30'
     : 'bg-accent text-accent-fg'

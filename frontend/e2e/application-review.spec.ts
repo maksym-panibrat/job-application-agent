@@ -43,14 +43,14 @@ test.describe('Application review flow', () => {
     expect(await generateBtn.isEnabled()).toBeTruthy()
   })
 
-  test('Open posting link is present in the sticky bottom bar', async ({ page }) => {
-    // The new Plan B design dropped the dedicated "Mark as applied" button —
-    // clicking "Open posting" optimistically marks applied AND opens the URL.
-    // The sticky bar is mobile-only (md:hidden), so use a small viewport.
+  test('Apply link is present in the sticky bottom bar', async ({ page }) => {
+    // Plan B dropped the dedicated "Mark as applied" button — clicking the
+    // Apply link optimistically marks applied AND opens the URL. The sticky
+    // bar is mobile-only (md:hidden), so use a small viewport.
     await page.setViewportSize({ width: 390, height: 800 })
     await page.goto(`/matches/${applicationId}`)
     await page.waitForLoadState('networkidle')
 
-    await expect(page.getByRole('link', { name: /open posting/i })).toBeVisible({ timeout: 5_000 })
+    await expect(page.getByRole('link', { name: /apply/i })).toBeVisible({ timeout: 5_000 })
   })
 })

@@ -25,13 +25,16 @@ describe('StickyActions', () => {
     openSpy = vi.spyOn(window, 'open').mockImplementation(() => null)
   })
 
-  it('renders Skip + Open posting when status is pending_review', () => {
+  it('renders Back + Dismiss + Apply for status=pending_review', () => {
     render(withCtx(<StickyActions appId="a1" status="pending_review" applyUrl="https://x.com/" />))
-    expect(screen.getByRole('button', { name: /skip/i })).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: /open posting/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /← back/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /^dismiss$/i })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: /apply/i })).toBeInTheDocument()
+    // The chevron icon prefix on the old "Skip" label must not be present.
+    expect(screen.queryByText(/skip/i)).not.toBeInTheDocument()
   })
 
-  it('clicking Open posting opens the URL AND POSTs mark-applied', async () => {
+  it('clicking Apply opens the URL AND POSTs mark-applied', async () => {
     let posted = false
     server.use(
       http.post('/api/applications/a1/mark-applied', () => {
@@ -41,15 +44,23 @@ describe('StickyActions', () => {
     )
     const user = userEvent.setup()
     render(withCtx(<StickyActions appId="a1" status="pending_review" applyUrl="https://x.com/" />))
-    await user.click(screen.getByRole('link', { name: /open posting/i }))
+    await user.click(screen.getByRole('link', { name: /apply/i }))
     expect(openSpy).toHaveBeenCalledWith('https://x.com/', '_blank', 'noopener')
     await waitFor(() => expect(posted).toBe(true))
   })
 
-  it('renders the applied state when status="applied"', () => {
+  it('renders Back + Unapply + Open again for status=applied', () => {
     render(withCtx(<StickyActions appId="a1" status="applied" applyUrl="https://x.com/" />))
-    expect(screen.getByText(/applied/i)).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: /open posting again/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /← back/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /^unapply$/i })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: /open again/i })).toBeInTheDocument()
+  })
+
+  it('renders Back + Restore + Apply for status=dismissed', () => {
+    render(withCtx(<StickyActions appId="a1" status="dismissed" applyUrl="https://x.com/" />))
+    expect(screen.getByRole('button', { name: /← back/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /^restore$/i })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: /apply/i })).toBeInTheDocument()
   })
 
   it('shows error toast if mark-applied fails', async () => {
@@ -59,7 +70,21 @@ describe('StickyActions', () => {
     )
     const user = userEvent.setup()
     render(withCtx(<StickyActions appId="a1" status="pending_review" applyUrl="https://x.com/" />))
-    await user.click(screen.getByRole('link', { name: /open posting/i }))
+    await user.click(screen.getByRole('link', { name: /apply/i }))
     await waitFor(() => expect(screen.getByRole('status').className).toMatch(/border-l-danger/))
+  })
+
+  it('clicking Dismiss POSTs review=dismissed', async () => {
+    let patched: unknown = null
+    server.use(
+      http.patch('/api/applications/a1', async ({ request }) => {
+        patched = await request.json()
+        return HttpResponse.json({ id: 'a1', status: 'dismissed' })
+      }),
+    )
+    const user = userEvent.setup()
+    render(withCtx(<StickyActions appId="a1" status="pending_review" applyUrl="https://x.com/" />))
+    await user.click(screen.getByRole('button', { name: /^dismiss$/i }))
+    await waitFor(() => expect(patched).toEqual({ status: 'dismissed' }))
   })
 })
