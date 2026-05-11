@@ -31,7 +31,9 @@ export default function ApplicationReview() {
 
   return (
     <article className="pb-24 md:pb-6">
-      <header className="sticky top-14 z-10 -mx-4 px-4 py-2 bg-bg/90 backdrop-blur border-b border-border flex items-center justify-between">
+      {/* Mobile users get Back/Dismiss/Apply in the sticky bottom nav, so the
+          details-page sub-header is desktop-only. */}
+      <header className="hidden md:flex sticky top-14 z-10 -mx-4 px-4 py-2 bg-bg/90 backdrop-blur border-b border-border items-center justify-between">
         <IconButton aria-label="Back" onClick={() => navigate(-1)}>
           <Close className="w-4 h-4" />
         </IconButton>
