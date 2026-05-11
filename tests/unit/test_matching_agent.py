@@ -1,10 +1,12 @@
 """Unit tests for app.agents.matching_agent prompt and schema shape."""
 
 from app.agents.matching_agent import (
+    MAX_JOB_DESC_CHARS,
     SCORING_SYSTEM_PROMPT,
     SCORING_USER_TEMPLATE,
     JobContext,
     ScoreResult,
+    truncate_description,
 )
 
 
@@ -49,6 +51,26 @@ def test_score_result_has_summary_field():
         gaps=["Onsite NYC, candidate based in CA"],
     )
     assert sr.summary == "Senior backend role, Python+AWS, hybrid NYC."
+
+
+def test_max_job_desc_chars_is_12k():
+    # Bumped from 8k. Gemini 2.5 has plenty of context — 8k was an arbitrary
+    # latency-era cap and was clipping a non-trivial fraction of real postings
+    # (anecdotally far more than 5-10%). 12k keeps prompts well under input
+    # budget while keeping the longer JDs intact.
+    assert MAX_JOB_DESC_CHARS == 12000
+
+
+def test_truncate_description_passes_through_at_threshold():
+    payload = "x" * MAX_JOB_DESC_CHARS
+    assert truncate_description(payload) == payload
+
+
+def test_truncate_description_truncates_above_threshold_with_marker():
+    payload = "x" * (MAX_JOB_DESC_CHARS + 1)
+    result = truncate_description(payload)
+    assert result.startswith("x" * MAX_JOB_DESC_CHARS)
+    assert result.endswith("[Description truncated]")
 
 
 def test_job_context_has_location_fields():

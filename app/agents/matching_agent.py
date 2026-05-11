@@ -26,7 +26,7 @@ from app.config import get_settings
 
 log = structlog.get_logger()
 
-MAX_JOB_DESC_CHARS = 8000
+MAX_JOB_DESC_CHARS = 12000
 
 
 def truncate_description(desc: str, max_chars: int = MAX_JOB_DESC_CHARS) -> str:

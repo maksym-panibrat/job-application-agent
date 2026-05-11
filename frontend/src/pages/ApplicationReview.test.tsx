@@ -104,6 +104,30 @@ describe('Match detail (ApplicationReview)', () => {
     )
   })
 
+  it('strips HTML tags when falling back to an HTML description_raw (defense in depth, post-backfill)', async () => {
+    // After the d7e2b40a5301 backfill this path should almost never fire — but
+    // if a future row slips through with description=NULL and HTML in
+    // description_raw, the JobDescription <pre>{content}</pre> would otherwise
+    // render literal <p>/<h2>/<strong> as visible text (the prod bug logged
+    // on 2026-05-10 against PR #98 was exactly this).
+    renderAt('/matches/a1', detail({
+      job: {
+        id: 'j', title: 'Senior Backend Engineer', company_name: 'Acme',
+        location: null, workplace_type: null, salary: null,
+        contract_type: null,
+        description_raw: '<h2>Role</h2><p>Build <strong>Python</strong> things.</p>',
+        description: null,
+        apply_url: 'https://x.com/', posted_at: null,
+      },
+    }))
+    await waitFor(() =>
+      expect(screen.getByText(/Build Python things/i)).toBeInTheDocument()
+    )
+    // The literal characters of the tags must not be visible.
+    const region = screen.getByText(/Build Python things/i)
+    expect(region.textContent).not.toMatch(/<\/?[a-z]/i)
+  })
+
   it('renders the desktop HeaderApplyButton when status is pending_review', async () => {
     renderAt('/matches/a1', detail({ status: 'pending_review' }))
     await waitFor(() => expect(screen.getByRole('heading', { name: /senior backend engineer/i })).toBeInTheDocument())
