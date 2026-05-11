@@ -14,18 +14,6 @@ import { CoverLetterEditor } from '../components/match-detail/CoverLetterEditor'
 import { StickyActions } from '../components/match-detail/StickyActions'
 import { HeaderApplyButton } from '../components/match-detail/HeaderApplyButton'
 
-// Defense-in-depth for the description=NULL fallback path. The
-// d7e2b40a5301 backfill should make this path unreachable in practice, but
-// if a future row slips through with HTML in description_raw, JobDescription
-// (a plain <pre> block) would otherwise render <p>/<h2>/<strong> as
-// literal characters. Strip tags so the user sees the text content instead.
-// Plain-text legacy rows (no '<' in payload) pass through unchanged.
-function stripHtmlForFallback(raw: string | null): string | null {
-  if (!raw) return null
-  if (!/<[a-z][\s\S]*?>/i.test(raw)) return raw
-  return raw.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim() || null
-}
-
 export default function ApplicationReview() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
@@ -86,7 +74,7 @@ export default function ApplicationReview() {
           strengths={app.match_strengths}
           gaps={app.match_gaps}
         />
-        <JobDescription content={app.job.description ?? stripHtmlForFallback(app.job.description_raw)} />
+        <JobDescription content={app.job.description} />
         <CoverLetterEditor appId={app.id} doc={cover} status={app.generation_status} />
       </div>
 
