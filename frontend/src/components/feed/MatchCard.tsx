@@ -1,11 +1,15 @@
 import { useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
+import {
+  SwipeableListItem,
+  SwipeAction,
+  TrailingActions,
+} from 'react-swipeable-list'
 import { api, Application } from '../../api/client'
 import { track } from '../../lib/track'
 import { Card } from '../ui/Card'
 import { IconButton } from '../ui/IconButton'
 import { ActionSheet, ActionSheetItem } from '../ui/ActionSheet'
-import { SwipeableCard } from '../ui/SwipeableCard'
 import { Kebab } from '../ui/icons'
 import { useToast } from '../ui/Toast'
 import { ScoreBadge } from './ScoreBadge'
@@ -53,16 +57,29 @@ export function MatchCard({ app }: { app: Application }) {
   const topGap = app.match_gaps?.[0]
   const age = relativeAge(job.posted_at) || relativeAge(app.created_at)
 
+  const trailingActions = (
+    <TrailingActions>
+      <SwipeAction
+        destructive
+        onClick={() => {
+          track('match.dismissed', { application_id: app.id, source: 'swipe', score: app.match_score })
+          dismiss.mutate()
+        }}
+      >
+        <div
+          role="button"
+          aria-label="Dismiss"
+          className="flex items-center justify-center bg-danger text-white font-bold w-full h-full px-6"
+        >
+          Dismiss
+        </div>
+      </SwipeAction>
+    </TrailingActions>
+  )
+
   return (
-    <SwipeableCard
-      onCommit={() => {
-        if (isDismissed) return
-        track('match.dismissed', { application_id: app.id, source: 'swipe', score: app.match_score })
-        dismiss.mutate()
-      }}
-      actionLabel="Remove"
-    >
-      <div className="relative">
+    <SwipeableListItem trailingActions={isDismissed ? undefined : trailingActions} blockSwipe={isDismissed}>
+      <div className="relative w-full">
         {/* Kebab in absolute corner — far from natural tap zone, doesn't interfere with the card link. */}
         <div className="absolute top-1 right-1 z-10">
           <IconButton
@@ -73,7 +90,7 @@ export function MatchCard({ app }: { app: Application }) {
           </IconButton>
         </div>
 
-        <Card as="rrlink" to={`/matches/${app.id}`} interactive onClick={() => track('match.card_opened', { application_id: app.id, score: app.match_score })} className="block pr-12">
+        <Card as="rrlink" to={`/matches/${app.id}`} interactive onClick={() => track('match.card_opened', { application_id: app.id, score: app.match_score })} className="block pr-12 w-full">
           <div className="flex items-center gap-2 flex-wrap">
             <ScoreBadge score={app.match_score} />
             <GenerationBadge status={app.generation_status} />
@@ -120,6 +137,6 @@ export function MatchCard({ app }: { app: Application }) {
           )}
         </ActionSheet>
       </div>
-    </SwipeableCard>
+    </SwipeableListItem>
   )
 }
