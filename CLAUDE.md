@@ -14,7 +14,7 @@ cd frontend && npm install && npm run dev   # :5173, proxies /api + /health to :
 
 Required env: `DATABASE_URL`, `GOOGLE_API_KEY`. Full list: `app/config.py::Settings`.
 
-**Migrations**: always use `make migrate ARGS="..."` (or `uv run python scripts/alembic_safe.py ...`), never plain `alembic`. The wrapper blocks write commands (`upgrade` / `downgrade` / `stamp` / `merge` / `revision --autogenerate`) against non-local hosts unless `I_KNOW_ITS_PROD=1` is set. Prod migrations belong to the `migrate` CI job (`.github/workflows/ci.yml`), not a dev laptop — running `alembic upgrade head` against Neon locally is the exact outage mode of commit 28e5ce5 (schema ahead of deployed code → every `select(Application)` 500s).
+**Migrations**: always use `make migrate ARGS="..."` (or `uv run python scripts/alembic_safe.py ...`), never plain `alembic`. The wrapper blocks write commands (`upgrade` / `downgrade` / `stamp` / `merge` / `revision --autogenerate`) against non-local hosts unless `I_KNOW_ITS_PROD=1` is set. Running `alembic upgrade head` against Neon from a dev laptop is the exact outage mode of commit 28e5ce5 (schema ahead of deployed code → every `select(Application)` 500s). **Phase A (post-Hetzner-migration) prod migrations are run manually on the box**: SSH in as personal user, `sudo -u deploy bash -lc 'cd /srv/panibrat-infra && docker compose run --rm job-search-api alembic upgrade head'`. Phase B will introduce a dedicated `alembic-upgrade` compose service that runs as part of every deploy.
 
 ## Tests
 
@@ -51,9 +51,7 @@ Matching agent uses `asyncio.Semaphore` + 1.5s sleep + 10s/30s exponential backo
 
 ### Scheduler
 
-No in-process scheduler. `app/scheduler/tasks.py` is invoked via `POST /internal/cron/{sync,generation-queue,maintenance}` with `X-Cron-Secret`, triggered by `.github/workflows/cron.yml`.
-
-**Cron-incident PR convention**: when a PR fixes a cron failure, reference the persistent tracking issue with `re #N` / `relates to #N` — **never** `closes #N` / `fixes #N`. The alert-on-failure workflow now reopens-and-comments on the most recent matching issue regardless of state (after #78), so closing it is harmless — but the explicit form keeps history clean and matches the long-lived-tracker intent. The original churn (#70 → #72 on 2026-05-04 from a `closes #70`) is what motivates this.
+No in-process scheduler. `app/scheduler/tasks.py` is invoked via `POST /internal/cron/{sync,generation-queue,maintenance}` with `X-Cron-Secret`. **Triggered by `supercronic` running on the Hetzner box** (`panibrat-infra/supercronic.crontab`). The old `.github/workflows/cron.yml` was deleted during the Hetzner migration. Crontab times are UTC; same schedule as before. Phase B (worker + queue) will replace the heavy lifting that lives behind these endpoints with a continuously-running worker; the cron endpoints will remain as thin "enqueue + return" handlers.
 
 ### Generation contract
 
@@ -61,7 +59,7 @@ No in-process scheduler. `app/scheduler/tasks.py` is invoked via `POST /internal
 
 ### Observability
 
-No Sentry / no external SaaS. Errors flow to GCP Cloud Error Reporting via structlog: `app/main.py::_add_cloud_run_severity` injects `severity=ERROR` + `@type: …ReportedErrorEvent`, and `structlog.processors.format_exc_info` turns `exc_info=True` / `log.aexception` into a readable traceback. `gcloud services enable clouderrorreporting.googleapis.com` is a one-time op per project.
+Logs ship to **Axiom** (hosted) via Vector running on the Hetzner box. structlog emits plain JSON; Vector reads container stdout via the Docker socket and ships to two datasets: `job-search` (this app) and `infra` (Caddy + supercronic + vector itself + unattended-upgrades). `structlog.processors.format_exc_info` turns `exc_info=True` / `log.aexception` into a readable traceback in the log payload. No Sentry, no GCP Error Reporting; the dedicated Cloud Run severity processor was deleted during the Hetzner migration. Queries via Axiom UI or the Axiom MCP server (see `panibrat-infra/docs/runbooks/apl-primer.md`).
 
 ## Hard app-level limits (not DB constraints)
 

@@ -24,42 +24,22 @@ from app.api.users import router as users_router
 from app.config import get_settings
 from app.database import init_db
 
-# Marker that tells GCP Cloud Error Reporting to ingest a Cloud Run log entry as a
-# first-class error event. Combined with severity=ERROR + a Python traceback in the
-# log payload, this gets errors auto-grouped in the Error Reporting UI without any
-# third-party SDK. https://cloud.google.com/error-reporting/docs/formatting-error-messages
-_REPORTED_ERROR_TYPE = (
-    "type.googleapis.com/google.devtools.clouderrorreporting.v1beta1.ReportedErrorEvent"
-)
-
-
-def _add_cloud_run_severity(logger, method, event_dict):
-    # Cloud Run reads "severity" (uppercase) for log severity badges.
-    # structlog's add_log_level writes "level" (lowercase) — copy it here.
-    severity = event_dict.get("level", "info").upper()
-    event_dict["severity"] = severity
-    # Tag ERROR/CRITICAL records so Cloud Error Reporting picks them up as events.
-    if severity in ("ERROR", "CRITICAL"):
-        event_dict["@type"] = _REPORTED_ERROR_TYPE
-    return event_dict
-
 
 def configure_logging(settings) -> None:
+    """Structlog config. Dev uses ConsoleRenderer for humans; production uses
+    JSONRenderer so Vector ships clean records to Axiom (level / event /
+    timestamp / context, no GCP-specific severity or @type fields)."""
     is_dev = settings.environment == "development"
     processors = [
         structlog.contextvars.merge_contextvars,
         structlog.processors.add_log_level,
         structlog.processors.TimeStamper(fmt="iso"),
         # Turn exc_info tuples (from log.aexception / log.aerror(..., exc_info=True))
-        # into a multi-line traceback string under the "exception" key so GCP's
-        # error-reporting heuristics can parse it.
+        # into a multi-line traceback string under the "exception" key. Useful
+        # for Axiom and for human-readable dev output alike.
         structlog.processors.format_exc_info,
+        structlog.dev.ConsoleRenderer() if is_dev else structlog.processors.JSONRenderer(),
     ]
-    if not is_dev:
-        processors.append(_add_cloud_run_severity)
-    processors.append(
-        structlog.dev.ConsoleRenderer() if is_dev else structlog.processors.JSONRenderer()
-    )
     structlog.configure(
         processors=processors,
         wrapper_class=structlog.make_filtering_bound_logger(
