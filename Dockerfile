@@ -1,4 +1,4 @@
-FROM node:20-bookworm AS frontend-builder
+FROM node:26-bookworm AS frontend-builder
 WORKDIR /frontend
 COPY frontend/package*.json ./
 RUN npm ci
