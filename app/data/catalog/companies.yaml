@@ -115,3 +115,112 @@ companies:
     providers:
       ashby: modal
     tags: [dev-tools, infra, ai, b2b, early-stage]
+  # — Layer 2 growth pass (#108) — fintech, AI labs, dev infra, public consumer brands —
+  - canonical_name: Block
+    providers:
+      greenhouse: block
+    tags: [fintech, b2c, public]
+  - canonical_name: Snowflake
+    providers:
+      ashby: snowflake
+    tags: [dev-tools, infra, b2b, public]
+  - canonical_name: Pinterest
+    providers:
+      greenhouse: pinterest
+    tags: [social, b2c, public]
+  - canonical_name: Reddit
+    providers:
+      greenhouse: reddit
+    tags: [social, b2c, public]
+  - canonical_name: Discord
+    providers:
+      greenhouse: discord
+    tags: [social, b2c, late-stage]
+  - canonical_name: Atlassian
+    providers:
+      lever: atlassian
+    tags: [dev-tools, b2b, public]
+  - canonical_name: MongoDB
+    providers:
+      greenhouse: mongodb
+    tags: [dev-tools, infra, b2b, public]
+  - canonical_name: Plaid
+    providers:
+      lever: plaid
+    tags: [fintech, infra, b2b, late-stage]
+  - canonical_name: Twilio
+    providers:
+      greenhouse: twilio
+    tags: [dev-tools, infra, b2b, public]
+  - canonical_name: Roblox
+    providers:
+      greenhouse: roblox
+    tags: [gaming, b2c, public]
+  - canonical_name: Snyk
+    providers:
+      ashby: snyk
+    tags: [dev-tools, infra, b2b, late-stage]
+  - canonical_name: Confluent
+    providers:
+      ashby: confluent
+    tags: [dev-tools, infra, b2b, public]
+  - canonical_name: Databricks
+    providers:
+      greenhouse: databricks
+    tags: [dev-tools, infra, ai, b2b, late-stage]
+  - canonical_name: Chime
+    providers:
+      greenhouse: chime
+    tags: [fintech, b2c, late-stage]
+  - canonical_name: Deel
+    providers:
+      ashby: deel
+    tags: [b2b, late-stage]
+  - canonical_name: Klaviyo
+    providers:
+      greenhouse: klaviyo
+    tags: [b2b, public]
+  - canonical_name: GitLab
+    providers:
+      greenhouse: gitlab
+    tags: [dev-tools, b2b, public]
+  - canonical_name: Replit
+    providers:
+      ashby: replit
+    tags: [dev-tools, ai, b2b, b2c, late-stage]
+  - canonical_name: Anyscale
+    providers:
+      ashby: anyscale
+    tags: [ai, infra, b2b, late-stage]
+  - canonical_name: LangChain
+    providers:
+      ashby: langchain
+    tags: [ai, dev-tools, b2b, early-stage]
+  - canonical_name: Mistral AI
+    providers:
+      ashby: mistral
+    tags: [ai, b2b, late-stage]
+  - canonical_name: Perplexity
+    providers:
+      ashby: perplexity
+    tags: [ai, b2c, late-stage]
+  - canonical_name: Cohere
+    providers:
+      ashby: cohere
+    tags: [ai, b2b, late-stage]
+  - canonical_name: Character.AI
+    providers:
+      ashby: character
+    tags: [ai, b2c, late-stage]
+  - canonical_name: Okta
+    providers:
+      greenhouse: okta
+    tags: [infra, b2b, public]
+  - canonical_name: Netlify
+    providers:
+      greenhouse: netlify
+    tags: [dev-tools, infra, b2b, late-stage]
+  - canonical_name: Lyft
+    providers:
+      greenhouse: lyft
+    tags: [marketplace, b2c, public]
