@@ -53,12 +53,12 @@ def test_score_result_has_summary_field():
     assert sr.summary == "Senior backend role, Python+AWS, hybrid NYC."
 
 
-def test_max_job_desc_chars_is_12k():
-    # Bumped from 8k. Gemini 2.5 has plenty of context — 8k was an arbitrary
-    # latency-era cap and was clipping a non-trivial fraction of real postings
-    # (anecdotally far more than 5-10%). 12k keeps prompts well under input
-    # budget while keeping the longer JDs intact.
-    assert MAX_JOB_DESC_CHARS == 12000
+def test_max_job_desc_chars_is_20k():
+    # Bumped 8k → 12k → 20k. Gemini 2.5 has plenty of context; the cap exists
+    # to keep prompt cost predictable, not to fit the model. 20k captures the
+    # tail of real postings (long JD + benefits + boilerplate) without
+    # truncating anything but the most pathologically long descriptions.
+    assert MAX_JOB_DESC_CHARS == 20000
 
 
 def test_truncate_description_passes_through_at_threshold():
