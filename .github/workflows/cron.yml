@@ -113,41 +113,15 @@ jobs:
     permissions:
       issues: write
     steps:
+      - uses: actions/checkout@v5
       - name: Open or bump "cron failing" issue
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REPO: ${{ github.repository }}
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          FAILED_JOBS: "sync=${{ needs.sync.result }} generation-queue=${{ needs.generation-queue.result }} maintenance=${{ needs.maintenance.result }} process-sync-queue=${{ needs.process-sync-queue.result }} process-match-queue=${{ needs.process-match-queue.result }}"
-        run: |
-          set -euo pipefail
-          title="[cron] scheduled job failing"
-          # Search across BOTH open and closed issues so the persistent
-          # tracking-issue identity survives a `closes #N` keyword on a
-          # fix PR (#78). Without --state all, every cron-fix PR that
-          # closes the tracker would orphan it and force a new issue
-          # number on the next failure (#70 → #72 churn observed
-          # 2026-05-04). Prefer OPEN; fall back to most-recently-closed.
-          # If found-but-closed, reopen and comment.
-          existing=$(gh issue list --repo "$REPO" --state all --search "$title in:title" \
-            --json number,state,closedAt --limit 20 \
-            --jq '([.[] | select(.state == "OPEN")] + ([.[] | select(.state == "CLOSED")] | sort_by(.closedAt) | reverse))[0] // empty' \
-            || echo "")
-          body="Cron run failed: $RUN_URL
-          Job results: $FAILED_JOBS
+        uses: ./.github/actions/upsert-tracking-issue
+        with:
+          title: '[cron] scheduled job failing'
+          labels: 'incident,cron'
+          reopen-comment: 'Reopened by alert-on-failure: a new cron run failed after this issue was closed.'
+          body: |
+            Cron run failed: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+            Job results: sync=${{ needs.sync.result }} generation-queue=${{ needs.generation-queue.result }} maintenance=${{ needs.maintenance.result }} process-sync-queue=${{ needs.process-sync-queue.result }} process-match-queue=${{ needs.process-match-queue.result }}
 
-          First step in triage: check prod logs for 5xx from /internal/cron/* endpoints and reconcile prod schema vs deployed code (see commit 28e5ce5 for the canonical drift case)."
-          if [ -n "$existing" ]; then
-            num=$(echo "$existing" | jq -r '.number')
-            state=$(echo "$existing" | jq -r '.state')
-            if [ "$state" = "CLOSED" ]; then
-              gh issue reopen "$num" --repo "$REPO" \
-                --comment "Reopened by alert-on-failure: a new cron run failed after this issue was closed."
-            fi
-            gh issue comment "$num" --repo "$REPO" --body "$body"
-          else
-            gh issue create --repo "$REPO" --title "$title" \
-              --label "incident,cron" \
-              --body "$body" || \
-            gh issue create --repo "$REPO" --title "$title" --body "$body"
-          fi
+            First step in triage: check prod logs for 5xx from /internal/cron/* endpoints and reconcile prod schema vs deployed code (see commit 28e5ce5 for the canonical drift case).

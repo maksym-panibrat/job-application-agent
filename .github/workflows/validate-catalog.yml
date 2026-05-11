@@ -36,48 +36,31 @@ jobs:
           path: |
             catalog-results.xml
             catalog.log
+      - name: Build issue body
+        if: failure()
+        id: body
+        run: |
+          {
+            echo 'body<<TRACKING_EOF'
+            echo 'Nightly catalog validation failed.'
+            echo
+            echo "Workflow run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            echo
+            echo 'Tail of pytest output:'
+            echo '```'
+            tail -c 3000 catalog.log
+            echo '```'
+            echo
+            echo 'First step in triage: open the failing entry in companies.yaml,'
+            echo 'curl the (provider, slug) against the upstream board manually,'
+            echo 'and either replace the slug or drop the row in a follow-up PR.'
+            echo 'TRACKING_EOF'
+          } >> "$GITHUB_OUTPUT"
       - name: Open or update tracking issue on failure
         if: failure()
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REPO: ${{ github.repository }}
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        run: |
-          set -euo pipefail
-          title="[catalog] live validation failing"
-          # Search BOTH open and closed so a `closes #N` on a fix PR doesn't
-          # orphan the tracker (matches cron.yml::alert-on-failure pattern,
-          # which is in turn motivated by the #70 -> #72 churn on 2026-05-04).
-          # Prefer OPEN; fall back to most-recently-closed; reopen if needed.
-          existing=$(gh issue list --repo "$REPO" --state all \
-            --search "$title in:title" \
-            --json number,state,closedAt --limit 20 \
-            --jq '([.[] | select(.state == "OPEN")] + ([.[] | select(.state == "CLOSED")] | sort_by(.closedAt) | reverse))[0] // empty' \
-            || echo "")
-          log_tail=$(tail -c 3000 catalog.log)
-          body="Nightly catalog validation failed.
-
-          Workflow run: $RUN_URL
-
-          Tail of pytest output:
-          \`\`\`
-          $log_tail
-          \`\`\`
-
-          First step in triage: open the failing entry in companies.yaml,
-          curl the (provider, slug) against the upstream board manually,
-          and either replace the slug or drop the row in a follow-up PR."
-          if [ -n "$existing" ]; then
-            num=$(echo "$existing" | jq -r '.number')
-            state=$(echo "$existing" | jq -r '.state')
-            if [ "$state" = "CLOSED" ]; then
-              gh issue reopen "$num" --repo "$REPO" \
-                --comment "Reopened by validate-catalog: a new live-validation run failed after this issue was closed."
-            fi
-            gh issue comment "$num" --repo "$REPO" --body "$body"
-          else
-            gh issue create --repo "$REPO" --title "$title" \
-              --label "catalog-validation" \
-              --body "$body" || \
-            gh issue create --repo "$REPO" --title "$title" --body "$body"
-          fi
+        uses: ./.github/actions/upsert-tracking-issue
+        with:
+          title: '[catalog] live validation failing'
+          labels: 'catalog-validation'
+          reopen-comment: 'Reopened by validate-catalog: a new live-validation run failed after this issue was closed.'
+          body: ${{ steps.body.outputs.body }}
