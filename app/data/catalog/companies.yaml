@@ -115,3 +115,323 @@ companies:
     providers:
       ashby: modal
     tags: [dev-tools, infra, ai, b2b, early-stage]
+  # — Layer 2 growth pass (#108) — fintech, AI labs, dev infra, public consumer brands —
+  - canonical_name: Block
+    providers:
+      greenhouse: block
+    tags: [fintech, b2c, public]
+  - canonical_name: Snowflake
+    providers:
+      ashby: snowflake
+    tags: [dev-tools, infra, b2b, public]
+  - canonical_name: Pinterest
+    providers:
+      greenhouse: pinterest
+    tags: [social, b2c, public]
+  - canonical_name: Reddit
+    providers:
+      greenhouse: reddit
+    tags: [social, b2c, public]
+  - canonical_name: Discord
+    providers:
+      greenhouse: discord
+    tags: [social, b2c, late-stage]
+  - canonical_name: Atlassian
+    providers:
+      lever: atlassian
+    tags: [dev-tools, b2b, public]
+  - canonical_name: MongoDB
+    providers:
+      greenhouse: mongodb
+    tags: [dev-tools, infra, b2b, public]
+  - canonical_name: Plaid
+    providers:
+      lever: plaid
+    tags: [fintech, infra, b2b, late-stage]
+  - canonical_name: Twilio
+    providers:
+      greenhouse: twilio
+    tags: [dev-tools, infra, b2b, public]
+  - canonical_name: Roblox
+    providers:
+      greenhouse: roblox
+    tags: [gaming, b2c, public]
+  - canonical_name: Snyk
+    providers:
+      ashby: snyk
+    tags: [dev-tools, infra, b2b, late-stage]
+  - canonical_name: Confluent
+    providers:
+      ashby: confluent
+    tags: [dev-tools, infra, b2b, public]
+  - canonical_name: Databricks
+    providers:
+      greenhouse: databricks
+    tags: [dev-tools, infra, ai, b2b, late-stage]
+  - canonical_name: Chime
+    providers:
+      greenhouse: chime
+    tags: [fintech, b2c, late-stage]
+  - canonical_name: Deel
+    providers:
+      ashby: deel
+    tags: [b2b, late-stage]
+  - canonical_name: Klaviyo
+    providers:
+      greenhouse: klaviyo
+    tags: [b2b, public]
+  - canonical_name: GitLab
+    providers:
+      greenhouse: gitlab
+    tags: [dev-tools, b2b, public]
+  - canonical_name: Replit
+    providers:
+      ashby: replit
+    tags: [dev-tools, ai, b2b, b2c, late-stage]
+  - canonical_name: Anyscale
+    providers:
+      ashby: anyscale
+    tags: [ai, infra, b2b, late-stage]
+  - canonical_name: LangChain
+    providers:
+      ashby: langchain
+    tags: [ai, dev-tools, b2b, early-stage]
+  - canonical_name: Mistral AI
+    providers:
+      ashby: mistral
+    tags: [ai, b2b, late-stage]
+  - canonical_name: Perplexity
+    providers:
+      ashby: perplexity
+    tags: [ai, b2c, late-stage]
+  - canonical_name: Cohere
+    providers:
+      ashby: cohere
+    tags: [ai, b2b, late-stage]
+  - canonical_name: Character.AI
+    providers:
+      ashby: character
+    tags: [ai, b2c, late-stage]
+  - canonical_name: Okta
+    providers:
+      greenhouse: okta
+    tags: [infra, b2b, public]
+  - canonical_name: Netlify
+    providers:
+      greenhouse: netlify
+    tags: [dev-tools, infra, b2b, late-stage]
+  - canonical_name: Lyft
+    providers:
+      greenhouse: lyft
+    tags: [marketplace, b2c, public]
+  # — Layer 2 growth pass round 2 (#108) — fills out AI tooling, dev infra,
+  # public consumer brands, fintech, biotech, climate, and HR/work tools —
+  #
+  # AI labs and AI-tooling startups
+  - canonical_name: Pinecone
+    providers:
+      ashby: pinecone
+    tags: [ai, dev-tools, infra, b2b, late-stage]
+  - canonical_name: Weaviate
+    providers:
+      ashby: weaviate
+    tags: [ai, dev-tools, infra, b2b, early-stage]
+  - canonical_name: Harvey
+    providers:
+      ashby: harvey
+    tags: [ai, b2b, late-stage]
+  - canonical_name: Sierra
+    providers:
+      ashby: sierra
+    tags: [ai, b2b, late-stage]
+  - canonical_name: Decagon
+    providers:
+      ashby: decagon
+    tags: [ai, b2b, late-stage]
+  - canonical_name: Together AI
+    providers:
+      greenhouse: togetherai
+    tags: [ai, infra, b2b, late-stage]
+  - canonical_name: Runway
+    providers:
+      ashby: runway
+    tags: [ai, b2c, b2b, late-stage]
+  - canonical_name: ElevenLabs
+    providers:
+      ashby: elevenlabs
+    tags: [ai, b2c, b2b, late-stage]
+  - canonical_name: Cursor
+    providers:
+      ashby: cursor
+    tags: [ai, dev-tools, b2c, b2b, late-stage]
+  - canonical_name: Lambda
+    providers:
+      ashby: lambda
+    tags: [ai, infra, b2b, late-stage]
+  - canonical_name: Pika
+    providers:
+      ashby: pika
+    tags: [ai, b2c, late-stage]
+  - canonical_name: Suno
+    providers:
+      ashby: suno
+    tags: [ai, b2c, late-stage]
+  # Dev tools / infra / observability
+  - canonical_name: Render
+    providers:
+      ashby: render
+    tags: [dev-tools, infra, b2b, late-stage]
+  - canonical_name: Railway
+    providers:
+      ashby: railway
+    tags: [dev-tools, infra, b2b, late-stage]
+  - canonical_name: Supabase
+    providers:
+      ashby: supabase
+    tags: [dev-tools, infra, b2b, late-stage]
+  - canonical_name: Neon
+    providers:
+      ashby: neon
+    tags: [dev-tools, infra, b2b, late-stage]
+  - canonical_name: PlanetScale
+    providers:
+      greenhouse: planetscale
+    tags: [dev-tools, infra, b2b, late-stage]
+  - canonical_name: Clerk
+    providers:
+      ashby: clerk
+    tags: [dev-tools, infra, b2b, late-stage]
+  - canonical_name: Sentry
+    providers:
+      ashby: sentry
+    tags: [dev-tools, b2b, late-stage]
+  - canonical_name: LaunchDarkly
+    providers:
+      greenhouse: launchdarkly
+    tags: [dev-tools, b2b, late-stage]
+  - canonical_name: Grafana Labs
+    providers:
+      greenhouse: grafanalabs
+    tags: [dev-tools, infra, b2b, late-stage]
+  - canonical_name: New Relic
+    providers:
+      greenhouse: newrelic
+    tags: [dev-tools, infra, b2b, public]
+  - canonical_name: Honeycomb
+    providers:
+      greenhouse: honeycomb
+    tags: [dev-tools, infra, b2b, late-stage]
+  - canonical_name: Elastic
+    providers:
+      greenhouse: elastic
+    tags: [dev-tools, infra, b2b, public]
+  - canonical_name: Tailscale
+    providers:
+      greenhouse: tailscale
+    tags: [dev-tools, infra, b2b, late-stage]
+  - canonical_name: Airtable
+    providers:
+      greenhouse: airtable
+    tags: [dev-tools, b2b, late-stage]
+  - canonical_name: 1Password
+    providers:
+      ashby: 1password
+    tags: [infra, b2b, b2c, late-stage]
+  # Public big-tech / scaleups
+  - canonical_name: Spotify
+    providers:
+      lever: spotify
+    tags: [b2c, public]
+  - canonical_name: Palantir
+    providers:
+      lever: palantir
+    tags: [infra, b2b, public]
+  - canonical_name: HubSpot
+    providers:
+      greenhouse: hubspot
+    tags: [b2b, public]
+  - canonical_name: Match Group
+    providers:
+      lever: matchgroup
+    tags: [b2c, public]
+  # Fintech expansion
+  - canonical_name: Adyen
+    providers:
+      greenhouse: adyen
+    tags: [fintech, infra, b2b, public]
+  - canonical_name: Monzo
+    providers:
+      greenhouse: monzo
+    tags: [fintech, b2c, late-stage]
+  - canonical_name: Marqeta
+    providers:
+      greenhouse: marqeta
+    tags: [fintech, infra, b2b, public]
+  - canonical_name: Bill.com
+    providers:
+      greenhouse: billcom
+    tags: [fintech, b2b, public]
+  - canonical_name: Betterment
+    providers:
+      greenhouse: betterment
+    tags: [fintech, b2c, late-stage]
+  - canonical_name: Affirm
+    providers:
+      greenhouse: affirm
+    tags: [fintech, b2c, public]
+  - canonical_name: SoFi
+    providers:
+      greenhouse: sofi
+    tags: [fintech, b2c, public]
+  # Biotech / health
+  - canonical_name: Ginkgo Bioworks
+    providers:
+      greenhouse: ginkgobioworks
+    tags: [biotech, b2b, public]
+  - canonical_name: Color
+    providers:
+      lever: color
+    tags: [biotech, b2c, late-stage]
+  - canonical_name: Maven Clinic
+    providers:
+      greenhouse: maven
+    tags: [b2b, b2c, late-stage]
+  # Climate
+  - canonical_name: Watershed
+    providers:
+      greenhouse: watershed
+    tags: [climate, b2b, late-stage]
+  - canonical_name: Patch
+    providers:
+      greenhouse: patch
+    tags: [climate, b2b, late-stage]
+  - canonical_name: Form Energy
+    providers:
+      ashby: formenergy
+    tags: [climate, infra, b2b, late-stage]
+  # Consumer / edtech / creator economy
+  - canonical_name: Duolingo
+    providers:
+      greenhouse: duolingo
+    tags: [b2c, public]
+  - canonical_name: Khan Academy
+    providers:
+      greenhouse: khanacademy
+    tags: [b2c, late-stage]
+  - canonical_name: Coursera
+    providers:
+      greenhouse: coursera
+    tags: [b2c, public]
+  - canonical_name: Patreon
+    providers:
+      ashby: patreon
+    tags: [b2c, late-stage]
+  # HR / work
+  - canonical_name: Lattice
+    providers:
+      greenhouse: lattice
+    tags: [b2b, late-stage]
+  - canonical_name: Pave
+    providers:
+      ashby: pave
+    tags: [b2b, late-stage]
