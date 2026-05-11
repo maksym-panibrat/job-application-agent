@@ -12,33 +12,71 @@ export interface SwipeableCardProps {
   className?: string
 }
 
+// Pixels of total travel before we decide whether the gesture is a swipe or a
+// vertical scroll. Small enough to feel responsive, large enough to ignore
+// tap jitter.
+const AXIS_LOCK_SLOP_PX = 10
+
+type Axis = 'unlocked' | 'horizontal' | 'vertical'
+
 export function SwipeableCard({
   children,
   onCommit,
   actionLabel,
-  thresholdPx = 24,
+  thresholdPx = 60,
   className,
 }: SwipeableCardProps) {
   const [dx, setDx] = useState(0)
   const startX = useRef<number | null>(null)
+  const startY = useRef<number | null>(null)
+  const axis = useRef<Axis>('unlocked')
+
+  function reset() {
+    setDx(0)
+    startX.current = null
+    startY.current = null
+    axis.current = 'unlocked'
+  }
 
   function onPointerDown(e: React.PointerEvent) {
     startX.current = e.clientX
-    ;(e.target as Element).setPointerCapture?.(e.pointerId)
+    startY.current = e.clientY
+    axis.current = 'unlocked'
+    // Note: we intentionally do NOT setPointerCapture here. Capturing on
+    // pointerdown steals the gesture from the browser's native scroller, so
+    // vertical scrolls that originate on the card become unresponsive. We
+    // only need pointermove/up on this element, which the browser delivers
+    // without explicit capture.
   }
+
   function onPointerMove(e: React.PointerEvent) {
-    if (startX.current == null) return
-    const delta = e.clientX - startX.current
-    setDx(Math.min(0, delta))
+    if (startX.current == null || startY.current == null) return
+    const dxRaw = e.clientX - startX.current
+    const dyRaw = e.clientY - startY.current
+
+    if (axis.current === 'unlocked') {
+      // Wait until the finger has moved past the slop radius, then lock the
+      // axis based on which direction dominates.
+      if (Math.abs(dxRaw) < AXIS_LOCK_SLOP_PX && Math.abs(dyRaw) < AXIS_LOCK_SLOP_PX) {
+        return
+      }
+      axis.current = Math.abs(dxRaw) > Math.abs(dyRaw) ? 'horizontal' : 'vertical'
+    }
+
+    if (axis.current === 'vertical') return
+    setDx(Math.min(0, dxRaw))
   }
+
   function onPointerUp(e: React.PointerEvent) {
-    if (startX.current == null) return
-    // Compute final delta directly from released pointer position to avoid
-    // React state-batching issues in tests.
-    const delta = Math.min(0, e.clientX - startX.current)
-    if (delta <= -thresholdPx) onCommit()
-    setDx(0)
-    startX.current = null
+    if (startX.current == null) {
+      reset()
+      return
+    }
+    const committed =
+      axis.current === 'horizontal' &&
+      Math.min(0, e.clientX - startX.current) <= -thresholdPx
+    if (committed) onCommit()
+    reset()
   }
 
   return (

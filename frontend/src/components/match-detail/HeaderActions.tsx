@@ -4,19 +4,24 @@ import { api } from '../../api/client'
 import { Button } from '../ui/Button'
 import { useToast } from '../ui/Toast'
 import { track } from '../../lib/track'
-import { useApplyAction } from './useApplyAction'
+import { HeaderApplyButton } from './HeaderApplyButton'
 
-export interface StickyActionsProps {
+export interface HeaderActionsProps {
   appId: string
   status: string
   applyUrl: string
 }
 
-export function StickyActions({ appId, status, applyUrl }: StickyActionsProps) {
+/**
+ * Desktop-only counterpart to <StickyActions/> on mobile. Renders the same
+ * status-dependent middle action (Dismiss / Unapply / Restore) inline next to
+ * the Apply CTA in the page header. Mobile shows the bottom nav; desktop
+ * shows these inline.
+ */
+export function HeaderActions({ appId, status, applyUrl }: HeaderActionsProps) {
   const qc = useQueryClient()
   const navigate = useNavigate()
   const { show } = useToast()
-  const { onOpen, isApplied } = useApplyAction({ appId, status, applyUrl })
 
   const dismiss = useMutation({
     mutationFn: () => api.reviewApplication(appId, 'dismissed'),
@@ -38,13 +43,11 @@ export function StickyActions({ appId, status, applyUrl }: StickyActionsProps) {
     onError: (e) => show((e as Error)?.message ?? 'Could not update', 'error'),
   })
 
-  const isDismissed = status === 'dismissed'
-
   let middle: React.ReactNode = null
   if (status === 'pending_review') {
     middle = (
       <Button
-        size="md"
+        size="sm"
         variant="ghost"
         pending={dismiss.isPending}
         onClick={() => {
@@ -55,10 +58,10 @@ export function StickyActions({ appId, status, applyUrl }: StickyActionsProps) {
         Dismiss
       </Button>
     )
-  } else if (isApplied) {
+  } else if (status === 'applied') {
     middle = (
       <Button
-        size="md"
+        size="sm"
         variant="ghost"
         pending={moveBackToPending.isPending}
         onClick={() => {
@@ -69,10 +72,10 @@ export function StickyActions({ appId, status, applyUrl }: StickyActionsProps) {
         Unapply
       </Button>
     )
-  } else if (isDismissed) {
+  } else if (status === 'dismissed') {
     middle = (
       <Button
-        size="md"
+        size="sm"
         variant="ghost"
         pending={moveBackToPending.isPending}
         onClick={() => {
@@ -85,27 +88,10 @@ export function StickyActions({ appId, status, applyUrl }: StickyActionsProps) {
     )
   }
 
-  const applyLabel = isApplied ? 'Open again ↗' : 'Apply ↗'
-
   return (
-    <div
-      className="md:hidden fixed bottom-0 inset-x-0 bg-surface border-t border-border p-3 flex gap-2 items-center"
-      style={{ paddingBottom: 'calc(0.75rem + env(safe-area-inset-bottom, 0px))' }}
-    >
-      <Button size="md" variant="ghost" onClick={() => navigate(-1)}>
-        ← Back
-      </Button>
+    <div className="hidden md:flex items-center gap-2">
       {middle}
-      <a
-        href={applyUrl}
-        onClick={(e) => {
-          e.preventDefault()
-          onOpen()
-        }}
-        className="flex-1 inline-flex items-center justify-center bg-accent text-accent-fg font-semibold rounded-md-token px-4 py-2.5 min-h-[40px]"
-      >
-        {applyLabel}
-      </a>
+      <HeaderApplyButton appId={appId} status={status} applyUrl={applyUrl} />
     </div>
   )
 }
