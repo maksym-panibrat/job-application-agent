@@ -38,8 +38,13 @@ class FanoutTimeoutError(Exception):
     """
 
 
-def _normalize(text: str) -> str:
-    """Trim, lowercase, collapse internal whitespace runs to single hyphens."""
+def normalize(text: str) -> str:
+    """Trim, lowercase, collapse internal whitespace runs to single hyphens.
+
+    Public because `app.services.company_catalog` imports it: both modules
+    must agree on the rule (it produces `Company.normalized_key`, the
+    unique key used by the catalog seeder's ON CONFLICT clause).
+    """
     s = text.strip().lower()
     s = re.sub(r"\s+", "-", s)
     return s
@@ -71,7 +76,7 @@ async def resolve(input_text: str, session: AsyncSession) -> Company | None:
 
     Returns None on no-match. Raises FanoutTimeoutError on fan-out timeout.
     """
-    normalized = _normalize(input_text)
+    normalized = normalize(input_text)
     if not normalized:
         return None
 

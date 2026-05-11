@@ -8,7 +8,7 @@ from app.services import company_resolver
 
 
 def test_normalize_strips_case_and_whitespace_and_hyphenates():
-    assert company_resolver._normalize("  Linear  ") == "linear"
-    assert company_resolver._normalize("Meta Platforms") == "meta-platforms"
-    assert company_resolver._normalize("ByteDance") == "bytedance"
-    assert company_resolver._normalize("Acme   Corp") == "acme-corp"
+    assert company_resolver.normalize("  Linear  ") == "linear"
+    assert company_resolver.normalize("Meta Platforms") == "meta-platforms"
+    assert company_resolver.normalize("ByteDance") == "bytedance"
+    assert company_resolver.normalize("Acme   Corp") == "acme-corp"
