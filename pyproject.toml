@@ -5,7 +5,7 @@ requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.30",
-    "sqlmodel>=0.0.21",
+    "sqlmodel>=0.0.38",
     "asyncpg>=0.29",
     "alembic>=1.13",
     "pydantic-settings>=2.4",
