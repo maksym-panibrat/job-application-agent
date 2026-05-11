@@ -16,7 +16,7 @@ export function useToast(): ToastContextValue {
   return ctx
 }
 
-const AUTO_DISMISS_MS = 5_000
+const AUTO_DISMISS_MS = 4_000
 
 const intentClass: Record<ToastIntent, string> = {
   success: 'border-l-success',

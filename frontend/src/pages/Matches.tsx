@@ -4,6 +4,7 @@ import { api, Application } from '../api/client'
 import { track } from '../lib/track'
 import { useStatusFilter } from '../lib/useStatusFilter'
 import { StatusChips, StatusCounts } from '../components/feed/StatusChips'
+import { SwipeableList, Type } from 'react-swipeable-list'
 import { MatchCard } from '../components/feed/MatchCard'
 import { ProfileCompletenessCard } from '../components/feed/ProfileCompletenessCard'
 import { SkeletonCard } from '../components/ui/Skeleton'
@@ -83,9 +84,15 @@ export default function Matches() {
               : `Nothing in your ${status} list yet.`}
           />
         ) : (
-          <div className="space-y-2">
+          <SwipeableList
+            type={Type.IOS}
+            fullSwipe
+            threshold={0.4}
+            className="space-y-2"
+            style={{ height: 'auto', overflowY: 'visible' }}
+          >
             {apps.data.map((app) => <MatchCard key={app.id} app={app} />)}
-          </div>
+          </SwipeableList>
         )}
       </div>
     </div>

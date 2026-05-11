@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { render, screen, waitFor, fireEvent } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import userEvent from '@testing-library/user-event'
 import { http, HttpResponse } from 'msw'
@@ -83,7 +83,9 @@ describe('MatchCard', () => {
     await user.click(screen.getByRole('button', { name: /more actions/i }))
     expect(screen.getByText(/save for later/i)).toBeInTheDocument()
     expect(screen.getByText(/open original posting/i)).toBeInTheDocument()
-    expect(screen.getByText(/dismiss/i)).toBeInTheDocument()
+    // Two "Dismiss" affordances render now: the kebab item and the trailing
+    // swipe-action button. Assert >= 1 so this test stays meaningful.
+    expect(screen.getAllByText(/dismiss/i).length).toBeGreaterThanOrEqual(1)
   })
 
   it('clicking Dismiss in the kebab triggers PATCH and shows undo toast', async () => {
@@ -97,12 +99,20 @@ describe('MatchCard', () => {
     const user = userEvent.setup()
     renderCard(makeApp())
     await user.click(screen.getByRole('button', { name: /more actions/i }))
-    await user.click(screen.getByText(/dismiss/i))
+    // Both the kebab item and the trailing swipe-action have role=button with
+    // name "Dismiss". Disambiguate by scoping to the action-sheet dialog.
+    const dialog = await screen.findByRole('dialog')
+    await user.click(within(dialog).getByRole('button', { name: /dismiss/i }))
     await waitFor(() => expect(patched).toEqual({ status: 'dismissed' }))
     expect(screen.getByRole('status')).toHaveTextContent(/dismissed/i)
   })
 
-  it('swipe-left past threshold triggers dismissal', async () => {
+  it('renders a trailing Dismiss swipe-action whose click triggers dismissal', async () => {
+    // We migrated swipe to react-swipeable-list (Type.IOS, fullSwipe). Simulating
+    // a real swipe in jsdom is brittle; the lib also exposes the action as a
+    // clickable element so users can tap-to-confirm without a full swipe.
+    // Asserting the click path covers both "tap on revealed action" and the
+    // wire-up to the dismiss mutation.
     let patched: unknown = null
     server.use(
       http.patch('/api/applications/app-1', async ({ request }) => {
@@ -110,11 +120,10 @@ describe('MatchCard', () => {
         return HttpResponse.json({ id: 'app-1', status: 'dismissed' })
       }),
     )
+    const user = userEvent.setup()
     renderCard(makeApp())
-    const surface = screen.getByTestId('swipe-surface')
-    fireEvent.pointerDown(surface, { clientX: 200, pointerId: 1 })
-    fireEvent.pointerMove(surface, { clientX: 100, pointerId: 1 })
-    fireEvent.pointerUp(surface, { clientX: 100, pointerId: 1 })
+    const trailingDismiss = screen.getByRole('button', { name: /^dismiss$/i })
+    await user.click(trailingDismiss)
     await waitFor(() => expect(patched).toEqual({ status: 'dismissed' }))
   })
 
@@ -146,20 +155,12 @@ describe('MatchCard', () => {
     await waitFor(() => expect(patched).toEqual({ status: 'pending_review' }))
   })
 
-  it('swipe-left on a dismissed card does NOT fire any PATCH', async () => {
-    let patchCount = 0
-    server.use(
-      http.patch('/api/applications/app-1', () => {
-        patchCount += 1
-        return HttpResponse.json({ id: 'app-1', status: 'dismissed' })
-      }),
-    )
+  it('does NOT render the trailing Dismiss swipe-action when status is dismissed', () => {
     renderCard(makeApp({ status: 'dismissed' }))
-    const surface = screen.getByTestId('swipe-surface')
-    fireEvent.pointerDown(surface, { clientX: 200, pointerId: 1 })
-    fireEvent.pointerMove(surface, { clientX: 100, pointerId: 1 })
-    fireEvent.pointerUp(surface, { clientX: 100, pointerId: 1 })
-    await new Promise((r) => setTimeout(r, 30))
-    expect(patchCount).toBe(0)
+    // The only "Dismiss" affordance for a dismissed card lives inside the kebab
+    // (which we open separately). There must be no inline button labelled
+    // "Dismiss" in the rendered output — otherwise a tap could re-dismiss an
+    // already-dismissed match.
+    expect(screen.queryByRole('button', { name: /^dismiss$/i })).not.toBeInTheDocument()
   })
 })
