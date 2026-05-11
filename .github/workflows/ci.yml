@@ -5,6 +5,10 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+  packages: write
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -110,189 +114,31 @@ jobs:
           path: frontend/playwright-report/
           retention-days: 7
 
-  migrate:
-    # Build+push image and run Alembic as a Cloud Run Job. Must pass before deploy —
-    # a broken migration on an already-deployed API is worse than a blocked deploy.
+  build-and-push:
+    # Build + push to GHCR, then dispatch a bump into panibrat-infra.
+    # Replaces the old GCP path (migrate → Cloud Run deploy → smoke against Cloud Run URL).
+    # Alembic migrations now happen on the box (Phase B will add the dedicated
+    # alembic-upgrade compose service; for Phase A the existing in-app behavior
+    # — migrations run during local dev only, prod migrations stay manual until
+    # Phase B — is preserved).
     runs-on: ubuntu-latest
     needs: [test, frontend, e2e-browser]
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-    permissions:
-      id-token: write
-      contents: read
     steps:
       - uses: actions/checkout@v5
-
-      - id: auth
-        uses: google-github-actions/auth@v3
-        with:
-          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
-          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
-
-      - name: Set up gcloud
-        uses: google-github-actions/setup-gcloud@v3
-
-      - name: Configure Docker for Artifact Registry
-        run: gcloud auth configure-docker us-central1-docker.pkg.dev
-
-      - name: Build and push image
+      - name: Login to GHCR
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+      - name: Build and push
         run: |
-          docker build \
-            -t us-central1-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/app/api:${{ github.sha }} \
-            -t us-central1-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/app/api:latest \
-            .
-          docker push us-central1-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/app/api:${{ github.sha }}
-          docker push us-central1-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/app/api:latest
-
-      - name: Run Alembic migrations
-        run: |
-          IMAGE="us-central1-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/app/api:${{ github.sha }}"
-          SA="${{ secrets.GCP_SERVICE_ACCOUNT }}"
-          if gcloud run jobs describe alembic-migrate --region us-central1 &>/dev/null; then
-            gcloud run jobs update alembic-migrate --image "$IMAGE" --region us-central1 \
-              --command="/app/.venv/bin/alembic,upgrade,head" \
-              --service-account="$SA"
-          else
-            gcloud run jobs create alembic-migrate \
-              --image "$IMAGE" --region us-central1 \
-              --command="/app/.venv/bin/alembic,upgrade,head" \
-              --set-secrets="DATABASE_URL=database-url:latest" \
-              --service-account="$SA"
-          fi
-          gcloud run jobs execute alembic-migrate --region us-central1 --wait
-
-  deploy:
-    runs-on: ubuntu-latest
-    needs: [migrate]
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-    permissions:
-      id-token: write
-      contents: read
-    steps:
-      - uses: actions/checkout@v5
-
-      - id: auth
-        uses: google-github-actions/auth@v3
-        with:
-          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
-          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
-
-      - name: Set up gcloud
-        uses: google-github-actions/setup-gcloud@v3
-
-      - name: Build --set-secrets from secrets that actually exist
-        id: secrets
-        run: |
-          # Required secrets — deploy fails loud if missing (app can't start without these).
-          REQUIRED=(
-            "GOOGLE_API_KEY=google-api-key"
-            "ADZUNA_APP_ID=adzuna-app-id"
-            "ADZUNA_API_KEY=adzuna-api-key"
-            "DATABASE_URL=database-url"
-            "CRON_SHARED_SECRET=cron-shared-secret"
-            "JWT_SECRET=jwt-secret"
-          )
-          # Optional secrets — included only when present in Secret Manager.
-          # Keeps deploys from hard-failing when OAuth isn't provisioned yet;
-          # the app only mounts the OAuth router when both secrets are set.
-          OPTIONAL=(
-            "GOOGLE_OAUTH_CLIENT_ID=google-oauth-client-id"
-            "GOOGLE_OAUTH_CLIENT_SECRET=google-oauth-client-secret"
-          )
-          PAIRS=()
-          for entry in "${REQUIRED[@]}"; do
-            PAIRS+=("${entry}:latest")
-          done
-          for entry in "${OPTIONAL[@]}"; do
-            secret_name="${entry#*=}"
-            # Capture stderr so we can distinguish "NotFound" (secret absent)
-            # from "PermissionDenied" (IAM miss on the CI service account).
-            # The old silent-skip hid both behind the same message.
-            if err=$(gcloud secrets describe "$secret_name" --quiet 2>&1 >/dev/null); then
-              PAIRS+=("${entry}:latest")
-              echo "included optional secret: $secret_name"
-            else
-              echo "skipped optional secret: $secret_name"
-              echo "  gcloud stderr: ${err:0:500}"
-            fi
-          done
-          joined=$(IFS=','; echo "${PAIRS[*]}")
-          echo "secrets=$joined" >> "$GITHUB_OUTPUT"
-          # AUTH_ENABLED needs to reflect OAuth availability — off when its secrets aren't present.
-          if [[ "$joined" == *"GOOGLE_OAUTH_CLIENT_ID"* ]]; then
-            echo "auth_enabled=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "auth_enabled=false" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Deploy to Cloud Run
-        # PUBLIC_BASE_URL is the custom domain (job-search.panibrat.com) rather
-        # than the auto-generated run.app URL because Google's OAuth client is
-        # registered against the custom domain — the redirect_uri the app sends
-        # must match an authorized URI exactly.
-        run: |
-          gcloud run deploy api \
-            --image us-central1-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/app/api:${{ github.sha }} \
-            --region us-central1 \
-            --set-secrets="${{ steps.secrets.outputs.secrets }}" \
-            --set-env-vars="ENVIRONMENT=production,AUTH_ENABLED=${{ steps.secrets.outputs.auth_enabled }},PUBLIC_BASE_URL=https://job-search.panibrat.com" \
-            --service-account="${{ secrets.GCP_SERVICE_ACCOUNT }}" \
-            --min-instances=0 \
-            --max-instances=1 \
-            --allow-unauthenticated \
-            --port=8000
-
-      - name: Get Cloud Run URL
-        id: url
-        run: |
-          URL=$(gcloud run services describe api --region us-central1 \
-            --format="value(status.url)")
-          echo "url=$URL" >> $GITHUB_OUTPUT
-
-  smoke-prod:
-    # Runs scripts/smoke/golden_path.py against the just-deployed Cloud Run URL.
-    # Deliberate break in prod code → this job goes red → CI badge on main turns red.
-    # 60s warmup gives Cloud Run time to promote the new revision and wake a cold instance.
-    runs-on: ubuntu-latest
-    needs: [deploy]
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-    permissions:
-      id-token: write
-      contents: read
-    steps:
-      - uses: actions/checkout@v5
-      - uses: astral-sh/setup-uv@v8.1.0
-        with:
-          version: "latest"
-
-      - id: auth
-        uses: google-github-actions/auth@v3
-        with:
-          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
-          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
-
-      - name: Set up gcloud
-        uses: google-github-actions/setup-gcloud@v3
-
-      - name: Warm up Cloud Run (60s)
-        run: |
-          echo "Waiting 60s for new revision to promote and cold-start..."
-          sleep 60
-
-      - name: Install Python dependencies
-        run: uv sync --dev
-
-      - name: Fetch cron secret from Secret Manager
-        id: cron_secret
-        run: |
-          SECRET=$(gcloud secrets versions access latest --secret=cron-shared-secret)
-          echo "::add-mask::$SECRET"
-          echo "value=$SECRET" >> $GITHUB_OUTPUT
-
-      - name: Run golden-path smoke
-        # Smoke targets the custom domain (the URL real users hit) so DNS/cert
-        # and the routing-layer in front of Cloud Run are part of the SLO check.
+          SHA=${{ github.sha }}
+          docker build -t ghcr.io/maksym-panibrat/job-application-agent:$SHA -t ghcr.io/maksym-panibrat/job-application-agent:main .
+          docker push ghcr.io/maksym-panibrat/job-application-agent:$SHA
+          docker push ghcr.io/maksym-panibrat/job-application-agent:main
+      - name: Dispatch bump to panibrat-infra
         env:
-          SMOKE_BASE_URL: https://job-search.panibrat.com
-          SMOKE_BEARER_TOKEN: ${{ secrets.SMOKE_BEARER_TOKEN }}
-          SMOKE_CRON_SECRET: ${{ steps.cron_secret.outputs.value }}
-        run: uv run python scripts/smoke/golden_path.py --verbose
+          GH_TOKEN: ${{ secrets.INFRA_DISPATCH_TOKEN }}
+        run: |
+          gh api repos/maksym-panibrat/panibrat-infra/dispatches \
+            -f event_type=bump-app-image \
+            -F "client_payload[app]=job-search" \
+            -F "client_payload[sha]=${{ github.sha }}"
