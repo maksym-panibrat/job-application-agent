@@ -38,6 +38,12 @@ class Application(SQLModel, table=True):
     applied_at: datetime | None = Field(
         default=None, sa_column=Column(sa.DateTime(timezone=True), nullable=True)
     )
+    cover_letter_content: str | None = Field(
+        default=None, sa_column=Column(sa.Text, nullable=True)
+    )
+    generated_at: datetime | None = Field(
+        default=None, sa_column=Column(sa.DateTime(timezone=True), nullable=True)
+    )
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(UTC),
         sa_column=Column(sa.DateTime(timezone=True), nullable=False),

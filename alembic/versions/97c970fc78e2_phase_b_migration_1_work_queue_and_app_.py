@@ -73,11 +73,22 @@ def upgrade() -> None:
         ["claimed_at"],
         postgresql_where=sa.text("status = 'in_progress'"),
     )
+    # T11b additions:
+    op.add_column(
+        "applications", sa.Column("cover_letter_content", sa.Text, nullable=True)
+    )
+    op.add_column(
+        "applications",
+        sa.Column("generated_at", sa.DateTime(timezone=True), nullable=True),
+    )
 
 
 def downgrade() -> None:
+    # T11b reverse:
+    op.drop_column("applications", "generated_at")
+    op.drop_column("applications", "cover_letter_content")
     # T11a downgrade reverses table + indexes only.
-    # T11b and T11c will extend this downgrade() at the START with their own reverse ops.
+    # T11c will extend this downgrade() at the START with its own reverse ops.
     op.drop_index("work_queue_in_progress_claimed", table_name="work_queue")
     op.drop_index("work_queue_pending", table_name="work_queue")
     op.drop_index("work_queue_dedupe", table_name="work_queue")
