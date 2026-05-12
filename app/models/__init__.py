@@ -12,6 +12,7 @@ from app.models.slug_fetch import SlugFetch  # noqa: F401
 from app.models.usage_counters import UsageCounter  # noqa: F401
 from app.models.user import User  # noqa: F401
 from app.models.user_profile import Skill, UserProfile, WorkExperience  # noqa: F401
+from app.models.work_queue import WorkQueue, WorkQueueStatus  # noqa: F401
 
 __all__ = [
     "User",
@@ -28,4 +29,6 @@ __all__ = [
     "RateLimit",
     "SlugFetch",
     "UsageCounter",
+    "WorkQueue",
+    "WorkQueueStatus",
 ]
