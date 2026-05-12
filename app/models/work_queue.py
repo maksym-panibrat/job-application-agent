@@ -4,7 +4,7 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Any
 
-from sqlalchemy import BigInteger, Column, DateTime, Integer, Text, text
+from sqlalchemy import BigInteger, Column, DateTime, Index, Integer, Text, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field, SQLModel
 
@@ -18,6 +18,28 @@ class WorkQueueStatus(StrEnum):
 
 class WorkQueue(SQLModel, table=True):
     __tablename__ = "work_queue"
+    __table_args__ = (
+        Index(
+            "work_queue_dedupe",
+            "job_type",
+            "dedupe_key",
+            unique=True,
+            postgresql_where=text(
+                "status IN ('pending', 'in_progress') AND dedupe_key IS NOT NULL"
+            ),
+        ),
+        Index(
+            "work_queue_pending",
+            "job_type",
+            "enqueued_at",
+            postgresql_where=text("status = 'pending'"),
+        ),
+        Index(
+            "work_queue_in_progress_claimed",
+            "claimed_at",
+            postgresql_where=text("status = 'in_progress'"),
+        ),
+    )
 
     id: int | None = Field(
         default=None,
