@@ -56,7 +56,7 @@ async def run_generation_queue(*, deadline_seconds: int = 240) -> dict:
     Bounded by `deadline_seconds` per Cloud Run's 300s wall: 10 pending apps ×
     ~10-30s per generate_materials call easily exceeds 300s if Gemini is slow.
     Iterations after the deadline trips are deferred to the next tick — they
-    stay in generation_status='pending' and become eligible immediately
+    stay in the pending generation state and become eligible immediately
     (no lease in this lifecycle, contrast with run_match_queue's 300s lease).
 
     Note: `generate_materials` is a synchronous-LLM call (no checkpointer).

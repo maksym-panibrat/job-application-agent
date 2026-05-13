@@ -195,7 +195,7 @@ async def cron_generation_reconcile():
             text("""
                 SELECT a.id::text AS app_id
                 FROM applications a
-                WHERE a.generation_status = 'pending'
+                WHERE a.generation_status IN ('pending')
                   AND a.generation_attempts < 5
                   AND a.updated_at < now() - interval '5 minutes'
                   AND NOT EXISTS (
