@@ -54,15 +54,11 @@ async def test_cron_sync_returns_structured_summary(client):
         "/internal/cron/sync",
         headers={"X-Cron-Secret": CRON_SECRET},
     )
-    assert resp.status_code == 200
+    assert resp.status_code == 202
     data = resp.json()
-    assert data["status"] == "ok"
-    assert isinstance(data["duration_ms"], int)
-    # /internal/cron/sync is now a bulk-enqueue (Task 14): it seeds the
-    # slug_fetches queue rather than fetching directly. The actual fetch
-    # happens in /internal/cron/process-sync-queue.
-    assert isinstance(data["profiles_enqueued"], int)
-    assert isinstance(data["slugs_enqueued"], int)
+    assert isinstance(data["enqueued"], list)
+    assert isinstance(data["pruned"], int)
+    assert isinstance(data["active_profiles"], int)
 
 
 @pytest.mark.asyncio
