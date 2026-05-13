@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 
 import structlog
 from fastapi import APIRouter, Depends, Header, HTTPException, status
+from sqlalchemy import text
 from sqlmodel import select
 
 from app.agents.llm_safe import BudgetExhausted
@@ -157,6 +158,50 @@ async def cron_process_match_queue():
     from app.scheduler.tasks import run_match_queue
 
     return await _run_cron("process_match_queue", run_match_queue)
+
+
+@router.post(
+    "/generation-reconcile",
+    dependencies=[Depends(verify_secret)],
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def cron_generation_reconcile():
+    factory = get_session_factory()
+    enqueued: list[int] = []
+    async with factory() as session:
+        orphans = await session.execute(
+            text("""
+                SELECT a.id::text AS app_id
+                FROM applications a
+                WHERE a.generation_status = 'pending'
+                  AND a.generation_attempts < 5
+                  AND a.updated_at < now() - interval '5 minutes'
+                  AND NOT EXISTS (
+                      SELECT 1 FROM work_queue w
+                      WHERE w.job_type = 'generate-cover-letter'
+                        AND w.dedupe_key = 'generate-cover-letter:' || a.id::text
+                        AND (
+                          w.status IN ('pending', 'in_progress')
+                          OR (
+                            w.status IN ('done', 'failed')
+                            AND w.completed_at > now() - interval '5 minutes'
+                          )
+                        )
+                  )
+            """)
+        )
+        for (app_id,) in orphans.all():
+            row_id = await enqueue(
+                session,
+                job_type="generate-cover-letter",
+                payload={"application_id": app_id},
+                dedupe_key=f"generate-cover-letter:{app_id}",
+            )
+            if row_id is not None:
+                enqueued.append(row_id)
+        await session.commit()
+    await log.ainfo("cron.generation_reconcile.completed", reconciled=len(enqueued))
+    return {"reconciled": enqueued}
 
 
 @router.post(
