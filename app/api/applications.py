@@ -4,17 +4,17 @@ import uuid
 from datetime import UTC, datetime
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
 from app.api.deps import get_current_profile
-from app.database import get_db
+from app.database import get_db, get_session_factory
 from app.models.application import Application, GeneratedDocument
 from app.models.job import Job
 from app.models.user_profile import UserProfile
 from app.models.work_queue import WorkQueue, WorkQueueStatus
-from app.services import match_service
+from app.services import application_service, match_service
 
 log = structlog.get_logger()
 router = APIRouter(prefix="/api/applications", tags=["applications"])
@@ -184,34 +184,26 @@ async def update_document(
     return {"id": str(doc.id), "saved": True}
 
 
-@router.post("/{app_id}/cover-letter")
+@router.post("/{app_id}/cover-letter", status_code=status.HTTP_202_ACCEPTED)
 async def generate_cover_letter(
     app_id: str,
     profile: UserProfile = Depends(get_current_profile),
     session: AsyncSession = Depends(get_db),
 ):
-    """Synchronously generate a cover letter for the application.
-
-    Returns the saved GeneratedDocument. Generation runs in-process — the
-    request blocks until the LLM responds (≈10-30s). Re-invoking on an
-    already-generated app overwrites the existing cover letter.
-    """
-    from app.services.application_service import generate_materials
-
     app = await session.get(Application, uuid.UUID(app_id))
     if not app or app.profile_id != profile.id:
         raise HTTPException(status_code=404, detail="Application not found")
-    if app.generation_status == "generating":
-        raise HTTPException(status_code=409, detail="Generation already in progress")
-
-    doc = await generate_materials(app.id, session)
-    return {
-        "id": str(doc.id),
-        "doc_type": doc.doc_type,
-        "content_md": doc.content_md,
-        "generation_model": doc.generation_model,
-        "created_at": doc.created_at,
-    }
+    try:
+        job_id = await application_service.flip_to_pending_and_enqueue(
+            session_factory=get_session_factory(),
+            application_id=app.id,
+        )
+    except application_service.IllegalTransition as exc:
+        raise HTTPException(
+            status_code=409,
+            detail="generation already in flight",
+        ) from exc
+    return {"status": "pending", "job_id": job_id}
 
 
 @router.get("/{app_id}/cover-letter/status")

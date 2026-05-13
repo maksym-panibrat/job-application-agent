@@ -206,3 +206,41 @@ async def test_status_failed_with_failed_queue(authed_client, db_session, seeded
     body = response.json()
     assert body["status"] == "failed"
     assert body["error"] == "boom"
+
+
+@pytest.mark.asyncio
+async def test_post_returns_202_with_job_id(authed_client, db_session, seeded_user):
+    _, profile = seeded_user
+    app = await _seed_application(db_session, profile, generation_status="none")
+
+    response = await authed_client.post(f"/api/applications/{app.id}/cover-letter")
+
+    assert response.status_code == 202
+    body = response.json()
+    assert body["status"] == "pending"
+    assert "job_id" in body
+
+
+@pytest.mark.asyncio
+async def test_post_rejects_when_already_in_flight(
+    authed_client,
+    db_session,
+    seeded_user,
+):
+    _, profile = seeded_user
+    app = await _seed_application(db_session, profile, generation_status="generating")
+
+    response = await authed_client.post(f"/api/applications/{app.id}/cover-letter")
+
+    assert response.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_post_retry_allowed_from_failed(authed_client, db_session, seeded_user):
+    _, profile = seeded_user
+    app = await _seed_application(db_session, profile, generation_status="failed")
+
+    response = await authed_client.post(f"/api/applications/{app.id}/cover-letter")
+
+    assert response.status_code == 202
+    assert response.json()["status"] == "pending"
