@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import random
+import signal
 import time
 import uuid
 
@@ -22,8 +23,35 @@ from app.worker.handlers import (  # noqa: F401
 from app.worker.queue_service import claim_one, mark_done, mark_failed, release_with_backoff
 
 log = structlog.get_logger()
-_shutdown = asyncio.Event()
 _worker_id = str(uuid.uuid4())
+
+
+class _LoopLocalEvent:
+    def __init__(self) -> None:
+        self._events: dict[asyncio.AbstractEventLoop, asyncio.Event] = {}
+
+    def _event(self) -> asyncio.Event:
+        loop = asyncio.get_running_loop()
+        event = self._events.get(loop)
+        if event is None:
+            event = asyncio.Event()
+            self._events[loop] = event
+        return event
+
+    def clear(self) -> None:
+        self._event().clear()
+
+    def set(self) -> None:
+        self._event().set()
+
+    def is_set(self) -> bool:
+        return self._event().is_set()
+
+    async def wait(self) -> bool:
+        return await self._event().wait()
+
+
+_shutdown = _LoopLocalEvent()
 
 
 def _compute_backoff(attempts: int, settings: WorkerSettings) -> int:
@@ -40,7 +68,22 @@ async def _terminal_failure(handler, session_factory, job_row, error: str) -> No
 
 
 async def _handle_one(job_row, session_factory, settings: WorkerSettings) -> None:
-    handler = HANDLERS[job_row.job_type]
+    handler = HANDLERS.get(job_row.job_type)
+    if handler is None:
+        async with session_factory() as session:
+            await release_with_backoff(
+                session,
+                job_row.id,
+                seconds=settings.unknown_type_backoff_s,
+                worker_id=_worker_id,
+            )
+            await session.commit()
+        await log.awarning(
+            "worker.unknown_job_type",
+            job_id=job_row.id,
+            job_type=job_row.job_type,
+        )
+        return
 
     if job_row.attempts > handler.max_attempts:
         await _terminal_failure(
@@ -105,8 +148,15 @@ async def _handle_one(job_row, session_factory, settings: WorkerSettings) -> Non
 async def run() -> None:
     settings = WorkerSettings()
     _shutdown.clear()
+    try:
+        loop = asyncio.get_running_loop()
+        for sig in (signal.SIGTERM, signal.SIGINT):
+            loop.add_signal_handler(sig, _shutdown.set)
+    except (NotImplementedError, RuntimeError, ValueError):
+        pass
 
     inflight: set[asyncio.Task] = set()
+    shutdown_task = asyncio.create_task(_shutdown.wait(), name="shutdown-waiter")
     factory = get_session_factory()
 
     await log.ainfo(
@@ -119,9 +169,8 @@ async def run() -> None:
     while not _shutdown.is_set():
         if len(inflight) >= settings.concurrency:
             await asyncio.wait(
-                inflight,
+                inflight | {shutdown_task},
                 return_when=asyncio.FIRST_COMPLETED,
-                timeout=0.5,
             )
             continue
 
@@ -134,7 +183,13 @@ async def run() -> None:
             await session.commit()
 
         if job is None:
-            await asyncio.sleep(settings.poll_interval_s)
+            try:
+                await asyncio.wait_for(
+                    asyncio.shield(shutdown_task),
+                    timeout=settings.poll_interval_s,
+                )
+            except TimeoutError:
+                pass
             continue
 
         await log.ainfo(
@@ -147,3 +202,12 @@ async def run() -> None:
         task = asyncio.create_task(_handle_one(job, factory, settings))
         inflight.add(task)
         task.add_done_callback(inflight.discard)
+
+    await log.ainfo(
+        "worker.shutdown_drain_start",
+        inflight=len(inflight),
+        drain_budget_s=settings.drain_budget_s,
+    )
+    if inflight:
+        await asyncio.wait(inflight, timeout=settings.drain_budget_s)
+    await log.ainfo("worker.shutdown_drain_done", inflight=len(inflight))

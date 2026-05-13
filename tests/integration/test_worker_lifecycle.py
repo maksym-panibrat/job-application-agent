@@ -125,3 +125,61 @@ async def test_worker_runs_terminal_hook_on_generic_exception(db_session, monkey
     ).scalar_one()
     assert status == "failed"
     assert Bomb.terminal_hook_called
+
+
+@pytest.mark.asyncio
+async def test_worker_releases_unknown_job_type_with_backoff(db_session):
+    await enqueue(db_session, job_type="future-unknown-type", payload={})
+    await db_session.commit()
+
+    async def stop_soon():
+        await asyncio.sleep(1.5)
+        worker_main._shutdown.set()
+
+    await asyncio.gather(worker_main.run(), stop_soon())
+
+    row = (
+        await db_session.execute(
+            text(
+                "SELECT status, attempts, not_before FROM work_queue "
+                "WHERE job_type='future-unknown-type'"
+            )
+        )
+    ).first()
+    assert row[0] == "pending"
+    assert row[1] == 1
+    assert row[2] is not None
+
+
+@pytest.mark.asyncio
+async def test_worker_drains_in_flight_on_shutdown(db_session, monkeypatch):
+    started = asyncio.Event()
+    finished = asyncio.Event()
+    from app.worker.handlers import HANDLERS
+
+    class Slow:
+        max_attempts = 3
+
+        async def __call__(self, session, row):
+            started.set()
+            await asyncio.sleep(0.5)
+            finished.set()
+
+    monkeypatch.setitem(HANDLERS, "test-slow", Slow())
+
+    await enqueue(db_session, job_type="test-slow", payload={})
+    await db_session.commit()
+
+    async def stop_when_started():
+        await started.wait()
+        worker_main._shutdown.set()
+
+    await asyncio.gather(worker_main.run(), stop_when_started())
+
+    assert finished.is_set()
+    status = (
+        await db_session.execute(
+            text("SELECT status FROM work_queue WHERE job_type='test-slow'")
+        )
+    ).scalar_one()
+    assert status == "done"
