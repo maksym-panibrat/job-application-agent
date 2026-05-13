@@ -179,11 +179,37 @@ async def run_daily_maintenance() -> dict:
         if events_deleted:
             await log.ainfo("maintenance.events_deleted", count=events_deleted)
 
+        done_pruned = (
+            await session.execute(
+                text(
+                    "DELETE FROM work_queue WHERE status = 'done' "
+                    "AND completed_at < now() - interval '7 days'"
+                )
+            )
+        ).rowcount
+        failed_pruned = (
+            await session.execute(
+                text(
+                    "DELETE FROM work_queue WHERE status = 'failed' "
+                    "AND completed_at < now() - interval '30 days'"
+                )
+            )
+        ).rowcount
+        await session.commit()
+        if done_pruned or failed_pruned:
+            await log.ainfo(
+                "maintenance.work_queue_pruned",
+                done=done_pruned,
+                failed=failed_pruned,
+            )
+
     return {
         "stale_jobs": stale,
         "searches_paused": len(expired_profiles),
         "applications_trimmed": trimmed,
         "events_deleted": events_deleted,
+        "work_queue_done_pruned": done_pruned,
+        "work_queue_failed_pruned": failed_pruned,
     }
 
 
