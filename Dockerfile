@@ -11,6 +11,7 @@ COPY pyproject.toml uv.lock ./
 RUN uv sync --no-dev --frozen
 
 FROM python:3.12-slim-bookworm AS runtime
+LABEL org.opencontainers.image.requires-infra-bundle="phase-b"
 WORKDIR /app
 COPY --from=builder /app/.venv /app/.venv
 COPY app/ ./app/
