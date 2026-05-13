@@ -67,11 +67,9 @@ async def test_cron_generation_queue_returns_structured_summary(client):
         "/internal/cron/generation-queue",
         headers={"X-Cron-Secret": CRON_SECRET},
     )
-    assert resp.status_code == 200
+    assert resp.status_code == 202
     data = resp.json()
-    assert data["status"] == "ok"
-    assert isinstance(data["attempted"], int)
-    assert isinstance(data["duration_ms"], int)
+    assert data["status"] == "deprecated"
 
 
 @pytest.mark.asyncio

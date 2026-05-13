@@ -12,7 +12,6 @@ from app.agents.llm_safe import BudgetExhausted
 from app.config import Settings, get_settings
 from app.database import get_session_factory
 from app.models.user_profile import UserProfile
-from app.scheduler.tasks import run_generation_queue
 from app.worker.payloads import FetchSlugPayload
 from app.worker.queue_service import enqueue
 
@@ -141,23 +140,46 @@ async def cron_sync():
     }
 
 
-@router.post("/generation-queue", dependencies=[Depends(verify_secret)])
+@router.post(
+    "/generation-queue",
+    dependencies=[Depends(verify_secret)],
+    status_code=status.HTTP_202_ACCEPTED,
+    deprecated=True,
+)
 async def cron_generation_queue():
-    return await _run_cron("generation_queue", run_generation_queue)
+    await log.ainfo("cron.deprecated_endpoint_hit", endpoint="generation-queue")
+    return {
+        "status": "deprecated",
+        "note": "use /internal/cron/generation-reconcile + inline-enqueue",
+    }
 
 
-@router.post("/process-sync-queue", dependencies=[Depends(verify_secret)])
+@router.post(
+    "/process-sync-queue",
+    dependencies=[Depends(verify_secret)],
+    status_code=status.HTTP_202_ACCEPTED,
+    deprecated=True,
+)
 async def cron_process_sync_queue():
-    from app.scheduler.tasks import run_sync_queue
+    await log.ainfo("cron.deprecated_endpoint_hit", endpoint="process-sync-queue")
+    return {
+        "status": "deprecated",
+        "note": "worker drains internally; this shim is a no-op",
+    }
 
-    return await _run_cron("process_sync_queue", run_sync_queue)
 
-
-@router.post("/process-match-queue", dependencies=[Depends(verify_secret)])
+@router.post(
+    "/process-match-queue",
+    dependencies=[Depends(verify_secret)],
+    status_code=status.HTTP_202_ACCEPTED,
+    deprecated=True,
+)
 async def cron_process_match_queue():
-    from app.scheduler.tasks import run_match_queue
-
-    return await _run_cron("process_match_queue", run_match_queue)
+    await log.ainfo("cron.deprecated_endpoint_hit", endpoint="process-match-queue")
+    return {
+        "status": "deprecated",
+        "note": "worker drains internally; this shim is a no-op",
+    }
 
 
 @router.post(
