@@ -1,6 +1,6 @@
-# Regression: matching agent fan-out sent all N jobs to the API
-# simultaneously with no concurrency cap, causing 429 errors.
-# Also validates the fan-out does not block the event loop.
+# Phase B moves concurrency control out of the matching agent and into the
+# worker queue. This file keeps the old fan-out surface under test so a future
+# hidden throttle does not reappear inside the agent.
 
 import asyncio
 from unittest.mock import MagicMock, patch
@@ -36,10 +36,8 @@ def _fake_llm_response():
 
 
 @pytest.mark.asyncio
-async def test_matching_agent_limits_concurrent_api_calls():
-    """Fan-out scoring must not exceed matching_max_concurrency simultaneous
-    API calls. Validated using asyncio tracking (not threading)."""
-    max_concurrency = 3
+async def test_matching_agent_has_no_internal_concurrency_throttle():
+    """Worker concurrency is the throttle; the graph fan-out stays unbounded."""
     num_jobs = 10
     call_lock = asyncio.Lock()
     active = {"value": 0}
@@ -59,14 +57,7 @@ async def test_matching_agent_limits_concurrent_api_calls():
     mock_bound.ainvoke = tracking_ainvoke
     mock_llm.bind_tools.return_value = mock_bound
 
-    with (
-        patch("app.agents.matching_agent.get_llm", return_value=mock_llm),
-        patch("app.agents.matching_agent.get_settings") as mock_settings,
-    ):
-        settings = MagicMock()
-        settings.matching_max_concurrency = max_concurrency
-        mock_settings.return_value = settings
-
+    with patch("app.agents.matching_agent.get_llm", return_value=mock_llm):
         graph = build_graph()
         result = await graph.ainvoke(
             {
@@ -78,7 +69,4 @@ async def test_matching_agent_limits_concurrent_api_calls():
         )
 
     assert len(result["scores"]) == num_jobs
-    assert peak_concurrent["value"] <= max_concurrency, (
-        f"Peak concurrent API calls ({peak_concurrent['value']}) exceeded "
-        f"max_concurrency ({max_concurrency})"
-    )
+    assert peak_concurrent["value"] == num_jobs
