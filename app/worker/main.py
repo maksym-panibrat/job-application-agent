@@ -20,7 +20,7 @@ from app.worker.handlers import (  # noqa: F401
     maintenance,
     match,
 )
-from app.worker.queue_service import claim_one, mark_done, mark_failed, release_with_backoff
+from app.worker.queue_service import StaleLease, claim_one, mark_failed, release_with_backoff
 
 log = structlog.get_logger()
 _worker_id = str(uuid.uuid4())
@@ -67,6 +67,17 @@ async def _terminal_failure(handler, session_factory, job_row, error: str) -> No
         await session.commit()
 
 
+async def _release_for_retry(session_factory, job_row, seconds: int) -> None:
+    async with session_factory() as session:
+        await release_with_backoff(
+            session,
+            job_row.id,
+            seconds=seconds,
+            worker_id=_worker_id,
+        )
+        await session.commit()
+
+
 async def _handle_one(job_row, session_factory, settings: WorkerSettings) -> None:
     handler = HANDLERS.get(job_row.job_type)
     if handler is None:
@@ -86,19 +97,35 @@ async def _handle_one(job_row, session_factory, settings: WorkerSettings) -> Non
         return
 
     if job_row.attempts > handler.max_attempts:
-        await _terminal_failure(
-            handler,
-            session_factory,
-            job_row,
-            error=f"max_attempts ({handler.max_attempts}) exceeded",
-        )
-        await log.aerror(
-            "worker.handler_max_attempts",
-            job_id=job_row.id,
-            job_type=job_row.job_type,
-            attempts=job_row.attempts,
-            max_attempts=handler.max_attempts,
-        )
+        try:
+            await _terminal_failure(
+                handler,
+                session_factory,
+                job_row,
+                error=f"max_attempts ({handler.max_attempts}) exceeded",
+            )
+        except Exception:
+            await log.aexception(
+                "worker.terminal_failure_hook_retry",
+                job_id=job_row.id,
+                job_type=job_row.job_type,
+            )
+            try:
+                await _release_for_retry(
+                    session_factory,
+                    job_row,
+                    settings.transient_backoff_max_s,
+                )
+            except StaleLease:
+                pass
+        else:
+            await log.aerror(
+                "worker.handler_max_attempts",
+                job_id=job_row.id,
+                job_type=job_row.job_type,
+                attempts=job_row.attempts,
+                max_attempts=handler.max_attempts,
+            )
         return
 
     started_at = time.monotonic()
@@ -125,24 +152,63 @@ async def _handle_one(job_row, session_factory, settings: WorkerSettings) -> Non
         )
         return
     except Exception as exc:
-        await _terminal_failure(handler, session_factory, job_row, error=str(exc))
+        try:
+            await _terminal_failure(handler, session_factory, job_row, error=str(exc))
+        except Exception:
+            await log.aexception(
+                "worker.terminal_failure_hook_retry",
+                job_id=job_row.id,
+                job_type=job_row.job_type,
+            )
+            try:
+                await _release_for_retry(
+                    session_factory,
+                    job_row,
+                    settings.transient_backoff_max_s,
+                )
+            except StaleLease:
+                pass
+        else:
+            await log.aexception(
+                "worker.job_failed",
+                job_id=job_row.id,
+                job_type=job_row.job_type,
+            )
+        return
+
+    try:
+        async with session_factory() as session:
+            from app.worker import queue_service
+
+            await queue_service.mark_done(session, job_row.id, worker_id=_worker_id)
+            await session.commit()
+    except Exception:
         await log.aexception(
-            "worker.job_failed",
+            "worker.mark_done_failed",
             job_id=job_row.id,
             job_type=job_row.job_type,
         )
+        try:
+            await _release_for_retry(
+                session_factory,
+                job_row,
+                settings.mark_done_retry_backoff_s,
+            )
+        except Exception:
+            await log.aexception(
+                "worker.mark_done_release_failed",
+                job_id=job_row.id,
+                job_type=job_row.job_type,
+            )
         return
-
-    async with session_factory() as session:
-        await mark_done(session, job_row.id, worker_id=_worker_id)
-        await session.commit()
-    await log.ainfo(
-        "worker.job_done",
-        job_id=job_row.id,
-        job_type=job_row.job_type,
-        worker_id=_worker_id,
-        duration_ms=int((time.monotonic() - started_at) * 1000),
-    )
+    else:
+        await log.ainfo(
+            "worker.job_done",
+            job_id=job_row.id,
+            job_type=job_row.job_type,
+            worker_id=_worker_id,
+            duration_ms=int((time.monotonic() - started_at) * 1000),
+        )
 
 
 async def run() -> None:

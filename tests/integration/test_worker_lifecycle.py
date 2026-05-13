@@ -183,3 +183,45 @@ async def test_worker_drains_in_flight_on_shutdown(db_session, monkeypatch):
         )
     ).scalar_one()
     assert status == "done"
+
+
+@pytest.mark.asyncio
+async def test_mark_done_failure_releases_row_for_replay(db_session, monkeypatch):
+    from app.worker import queue_service
+    from app.worker.handlers import HANDLERS
+
+    class Succeed:
+        max_attempts = 3
+
+        async def __call__(self, session, row):
+            pass
+
+    monkeypatch.setitem(HANDLERS, "test-domain-ok", Succeed())
+
+    await enqueue(db_session, job_type="test-domain-ok", payload={})
+    await db_session.commit()
+
+    async def failing_mark_done(session, job_id, *, worker_id):
+        raise RuntimeError("simulated mark_done DB failure")
+
+    monkeypatch.setattr(queue_service, "mark_done", failing_mark_done)
+    monkeypatch.setattr(worker_main, "mark_done", failing_mark_done, raising=False)
+
+    async def stop_soon():
+        await asyncio.sleep(1.5)
+        worker_main._shutdown.set()
+
+    await asyncio.gather(worker_main.run(), stop_soon())
+
+    row = (
+        await db_session.execute(
+            text(
+                "SELECT status, last_error, claimed_by, not_before FROM work_queue "
+                "WHERE job_type='test-domain-ok'"
+            )
+        )
+    ).first()
+    assert row[0] == "pending"
+    assert row[1] is None
+    assert row[2] is None
+    assert row[3] is not None
