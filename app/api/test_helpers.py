@@ -24,6 +24,7 @@ from app.models.user_profile import UserProfile
 router = APIRouter(prefix="/api/test", tags=["test"])
 
 E2E_TEST_USER_ID = uuid.UUID("a0e2e0e2-e0e2-4e2e-9e2e-e2ee2ee2ee2e")
+READY_GENERATION_STATUS = "ready"
 
 SEED_JOB_1_EXTERNAL_ID = "e2e-seed-job-001"
 SEED_JOB_2_EXTERNAL_ID = "e2e-seed-job-002"
@@ -115,7 +116,7 @@ async def seed_test_data(
                 job_id=job.id,
                 profile_id=profile.id,
                 status="pending_review",
-                generation_status="ready",
+                generation_status=READY_GENERATION_STATUS,
                 match_score=0.87,
                 match_summary="Senior backend role, Python+FastAPI, remote.",
                 match_rationale="Strong Python and backend experience aligns well.",

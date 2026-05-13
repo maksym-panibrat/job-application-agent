@@ -54,15 +54,11 @@ async def test_cron_sync_returns_structured_summary(client):
         "/internal/cron/sync",
         headers={"X-Cron-Secret": CRON_SECRET},
     )
-    assert resp.status_code == 200
+    assert resp.status_code == 202
     data = resp.json()
-    assert data["status"] == "ok"
-    assert isinstance(data["duration_ms"], int)
-    # /internal/cron/sync is now a bulk-enqueue (Task 14): it seeds the
-    # slug_fetches queue rather than fetching directly. The actual fetch
-    # happens in /internal/cron/process-sync-queue.
-    assert isinstance(data["profiles_enqueued"], int)
-    assert isinstance(data["slugs_enqueued"], int)
+    assert isinstance(data["enqueued"], list)
+    assert isinstance(data["pruned"], int)
+    assert isinstance(data["active_profiles"], int)
 
 
 @pytest.mark.asyncio
@@ -71,11 +67,9 @@ async def test_cron_generation_queue_returns_structured_summary(client):
         "/internal/cron/generation-queue",
         headers={"X-Cron-Secret": CRON_SECRET},
     )
-    assert resp.status_code == 200
+    assert resp.status_code == 202
     data = resp.json()
-    assert data["status"] == "ok"
-    assert isinstance(data["attempted"], int)
-    assert isinstance(data["duration_ms"], int)
+    assert data["status"] == "deprecated"
 
 
 @pytest.mark.asyncio
@@ -84,11 +78,9 @@ async def test_cron_maintenance_returns_structured_summary(client):
         "/internal/cron/maintenance",
         headers={"X-Cron-Secret": CRON_SECRET},
     )
-    assert resp.status_code == 200
+    assert resp.status_code == 202
     data = resp.json()
-    assert data["status"] == "ok"
-    assert isinstance(data["stale_jobs"], int)
-    assert isinstance(data["duration_ms"], int)
+    assert isinstance(data["enqueued"], list)
 
 
 @pytest.mark.asyncio

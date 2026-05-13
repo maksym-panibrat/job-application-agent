@@ -22,6 +22,15 @@ jobs:
         run: uv sync --dev
       - name: Lint
         run: uv run ruff check app/ tests/
+      - name: Guard generation_status writes
+        run: |
+          set -e
+          if grep -rEn --include='*.py' 'generation_status\s*=\s*["\x27]' app/ \
+              | grep -v 'app/services/application_service.py' \
+              | grep -v 'app/worker/handlers/generate_cover_letter.py'; then
+            echo "::error::generation_status= written outside allowed files; see spec Centralized state transition." >&2
+            exit 1
+          fi
       - name: Unit tests
         run: uv run pytest tests/unit/ -v --cov=app --cov-report=term --cov-fail-under=39
         env:

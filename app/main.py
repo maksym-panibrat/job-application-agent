@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -104,7 +105,20 @@ async def lifespan(app: FastAPI):
             count = await seed_catalog(session)
             await log.ainfo("catalog.ready", count=count)
 
-        yield
+        from app.observability.queue_depth import _emit_queue_depth_forever
+
+        depth_task = asyncio.create_task(
+            _emit_queue_depth_forever(get_session_factory()),
+            name="queue-depth-emitter",
+        )
+        try:
+            yield
+        finally:
+            depth_task.cancel()
+            try:
+                await depth_task
+            except asyncio.CancelledError:
+                pass
 
     await log.ainfo("app.shutdown")
 

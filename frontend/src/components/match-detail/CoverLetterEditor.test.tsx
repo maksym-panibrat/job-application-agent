@@ -36,19 +36,22 @@ describe('CoverLetterEditor', () => {
 
   it('clicking Generate calls POST /api/applications/:id/cover-letter', async () => {
     let called = false
+    let statusCalled = false
     server.use(
       http.post('/api/applications/app-1/cover-letter', () => {
         called = true
-        return HttpResponse.json({
-          id: 'd1', doc_type: 'cover_letter', content_md: 'gen', generation_model: 'gemini-2.5-pro',
-          created_at: new Date().toISOString(),
-        })
+        return HttpResponse.json({ status: 'pending', job_id: 1 }, { status: 202 })
+      }),
+      http.get('/api/applications/app-1/cover-letter/status', () => {
+        statusCalled = true
+        return HttpResponse.json({ status: 'ready', attempts: 1, completed_at: new Date().toISOString() })
       }),
     )
     const user = userEvent.setup()
     render(withQuery(<CoverLetterEditor appId="app-1" doc={null} status="none" />))
     await user.click(screen.getByRole('button', { name: /generate cover letter/i }))
     await waitFor(() => expect(called).toBe(true))
+    await waitFor(() => expect(statusCalled).toBe(true))
   })
 
   it('shows an error toast on generation failure', async () => {
@@ -60,6 +63,25 @@ describe('CoverLetterEditor', () => {
     render(withQuery(<CoverLetterEditor appId="app-1" doc={null} status="none" />))
     await user.click(screen.getByRole('button', { name: /generate cover letter/i }))
     await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent(/rate limited/i))
+  })
+
+  it('shows a refresh message when the cover-letter POST returns a legacy body', async () => {
+    server.use(
+      http.post('/api/applications/app-1/cover-letter', () =>
+        HttpResponse.json({
+          id: 'd1',
+          doc_type: 'cover_letter',
+          content_md: 'legacy',
+          generation_model: 'gemini-2.5-pro',
+          created_at: new Date().toISOString(),
+        })),
+    )
+    const user = userEvent.setup()
+    render(withQuery(<CoverLetterEditor appId="app-1" doc={null} status="none" />))
+    await user.click(screen.getByRole('button', { name: /generate cover letter/i }))
+    await waitFor(() => {
+      expect(screen.getByRole('status')).toHaveTextContent(/please refresh/i)
+    })
   })
 
   it('PDF download fetches with the Authorization header (not a plain anchor)', async () => {

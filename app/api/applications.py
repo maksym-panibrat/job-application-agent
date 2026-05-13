@@ -4,16 +4,17 @@ import uuid
 from datetime import UTC, datetime
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
 from app.api.deps import get_current_profile
-from app.database import get_db
+from app.database import get_db, get_session_factory
 from app.models.application import Application, GeneratedDocument
 from app.models.job import Job
 from app.models.user_profile import UserProfile
-from app.services import match_service
+from app.models.work_queue import WorkQueue, WorkQueueStatus
+from app.services import application_service, match_service
 
 log = structlog.get_logger()
 router = APIRouter(prefix="/api/applications", tags=["applications"])
@@ -183,34 +184,89 @@ async def update_document(
     return {"id": str(doc.id), "saved": True}
 
 
-@router.post("/{app_id}/cover-letter")
+@router.post("/{app_id}/cover-letter", status_code=status.HTTP_202_ACCEPTED)
 async def generate_cover_letter(
     app_id: str,
     profile: UserProfile = Depends(get_current_profile),
     session: AsyncSession = Depends(get_db),
 ):
-    """Synchronously generate a cover letter for the application.
-
-    Returns the saved GeneratedDocument. Generation runs in-process — the
-    request blocks until the LLM responds (≈10-30s). Re-invoking on an
-    already-generated app overwrites the existing cover letter.
-    """
-    from app.services.application_service import generate_materials
-
     app = await session.get(Application, uuid.UUID(app_id))
     if not app or app.profile_id != profile.id:
         raise HTTPException(status_code=404, detail="Application not found")
-    if app.generation_status == "generating":
-        raise HTTPException(status_code=409, detail="Generation already in progress")
+    try:
+        job_id = await application_service.flip_to_pending_and_enqueue(
+            session_factory=get_session_factory(),
+            application_id=app.id,
+        )
+    except application_service.IllegalTransition as exc:
+        raise HTTPException(
+            status_code=409,
+            detail="generation already in flight",
+        ) from exc
+    return {"status": "pending", "job_id": job_id}
 
-    doc = await generate_materials(app.id, session)
-    return {
-        "id": str(doc.id),
-        "doc_type": doc.doc_type,
-        "content_md": doc.content_md,
-        "generation_model": doc.generation_model,
-        "created_at": doc.created_at,
+
+@router.get("/{app_id}/cover-letter/status")
+async def get_cover_letter_status(
+    app_id: str,
+    profile: UserProfile = Depends(get_current_profile),
+    session: AsyncSession = Depends(get_db),
+):
+    app = await session.get(Application, uuid.UUID(app_id))
+    if not app or app.profile_id != profile.id:
+        raise HTTPException(status_code=404, detail="Application not found")
+
+    queue_row = (
+        (
+            await session.execute(
+                select(WorkQueue)
+                .where(
+                    WorkQueue.job_type == "generate-cover-letter",
+                    WorkQueue.dedupe_key == f"generate-cover-letter:{app.id}",
+                )
+                .order_by(WorkQueue.enqueued_at.desc(), WorkQueue.id.desc())
+                .limit(1)
+            )
+        )
+        .scalars()
+        .first()
+    )
+    if app.generation_status == "none" and queue_row is None:
+        raise HTTPException(status_code=404, detail="No generation requested")
+
+    body = {
+        "status": app.generation_status,
+        "attempts": queue_row.attempts if queue_row is not None else app.generation_attempts,
     }
+    if queue_row is not None:
+        body["queued_at"] = queue_row.enqueued_at
+
+    if app.generation_status == "ready":
+        body["status"] = "ready"
+        body["completed_at"] = app.generated_at or (
+            queue_row.completed_at if queue_row is not None else None
+        )
+        return body
+
+    if app.generation_status == "failed":
+        body["status"] = "failed"
+        if queue_row is not None and queue_row.last_error:
+            body["error"] = queue_row.last_error
+        if queue_row is not None:
+            body["completed_at"] = queue_row.completed_at
+        return body
+
+    if queue_row is not None and queue_row.status == WorkQueueStatus.IN_PROGRESS:
+        body["status"] = "generating"
+        body["claimed_at"] = queue_row.claimed_at
+        return body
+
+    if app.generation_status == "generating":
+        body["status"] = "generating"
+        return body
+
+    body["status"] = "pending"
+    return body
 
 
 @router.post("/{app_id}/mark-applied")

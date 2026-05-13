@@ -1,6 +1,7 @@
-"""Integration tests for POST /api/applications/{id}/cover-letter (sync)."""
+"""Integration tests for POST /api/applications/{id}/cover-letter."""
 
 import pytest
+import sqlalchemy as sa
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlmodel import SQLModel
@@ -8,6 +9,7 @@ from sqlmodel import SQLModel
 import app.models  # noqa: F401
 from app.models.application import Application
 from app.models.job import Job
+from app.models.work_queue import WorkQueue
 
 
 @pytest.fixture
@@ -49,18 +51,29 @@ async def sample_application(db_session, seeded_user) -> Application:
 
 
 @pytest.mark.asyncio
-async def test_generate_cover_letter_returns_doc_synchronously(
-    client, auth_headers, sample_application
+async def test_generate_cover_letter_enqueues_generation(
+    client, auth_headers, sample_application, db_session
 ):
     r = await client.post(
         f"/api/applications/{sample_application.id}/cover-letter",
         headers=auth_headers,
     )
-    assert r.status_code == 200, r.text
+    assert r.status_code == 202, r.text
     body = r.json()
-    assert body["doc_type"] == "cover_letter"
-    assert isinstance(body["content_md"], str) and len(body["content_md"]) > 30
-    assert body["generation_model"] is not None
+    assert body["status"] == "pending"
+    assert isinstance(body["job_id"], int)
+    count = (
+        await db_session.execute(
+            sa.select(sa.func.count())
+            .select_from(WorkQueue)
+            .where(
+                WorkQueue.job_type == "generate-cover-letter",
+                WorkQueue.dedupe_key
+                == f"generate-cover-letter:{sample_application.id}",
+            )
+        )
+    ).scalar_one()
+    assert count == 1
 
 
 @pytest.mark.asyncio

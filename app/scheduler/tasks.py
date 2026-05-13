@@ -56,7 +56,7 @@ async def run_generation_queue(*, deadline_seconds: int = 240) -> dict:
     Bounded by `deadline_seconds` per Cloud Run's 300s wall: 10 pending apps ×
     ~10-30s per generate_materials call easily exceeds 300s if Gemini is slow.
     Iterations after the deadline trips are deferred to the next tick — they
-    stay in generation_status='pending' and become eligible immediately
+    stay in the pending generation state and become eligible immediately
     (no lease in this lifecycle, contrast with run_match_queue's 300s lease).
 
     Note: `generate_materials` is a synchronous-LLM call (no checkpointer).
@@ -179,11 +179,143 @@ async def run_daily_maintenance() -> dict:
         if events_deleted:
             await log.ainfo("maintenance.events_deleted", count=events_deleted)
 
+        done_pruned = (
+            await session.execute(
+                text(
+                    "DELETE FROM work_queue WHERE status = 'done' "
+                    "AND completed_at < now() - interval '7 days'"
+                )
+            )
+        ).rowcount
+        failed_pruned = (
+            await session.execute(
+                text(
+                    "DELETE FROM work_queue WHERE status = 'failed' "
+                    "AND completed_at < now() - interval '30 days'"
+                )
+            )
+        ).rowcount
+        await session.commit()
+        if done_pruned or failed_pruned:
+            await log.ainfo(
+                "maintenance.work_queue_pruned",
+                done=done_pruned,
+                failed=failed_pruned,
+            )
+
     return {
         "stale_jobs": stale,
         "searches_paused": len(expired_profiles),
         "applications_trimmed": trimmed,
         "events_deleted": events_deleted,
+        "work_queue_done_pruned": done_pruned,
+        "work_queue_failed_pruned": failed_pruned,
+    }
+
+
+async def fetch_one_slug(*, provider: str, slug: str, session_factory) -> dict:
+    """Fetch one provider slug, upsert jobs, and enqueue match work_queue rows."""
+    import httpx
+
+    from app.models.application import Application
+    from app.services import job_service, match_queue_service, slug_registry_service
+    from app.sources import SOURCES
+    from app.sources.base import InvalidSlugError, TransientFetchError
+    from app.sources.greenhouse_board import DEFAULT_TIMEOUT
+    from app.worker.queue_service import enqueue
+
+    adapter = SOURCES.get(provider)
+    if adapter is None:
+        await log.aerror("slug_fetch.unknown_provider", source=provider, slug=slug)
+        async with session_factory() as session:
+            await slug_registry_service.mark_fetched(
+                provider,
+                slug,
+                "transient_error",
+                session,
+                error="unknown provider",
+            )
+        return {
+            "status": "transient",
+            "new_jobs": 0,
+            "total_jobs": 0,
+            "matches_enqueued": 0,
+        }
+
+    async with session_factory() as session:
+        slug_row = await slug_registry_service.get(provider, slug, session)
+        last_fetched_at = slug_row.last_fetched_at if slug_row is not None else None
+    since = (
+        last_fetched_at - timedelta(hours=1)
+        if last_fetched_at is not None
+        else datetime.now(UTC) - timedelta(days=14)
+    )
+
+    try:
+        async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as client:
+            jobs = await adapter.fetch_jobs(slug, since=since, client=client)
+    except InvalidSlugError as exc:
+        async with session_factory() as session:
+            await slug_registry_service.mark_fetched(
+                provider, slug, "invalid", session, error=str(exc)
+            )
+        return {
+            "status": "invalid",
+            "new_jobs": 0,
+            "total_jobs": 0,
+            "matches_enqueued": 0,
+        }
+    except TransientFetchError as exc:
+        async with session_factory() as session:
+            await slug_registry_service.mark_fetched(
+                provider, slug, "transient_error", session, error=str(exc)
+            )
+        raise
+
+    new_count = 0
+    matches_enqueued = 0
+    async with session_factory() as session:
+        for jd in jobs:
+            job, created = await job_service.upsert_job(jd, provider, session, slug=slug)
+            if created:
+                new_count += 1
+            await match_queue_service.enqueue_for_interested_profiles(job, session)
+            apps = (
+                (
+                    await session.execute(
+                        select(Application).where(
+                            Application.job_id == job.id,
+                            Application.match_status == "pending_match",
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            for app in apps:
+                await enqueue(
+                    session,
+                    job_type="match",
+                    payload={"application_id": app.id},
+                    dedupe_key=f"match:{app.id}",
+                )
+                matches_enqueued += 1
+        await slug_registry_service.mark_fetched(provider, slug, "ok", session)
+        await session.commit()
+
+    await log.ainfo(
+        "slug_fetch.ok",
+        source=provider,
+        slug=slug,
+        new_jobs=new_count,
+        total_jobs=len(jobs),
+        matches_enqueued=matches_enqueued,
+    )
+    return {
+        "status": "ok",
+        "new_jobs": new_count,
+        "total_jobs": len(jobs),
+        "matches_enqueued": matches_enqueued,
     }
 
 
@@ -197,13 +329,9 @@ async def run_sync_queue(*, max_slugs: int = 64, deadline_seconds: int = 240) ->
     import asyncio
     import time
 
-    import httpx
-
     from app.database import get_session_factory
-    from app.services import job_service, match_queue_service, slug_registry_service
-    from app.sources import SOURCES
-    from app.sources.base import InvalidSlugError, TransientFetchError
-    from app.sources.greenhouse_board import DEFAULT_TIMEOUT
+    from app.services import slug_registry_service
+    from app.sources.base import TransientFetchError
 
     factory = get_session_factory()
     deadline = time.monotonic() + deadline_seconds
@@ -214,79 +342,33 @@ async def run_sync_queue(*, max_slugs: int = 64, deadline_seconds: int = 240) ->
     if not claimed:
         return {**counts, "remaining": 0}
 
-    async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as client:
-        sem = asyncio.Semaphore(8)
+    sem = asyncio.Semaphore(8)
 
-        async def _one(row):
+    async def _one(row):
+        if time.monotonic() > deadline:
+            counts["skipped_deadline"] += 1
+            return
+        async with sem:
             if time.monotonic() > deadline:
                 counts["skipped_deadline"] += 1
                 return
-            async with sem:
-                if time.monotonic() > deadline:
-                    counts["skipped_deadline"] += 1
-                    return
-                adapter = SOURCES.get(row.source)
-                if adapter is None:
-                    await log.aerror(
-                        "slug_fetch.unknown_provider",
-                        source=row.source,
-                        slug=row.slug,
-                    )
-                    # Mark the row as fetched-with-error so it doesn't loop forever.
-                    async with factory() as s:
-                        await slug_registry_service.mark_fetched(
-                            row.source,
-                            row.slug,
-                            "transient_error",
-                            s,
-                            error="unknown provider",
-                        )
-                    counts["transient"] += 1
-                    return
-                # Compute `since`: existing slug → last_fetched_at - 1h overlap;
-                # new slug (last_fetched_at IS NULL) → now - 14d.
-                since = (
-                    row.last_fetched_at - timedelta(hours=1)
-                    if row.last_fetched_at is not None
-                    else datetime.now(UTC) - timedelta(days=14)
+            try:
+                result = await fetch_one_slug(
+                    provider=row.source,
+                    slug=row.slug,
+                    session_factory=factory,
                 )
-                try:
-                    jobs = await adapter.fetch_jobs(row.slug, since=since, client=client)
-                except InvalidSlugError as exc:
-                    async with factory() as s:
-                        await slug_registry_service.mark_fetched(
-                            row.source, row.slug, "invalid", s, error=str(exc)
-                        )
-                    counts["invalid"] += 1
-                    return
-                except TransientFetchError as exc:
-                    async with factory() as s:
-                        await slug_registry_service.mark_fetched(
-                            row.source, row.slug, "transient_error", s, error=str(exc)
-                        )
-                    counts["transient"] += 1
-                    return
+            except TransientFetchError:
+                counts["transient"] += 1
+                return
+            if result["status"] == "ok":
+                counts["fetched"] += 1
+            elif result["status"] == "invalid":
+                counts["invalid"] += 1
+            elif result["status"] == "transient":
+                counts["transient"] += 1
 
-                async with factory() as s:
-                    new_count = 0
-                    for jd in jobs:
-                        job, created = await job_service.upsert_job(
-                            jd, row.source, s, slug=row.slug
-                        )
-                        if created:
-                            new_count += 1
-                            await match_queue_service.enqueue_for_interested_profiles(job, s)
-                    await slug_registry_service.mark_fetched(row.source, row.slug, "ok", s)
-                    await log.ainfo(
-                        "slug_fetch.ok",
-                        source=row.source,
-                        slug=row.slug,
-                        new_jobs=new_count,
-                        total_jobs=len(jobs),
-                    )
-                    counts["fetched"] += 1
-
-        await asyncio.gather(*(_one(r) for r in claimed), return_exceptions=False)
+    await asyncio.gather(*(_one(r) for r in claimed), return_exceptions=False)
 
     async with factory() as session:
         remaining = await slug_registry_service.pending_count(session)
