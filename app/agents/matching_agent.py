@@ -1,14 +1,5 @@
-"""
-Matching agent — LangGraph StateGraph with Send-based fan-out.
+"""Matching agent scoring primitives."""
 
-Graph: load_context → fan_out (Send) → score_job (×N parallel) → persist_results
-
-Uses Flash for cost efficiency. Prompt is split into a stable SystemMessage
-(grading rubric + output rules — Gemini implicit cache prefix) and a
-per-call HumanMessage carrying the profile and the job-specific content.
-"""
-
-import asyncio
 import operator
 from typing import Annotated
 
@@ -19,10 +10,14 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from langgraph.graph import END, StateGraph
 from langgraph.types import Send
 from pydantic import BaseModel, field_validator
+from sqlalchemy.ext.asyncio import AsyncSession
 from typing_extensions import TypedDict
 
-from app.agents.llm_safe import BudgetExhausted, safe_ainvoke
+from app.agents.llm_safe import safe_ainvoke
 from app.config import get_settings
+from app.models.application import Application
+from app.models.job import Job
+from app.models.user_profile import UserProfile
 
 log = structlog.get_logger()
 
@@ -119,24 +114,79 @@ Location: {location} · {workplace_type}
 {description}"""
 
 
+@tool
+def record_score(
+    score: float,
+    summary: str,
+    rationale: str,
+    strengths: list[str],
+    gaps: list[str],
+) -> str:
+    """Record the match score for this job application."""
+    return "Score recorded"
+
+
+async def score_job_context(*, profile_text: str, job: JobContext) -> ScoreResult:
+    user_prompt = SCORING_USER_TEMPLATE.format(
+        profile_text=profile_text,
+        title=job["title"],
+        company=job["company"],
+        location=job.get("location") or "unspecified",
+        workplace_type=job.get("workplace_type") or "unspecified",
+        description=truncate_description(job["description"]),
+    )
+    run_config = {
+        "run_name": f"score-{job['company'][:20]}-{job['title'][:30]}",
+        "metadata": {"application_id": job["application_id"]},
+    }
+    llm = get_llm().bind_tools([record_score], tool_choice="record_score")
+    result = await safe_ainvoke(
+        llm,
+        [
+            SystemMessage(content=SCORING_SYSTEM_PROMPT),
+            HumanMessage(content=user_prompt),
+        ],
+        config=run_config,
+    )
+    tool_call = result.tool_calls[0] if result.tool_calls else {}
+    args = tool_call.get("args", {}) if tool_call else {}
+    return ScoreResult(
+        application_id=job["application_id"],
+        score=float(args.get("score", 0.0)),
+        summary=args.get("summary", ""),
+        rationale=args.get("rationale", ""),
+        strengths=args.get("strengths", []),
+        gaps=args.get("gaps", []),
+    )
+
+
+async def score_one(application: Application, session: AsyncSession) -> dict:
+    job = await session.get(Job, application.job_id)
+    profile = await session.get(UserProfile, application.profile_id)
+    if job is None or profile is None:
+        raise ValueError("missing job or profile")
+
+    from app.services.match_service import format_profile_text
+    from app.services.profile_service import get_skills, get_work_experiences
+
+    skills = await get_skills(profile.id, session)
+    experiences = await get_work_experiences(profile.id, session)
+    profile_text = format_profile_text(profile, skills, experiences)
+    score = await score_job_context(
+        profile_text=profile_text,
+        job={
+            "application_id": str(application.id),
+            "title": job.title,
+            "company": job.company_name,
+            "location": job.location,
+            "workplace_type": job.workplace_type,
+            "description": job.description or job.description_raw or "",
+        },
+    )
+    return score.model_dump()
+
+
 def build_graph() -> StateGraph:
-    settings = get_settings()
-    semaphore = asyncio.Semaphore(settings.matching_max_concurrency)
-
-    @tool
-    def record_score(
-        score: float,
-        summary: str,
-        rationale: str,
-        strengths: list[str],
-        gaps: list[str],
-    ) -> str:
-        """Record the match score for this job application."""
-        return "Score recorded"
-
-    tools = [record_score]
-    llm = get_llm().bind_tools(tools, tool_choice="record_score")
-
     def load_context_node(state: MatchState) -> dict:
         return {}
 
@@ -147,87 +197,8 @@ def build_graph() -> StateGraph:
         ]
 
     async def score_job_node(state: SingleJobState) -> dict:
-        job = state["job"]
-        user_prompt = SCORING_USER_TEMPLATE.format(
-            profile_text=state["profile_text"],
-            title=job["title"],
-            company=job["company"],
-            location=job.get("location") or "unspecified",
-            workplace_type=job.get("workplace_type") or "unspecified",
-            description=truncate_description(job["description"]),
-        )
-        run_config = {
-            "run_name": f"score-{job['company'][:20]}-{job['title'][:30]}",
-            "metadata": {"application_id": job["application_id"]},
-        }
-        # Retry loop: handle transient API rate limit errors with backoff.
-        # BudgetExhausted (monthly quota) is NOT retried — it is caught and
-        # converted to score=None so the entire matching run is not aborted.
-        # Falls back to score=None after exhausting retries for transient errors.
-        backoffs = [10, 30]
-        for attempt, backoff in enumerate([0] + backoffs):
-            if backoff:
-                await asyncio.sleep(backoff)
-            async with semaphore:
-                await asyncio.sleep(0.5)  # throttle: ~6 req/s per slot
-                try:
-                    result = await safe_ainvoke(
-                        llm,
-                        [
-                            SystemMessage(content=SCORING_SYSTEM_PROMPT),
-                            HumanMessage(content=user_prompt),
-                        ],
-                        config=run_config,
-                    )
-                    break
-                except BudgetExhausted:
-                    log.warning("match.budget_exhausted_skip", title=job["title"])
-                    return {
-                        "scores": [
-                            ScoreResult(
-                                application_id=job["application_id"],
-                                score=None,
-                                summary="",
-                                rationale="Skipped: LLM quota exhausted",
-                                strengths=[],
-                                gaps=[],
-                            )
-                        ]
-                    }
-                except Exception as exc:
-                    is_rate_limit = "429" in str(exc) or "rate_limit" in str(exc).lower()
-                    if is_rate_limit and attempt < len(backoffs):
-                        continue
-                    if is_rate_limit:
-                        log.warning(
-                            "match.rate_limit_skip",
-                            title=job["title"],
-                            attempts=attempt + 1,
-                        )
-                        return {
-                            "scores": [
-                                ScoreResult(
-                                    application_id=job["application_id"],
-                                    score=None,
-                                    summary="",
-                                    rationale="Skipped: API rate limit exceeded after retries",
-                                    strengths=[],
-                                    gaps=[],
-                                )
-                            ]
-                        }
-                    raise
-
-        tool_call = result.tool_calls[0] if result.tool_calls else {}
-        args = tool_call.get("args", {}) if tool_call else {}
-
-        score_result = ScoreResult(
-            application_id=job["application_id"],
-            score=float(args.get("score", 0.0)),
-            summary=args.get("summary", ""),
-            rationale=args.get("rationale", ""),
-            strengths=args.get("strengths", []),
-            gaps=args.get("gaps", []),
+        score_result = await score_job_context(
+            profile_text=state["profile_text"], job=state["job"]
         )
         return {"scores": [score_result]}
 
