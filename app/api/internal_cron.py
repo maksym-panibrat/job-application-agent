@@ -205,6 +205,46 @@ async def cron_generation_reconcile():
 
 
 @router.post(
+    "/post-cutover-match-reconcile",
+    dependencies=[Depends(verify_secret)],
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def cron_post_cutover_match_reconcile():
+    factory = get_session_factory()
+    enqueued: list[int] = []
+    async with factory() as session:
+        orphans = await session.execute(
+            text("""
+                SELECT a.id::text AS app_id
+                FROM applications a
+                WHERE a.match_status = 'pending_match'
+                  AND a.updated_at < now() - interval '5 minutes'
+                  AND NOT EXISTS (
+                      SELECT 1 FROM work_queue w
+                      WHERE w.job_type = 'match'
+                        AND w.dedupe_key = 'match:' || a.id::text
+                        AND w.status IN ('pending', 'in_progress')
+                  )
+            """)
+        )
+        for (app_id,) in orphans.all():
+            row_id = await enqueue(
+                session,
+                job_type="match",
+                payload={"application_id": app_id},
+                dedupe_key=f"match:{app_id}",
+            )
+            if row_id is not None:
+                enqueued.append(row_id)
+        await session.commit()
+    await log.ainfo(
+        "cron.post_cutover_match_reconcile.completed",
+        reconciled=len(enqueued),
+    )
+    return {"reconciled": enqueued}
+
+
+@router.post(
     "/maintenance",
     dependencies=[Depends(verify_secret)],
     status_code=status.HTTP_202_ACCEPTED,
