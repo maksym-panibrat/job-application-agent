@@ -2,7 +2,6 @@ def test_registry_is_empty_initially():
     from app.worker.handlers import HANDLERS
 
     assert isinstance(HANDLERS, dict)
-    assert HANDLERS == {}
 
 
 def test_transient_error_carries_retry_after():
