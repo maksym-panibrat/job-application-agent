@@ -20,6 +20,88 @@ from app.models.user_profile import UserProfile
 log = structlog.get_logger()
 
 
+class IllegalTransition(Exception):
+    """Raised when a generation_status transition is not allowed."""
+
+
+def _generation_dedupe_key(application_id: uuid.UUID) -> str:
+    return f"generate-cover-letter:{application_id}"
+
+
+async def create_with_generation_requested(
+    *,
+    session_factory,
+    job_id: uuid.UUID,
+    profile_id: uuid.UUID,
+) -> uuid.UUID:
+    from app.worker.queue_service import enqueue
+
+    async with session_factory() as session:
+        app = Application(
+            job_id=job_id,
+            profile_id=profile_id,
+            generation_status="pending",
+            generation_attempts=0,
+        )
+        session.add(app)
+        await session.flush()
+        await enqueue(
+            session,
+            job_type="generate-cover-letter",
+            payload={"application_id": str(app.id)},
+            dedupe_key=_generation_dedupe_key(app.id),
+        )
+        await session.commit()
+        return app.id
+
+
+async def create_without_generation(
+    *,
+    session_factory,
+    job_id: uuid.UUID,
+    profile_id: uuid.UUID,
+) -> uuid.UUID:
+    async with session_factory() as session:
+        app = Application(
+            job_id=job_id,
+            profile_id=profile_id,
+            generation_status="none",
+            generation_attempts=0,
+        )
+        session.add(app)
+        await session.commit()
+        return app.id
+
+
+async def flip_to_pending_and_enqueue(
+    *,
+    session_factory,
+    application_id: uuid.UUID,
+) -> int | None:
+    from app.worker.queue_service import enqueue
+
+    async with session_factory() as session:
+        app = await session.get(Application, application_id)
+        if app is None:
+            raise ValueError(f"application {application_id} not found")
+        if app.generation_status not in {"none", "ready", "failed"}:
+            raise IllegalTransition(
+                f"cannot request generation from {app.generation_status}"
+            )
+
+        app.generation_status = "pending"
+        app.updated_at = datetime.now(UTC)
+        session.add(app)
+        row_id = await enqueue(
+            session,
+            job_type="generate-cover-letter",
+            payload={"application_id": str(application_id)},
+            dedupe_key=_generation_dedupe_key(application_id),
+        )
+        await session.commit()
+        return row_id
+
+
 async def save_documents(
     application_id: str, documents: list[dict], session: AsyncSession
 ) -> list[GeneratedDocument]:
