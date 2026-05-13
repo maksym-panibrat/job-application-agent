@@ -65,6 +65,25 @@ describe('CoverLetterEditor', () => {
     await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent(/rate limited/i))
   })
 
+  it('shows a refresh message when the cover-letter POST returns a legacy body', async () => {
+    server.use(
+      http.post('/api/applications/app-1/cover-letter', () =>
+        HttpResponse.json({
+          id: 'd1',
+          doc_type: 'cover_letter',
+          content_md: 'legacy',
+          generation_model: 'gemini-2.5-pro',
+          created_at: new Date().toISOString(),
+        })),
+    )
+    const user = userEvent.setup()
+    render(withQuery(<CoverLetterEditor appId="app-1" doc={null} status="none" />))
+    await user.click(screen.getByRole('button', { name: /generate cover letter/i }))
+    await waitFor(() => {
+      expect(screen.getByRole('status')).toHaveTextContent(/please refresh/i)
+    })
+  })
+
   it('PDF download fetches with the Authorization header (not a plain anchor)', async () => {
     // Plain <a href={pdfUrl}> would 401 in production because browser
     // navigation drops custom headers. The fix routes the click through

@@ -27,6 +27,15 @@ export function CoverLetterEditor({ appId, doc, status }: CoverLetterEditorProps
   const generate = useMutation({
     mutationFn: () => api.generateCoverLetter(appId),
     onSuccess: async (data) => {
+      if ((data as { status?: string } | null)?.status !== 'pending') {
+        const message = 'Cover-letter response shape changed — please refresh the page.'
+        track('cover_letter.generation_failed', {
+          application_id: appId,
+          reason: 'legacy_response_shape',
+        })
+        show(message, 'error')
+        return
+      }
       setGenerationState(data.status)
       track('cover_letter.generation_queued', {
         application_id: appId,
