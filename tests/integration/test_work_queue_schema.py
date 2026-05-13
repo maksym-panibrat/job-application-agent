@@ -61,7 +61,7 @@ async def test_work_queue_indexes(db_session):
 
 @pytest.mark.asyncio
 async def test_applications_new_columns(db_session):
-    """T11b adds cover_letter_content + generated_at. Expected to FAIL at the T11a commit boundary."""
+    """T11b adds cover_letter_content + generated_at."""
     rows = (
         await db_session.execute(
             text(

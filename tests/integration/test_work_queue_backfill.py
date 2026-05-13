@@ -62,7 +62,9 @@ async def _seed_user_profile_and_job(db_session) -> tuple[uuid.UUID, uuid.UUID]:
     await db_session.execute(
         text(
             """
-        INSERT INTO jobs (id, source, external_id, title, company_name, apply_url, fetched_at, is_active)
+        INSERT INTO jobs (
+            id, source, external_id, title, company_name, apply_url, fetched_at, is_active
+        )
         VALUES (:jid, 'greenhouse', :ext, 'Engineer', 'Co', 'https://x/', now(), true)
     """
         ),
@@ -162,7 +164,9 @@ async def test_backfill_generation_includes_all_pending(db_session):
         await db_session.execute(
             text(
                 """
-            INSERT INTO jobs (id, source, external_id, title, company_name, apply_url, fetched_at, is_active)
+            INSERT INTO jobs (
+                id, source, external_id, title, company_name, apply_url, fetched_at, is_active
+            )
             VALUES (:jid, 'greenhouse', :ext, 'E', 'Co', 'https://x/', now(), true)
         """
             ),
