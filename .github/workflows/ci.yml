@@ -144,6 +144,7 @@ jobs:
         run: |
           SHA=${{ github.sha }}
           docker build -t ghcr.io/maksym-panibrat/job-application-agent:$SHA -t ghcr.io/maksym-panibrat/job-application-agent:main .
+          docker run --rm --entrypoint sh ghcr.io/maksym-panibrat/job-application-agent:$SHA -c 'python -c "import uvicorn, alembic, fastapi; import app.worker" && alembic --version'
           docker push ghcr.io/maksym-panibrat/job-application-agent:$SHA
           docker push ghcr.io/maksym-panibrat/job-application-agent:main
       - name: Dispatch bump to panibrat-infra
