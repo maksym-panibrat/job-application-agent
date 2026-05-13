@@ -102,7 +102,7 @@ export interface SyncStatus {
   invalid_slugs: string[]
 }
 
-async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
+export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const token = sessionStorage.getItem('access_token')
   const headers: Record<string, string> = { 'Content-Type': 'application/json' }
   if (token) headers['Authorization'] = `Bearer ${token}`
@@ -221,11 +221,8 @@ export const api = {
     ),
   generateCoverLetter: (id: string) =>
     apiFetch<{
-      id: string
-      doc_type: string
-      content_md: string
-      generation_model: string | null
-      created_at: string
+      status: 'pending'
+      job_id: number | null
     }>(`/api/applications/${id}/cover-letter`, { method: 'POST' }),
   markApplied: (id: string) =>
     apiFetch<{ id: string; status: string; applied_at: string | null }>(
