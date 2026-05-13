@@ -11,7 +11,7 @@ from app.agents.llm_safe import BudgetExhausted
 from app.config import Settings, get_settings
 from app.database import get_session_factory
 from app.models.user_profile import UserProfile
-from app.scheduler.tasks import run_daily_maintenance, run_generation_queue
+from app.scheduler.tasks import run_generation_queue
 from app.worker.payloads import FetchSlugPayload
 from app.worker.queue_service import enqueue
 
@@ -159,6 +159,21 @@ async def cron_process_match_queue():
     return await _run_cron("process_match_queue", run_match_queue)
 
 
-@router.post("/maintenance", dependencies=[Depends(verify_secret)])
+@router.post(
+    "/maintenance",
+    dependencies=[Depends(verify_secret)],
+    status_code=status.HTTP_202_ACCEPTED,
+)
 async def cron_maintenance():
-    return await _run_cron("maintenance", run_daily_maintenance)
+    today = datetime.now(UTC).date().isoformat()
+    factory = get_session_factory()
+    async with factory() as session:
+        row_id = await enqueue(
+            session,
+            job_type="maintenance",
+            payload={"date": today},
+            dedupe_key=f"maintenance:{today}",
+        )
+        await session.commit()
+    await log.ainfo("cron.maintenance.completed", enqueued=row_id)
+    return {"enqueued": [row_id] if row_id is not None else []}

@@ -96,18 +96,13 @@ def test_generation_queue_correct_secret_calls_task():
 
 def test_maintenance_correct_secret_calls_task():
     client = make_app(secret="real-secret")
-    with patch(
-        "app.api.internal_cron.run_daily_maintenance",
-        new=AsyncMock(
-            return_value={
-                "stale_jobs": 0,
-                "searches_paused": 0,
-                "applications_trimmed": 0,
-            }
-        ),
-    ) as mock:
+    with (
+        patch("app.api.internal_cron.get_session_factory", return_value=lambda: _FakeSession()),
+        patch("app.api.internal_cron.enqueue", new=AsyncMock(return_value=123)) as mock,
+    ):
         resp = client.post("/internal/cron/maintenance", headers={"X-Cron-Secret": "real-secret"})
-    assert resp.status_code == 200
+    assert resp.status_code == 202
+    assert resp.json() == {"enqueued": [123]}
     mock.assert_called_once()
 
 

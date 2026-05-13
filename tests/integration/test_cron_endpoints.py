@@ -80,11 +80,9 @@ async def test_cron_maintenance_returns_structured_summary(client):
         "/internal/cron/maintenance",
         headers={"X-Cron-Secret": CRON_SECRET},
     )
-    assert resp.status_code == 200
+    assert resp.status_code == 202
     data = resp.json()
-    assert data["status"] == "ok"
-    assert isinstance(data["stale_jobs"], int)
-    assert isinstance(data["duration_ms"], int)
+    assert isinstance(data["enqueued"], list)
 
 
 @pytest.mark.asyncio
