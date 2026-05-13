@@ -69,11 +69,6 @@ async def generate_materials(
     app = await session.get(Application, application_id)
     if app is None:
         raise ValueError(f"application {application_id} not found")
-    job = await session.get(Job, app.job_id)
-    profile = await session.get(UserProfile, app.profile_id)
-    if job is None or profile is None:
-        raise ValueError("missing job or profile")
-
     app.generation_status = "generating"
     app.generation_attempts += 1
     app.updated_at = datetime.now(UTC)
@@ -81,33 +76,13 @@ async def generate_materials(
     await session.commit()
 
     try:
-        from app.agents.generation_agent import build_graph
-        from app.services.match_service import format_profile_text
-        from app.services.profile_service import get_skills, get_work_experiences
-
-        skills = await get_skills(profile.id, session)
-        experiences = await get_work_experiences(profile.id, session)
-        profile_text = format_profile_text(profile, skills, experiences)
-
-        initial_state = {
-            "application_id": str(application_id),
-            "profile_text": profile_text,
-            "job_title": job.title,
-            "job_company": job.company_name,
-            "job_description": job.description or job.description_raw or "",
-            "base_resume_md": profile.base_resume_md or "",
-            "document": None,
-        }
-
-        graph = build_graph()
-        result = await graph.ainvoke(initial_state)
-        doc_dict = result.get("document")
-        if doc_dict is None:
-            raise RuntimeError("generation graph returned no document")
-
+        doc_dict = await _generate_materials_doc_dict(application=app, session=session)
         saved = await save_documents(str(application_id), [doc_dict], session)
+        content = doc_dict["content_md"]
 
         app.generation_status = "ready"
+        app.cover_letter_content = content
+        app.generated_at = datetime.now(UTC)
         app.updated_at = datetime.now(UTC)
         session.add(app)
         await session.commit()
@@ -132,3 +107,42 @@ async def generate_materials(
             session.add(fresh)
             await session.commit()
         raise
+
+
+async def generate_materials_llm(application: Application, session: AsyncSession) -> str:
+    doc_dict = await _generate_materials_doc_dict(application=application, session=session)
+    return doc_dict["content_md"]
+
+
+async def _generate_materials_doc_dict(
+    application: Application, session: AsyncSession
+) -> dict:
+    job = await session.get(Job, application.job_id)
+    profile = await session.get(UserProfile, application.profile_id)
+    if job is None or profile is None:
+        raise ValueError("missing job or profile")
+
+    from app.agents.generation_agent import build_graph
+    from app.services.match_service import format_profile_text
+    from app.services.profile_service import get_skills, get_work_experiences
+
+    skills = await get_skills(profile.id, session)
+    experiences = await get_work_experiences(profile.id, session)
+    profile_text = format_profile_text(profile, skills, experiences)
+
+    initial_state = {
+        "application_id": str(application.id),
+        "profile_text": profile_text,
+        "job_title": job.title,
+        "job_company": job.company_name,
+        "job_description": job.description or job.description_raw or "",
+        "base_resume_md": profile.base_resume_md or "",
+        "document": None,
+    }
+
+    graph = build_graph()
+    result = await graph.ainvoke(initial_state)
+    doc_dict = result.get("document")
+    if doc_dict is None:
+        raise RuntimeError("generation graph returned no document")
+    return doc_dict
