@@ -7,8 +7,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql import func
 from sqlmodel import select
 
+from app.config import get_settings
 from app.database import get_session_factory
-from app.models.application import Application
+from app.models.application import Application, GeneratedDocument
 from app.models.work_queue import WorkQueue
 from app.worker.handlers import HANDLERS, TransientError
 from app.worker.payloads import GenerateCoverLetterPayload
@@ -118,6 +119,31 @@ class GenerateCoverLetterHandler:
         app.generation_status = "ready"
         app.updated_at = datetime.now(UTC)
         session.add(app)
+
+        existing_doc = (
+            await session.execute(
+                select(GeneratedDocument).where(
+                    GeneratedDocument.application_id == app.id,
+                    GeneratedDocument.doc_type == "cover_letter",
+                )
+            )
+        ).scalar_one_or_none()
+        if existing_doc is None:
+            session.add(
+                GeneratedDocument(
+                    application_id=app.id,
+                    doc_type="cover_letter",
+                    content_md=content,
+                    generation_model=get_settings().llm_generation_model,
+                    structured_content=None,
+                )
+            )
+        else:
+            existing_doc.content_md = content
+            existing_doc.generation_model = get_settings().llm_generation_model
+            existing_doc.structured_content = None
+            session.add(existing_doc)
+
         await log.ainfo(
             "worker.generate_cover_letter.done",
             application_id=str(app.id),
