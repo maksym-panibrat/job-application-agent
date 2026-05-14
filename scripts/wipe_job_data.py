@@ -1,8 +1,8 @@
 """
-Wipe job-search data (jobs, applications, generated_documents) and the
-operational counters that index against them, while preserving the
-user/profile/resume rows. Useful after schema or sourcing changes leave
-stale records behind that no longer reflect the current pipeline.
+Atomically wipe user-owned, job-search, queue, and operational rows while
+preserving companies and slug registry identity. Useful after schema or
+sourcing changes leave stale records behind that no longer reflect the current
+pipeline.
 
 Run against local dev DB:
     uv run python scripts/wipe_job_data.py
@@ -29,18 +29,27 @@ WIPE_TABLES = (
     "generated_documents",
     "applications",
     "jobs",
+    "work_queue",
+    "events",
+    "oauth_accounts",
+    "skills",
+    "work_experiences",
+    "user_profiles",
+    "users",
     "llm_status",
     "rate_limits",
     "usage_counters",
 )
 
-KEEP_TABLES = (
-    "users",
-    "oauth_accounts",
-    "user_profiles",
-    "skills",
-    "work_experiences",
+CHECKPOINT_WIPE_TABLES = (
+    "checkpoint_writes",
+    "checkpoint_blobs",
+    "checkpoints",
+    "checkpoint_migrations",
 )
+
+PRESERVE_TABLES = ("companies",)
+ROW_COUNT_PRESERVE_TABLES = ("slug_fetches",)
 
 
 async def _counts(session: AsyncSession, tables: tuple[str, ...]) -> dict[str, int]:
@@ -51,24 +60,72 @@ async def _counts(session: AsyncSession, tables: tuple[str, ...]) -> dict[str, i
     return out
 
 
-async def wipe(session: AsyncSession) -> None:
-    print("\nBEFORE — job-search tables:")
-    for t, n in (await _counts(session, WIPE_TABLES)).items():
+async def _existing_tables(session: AsyncSession, tables: tuple[str, ...]) -> tuple[str, ...]:
+    result = await session.execute(
+        text("""
+            SELECT table_name
+            FROM information_schema.tables
+            WHERE table_schema = 'public'
+              AND table_name = ANY(:tables)
+        """),
+        {"tables": list(tables)},
+    )
+    existing = {row.table_name for row in result}
+    return tuple(table for table in tables if table in existing)
+
+
+async def wipe(session: AsyncSession, *, fail_after_mutation: bool = False) -> None:
+    wipe_tables = await _existing_tables(session, WIPE_TABLES)
+    checkpoint_tables = await _existing_tables(session, CHECKPOINT_WIPE_TABLES)
+    preserve_tables = await _existing_tables(session, PRESERVE_TABLES)
+    row_count_preserve_tables = await _existing_tables(session, ROW_COUNT_PRESERVE_TABLES)
+    all_wipe_tables = wipe_tables + checkpoint_tables
+
+    print("\nBEFORE — wiped tables:")
+    for t, n in (await _counts(session, all_wipe_tables)).items():
         print(f"  {t:25s} {n:>10,}")
-    print("\nBEFORE — preserved tables:")
-    for t, n in (await _counts(session, KEEP_TABLES)).items():
+    print("\nBEFORE — fully preserved tables:")
+    for t, n in (await _counts(session, preserve_tables)).items():
+        print(f"  {t:25s} {n:>10,}")
+    print("\nBEFORE — row-count preserved tables (freshness state will be reset):")
+    for t, n in (await _counts(session, row_count_preserve_tables)).items():
         print(f"  {t:25s} {n:>10,}")
 
-    joined = ", ".join(WIPE_TABLES)
-    print(f"\nTruncating: {joined}")
-    await session.execute(text(f"TRUNCATE {joined} RESTART IDENTITY CASCADE"))  # noqa: S608
-    await session.commit()
+    try:
+        if all_wipe_tables:
+            joined = ", ".join(all_wipe_tables)
+            print(f"\nTruncating: {joined}")
+            await session.execute(text(f"TRUNCATE {joined} RESTART IDENTITY CASCADE"))  # noqa: S608
 
-    print("\nAFTER — job-search tables:")
-    for t, n in (await _counts(session, WIPE_TABLES)).items():
+        print("\nResetting non-invalid slug_fetches freshness state")
+        await session.execute(
+            text("""
+                UPDATE slug_fetches
+                SET last_fetched_at = NULL,
+                    last_attempted_at = NULL,
+                    consecutive_5xx_count = 0
+                WHERE is_invalid = FALSE
+            """)
+        )
+
+        if fail_after_mutation:
+            await session.rollback()
+            raise RuntimeError("injected failure after reset mutation")
+
+        await session.commit()
+    except Exception:
+        if session.in_transaction():
+            await session.rollback()
+        raise
+
+    print("\nAFTER — wiped tables:")
+    for t, n in (await _counts(session, all_wipe_tables)).items():
         print(f"  {t:25s} {n:>10,}")
-    print("\nAFTER — preserved tables (should be unchanged):")
-    for t, n in (await _counts(session, KEEP_TABLES)).items():
+    print("\nAFTER — fully preserved tables (should be unchanged):")
+    for t, n in (await _counts(session, preserve_tables)).items():
+        print(f"  {t:25s} {n:>10,}")
+    print("\nAFTER — row-count preserved tables (freshness state was reset):")
+    for t, n in (await _counts(session, row_count_preserve_tables)).items():
         print(f"  {t:25s} {n:>10,}")
 
 

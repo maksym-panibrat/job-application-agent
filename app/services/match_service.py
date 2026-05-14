@@ -5,6 +5,7 @@ Match service — scores jobs against a profile and creates Application rows.
 import time
 import uuid
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 
 import structlog
 from sqlalchemy import text, update
@@ -16,6 +17,10 @@ from app.models.application import Application
 from app.models.job import Job
 from app.models.user_profile import Skill, UserProfile, WorkExperience
 from app.services import profile_service
+from app.services.remote_policy import evaluate_remote_policy
+
+if TYPE_CHECKING:
+    from app.agents.matching_agent import ScoreResult
 
 log = structlog.get_logger()
 
@@ -114,6 +119,29 @@ def format_profile_text(
         lines.append(profile.base_resume_md[:3000])
 
     return "\n".join(lines)
+
+
+def apply_remote_policy_to_score(
+    score_result: "ScoreResult",
+    profile: UserProfile,
+    job: Job,
+    threshold: float,
+) -> "ScoreResult":
+    """Cap passing scores when deterministic remote policy finds a hard mismatch."""
+    verdict = evaluate_remote_policy(profile, job)
+    if not verdict.hard_mismatch or score_result.score is None:
+        return score_result
+
+    if score_result.score >= threshold:
+        score_result.score = max(0.0, min(0.29, threshold - 0.01))
+
+    if verdict.gap:
+        if verdict.gap not in score_result.gaps:
+            score_result.gaps.append(verdict.gap)
+        if verdict.gap not in score_result.rationale:
+            score_result.rationale = f"{score_result.rationale} {verdict.gap}".strip()
+
+    return score_result
 
 
 async def get_or_create_application(
@@ -235,6 +263,15 @@ async def score_and_match(
 
     scored_apps = []
     for score_result in result.get("scores", []):
+        job = job_map.get(score_result.application_id)
+        if job is not None:
+            score_result = apply_remote_policy_to_score(
+                score_result,
+                profile,
+                job,
+                settings.match_score_threshold,
+            )
+
         app_result = await session.execute(
             select(Application).where(Application.id == uuid.UUID(score_result.application_id))
         )
@@ -262,7 +299,8 @@ async def score_and_match(
 
         passed = score_result.score >= settings.match_score_threshold
         if not passed:
-            app.status = "auto_rejected"
+            if app.status == "pending_review":
+                app.status = "auto_rejected"
         else:
             scored_apps.append(app)
 

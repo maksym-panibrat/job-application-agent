@@ -3,6 +3,7 @@ import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
+from app.config import get_settings
 from app.models.application import Application
 from app.models.work_queue import WorkQueue
 from app.worker.handlers import HANDLERS, TransientError
@@ -57,13 +58,25 @@ class MatchHandler:
                 raise TransientError(str(exc), retry_after_seconds=retry_after) from exc
             raise
 
-        app.match_score = result["score"]
+        score = result["score"]
+        if score is None:
+            await log.awarning(
+                "worker.match.scoring_skipped",
+                application_id=str(app.id),
+                rationale=str(result.get("rationale") or "")[:200],
+            )
+            raise TransientError("matching score skipped")
+
+        app.match_score = score
         app.match_summary = result["summary"]
         app.match_rationale = result.get("rationale")
         app.match_strengths = result.get("strengths", [])
         app.match_gaps = result.get("gaps", [])
+        settings = get_settings()
+        if score < settings.match_score_threshold and app.status == "pending_review":
+            app.status = "auto_rejected"
         session.add(app)
-        await log.ainfo("worker.match.done", application_id=str(app.id), score=result["score"])
+        await log.ainfo("worker.match.done", application_id=str(app.id), score=score)
 
 
 HANDLERS["match"] = MatchHandler()

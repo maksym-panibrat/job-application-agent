@@ -42,7 +42,13 @@ def _make_profile() -> UserProfile:
     )
 
 
-def _make_job(job_id: uuid.UUID | None = None) -> Job:
+def _make_job(
+    job_id: uuid.UUID | None = None,
+    *,
+    description: str = "A great job.",
+    location: str | None = None,
+    workplace_type: str | None = None,
+) -> Job:
     return Job(
         id=job_id or uuid.uuid4(),
         source="adzuna",
@@ -50,18 +56,23 @@ def _make_job(job_id: uuid.UUID | None = None) -> Job:
         title="Software Engineer",
         company_name="Acme Corp",
         apply_url="https://example.com/apply",
-        description="A great job.",
+        location=location,
+        workplace_type=workplace_type,
+        description=description,
     )
 
 
 def _make_application(
-    app_id: uuid.UUID | None = None, job_id: uuid.UUID | None = None
+    app_id: uuid.UUID | None = None,
+    job_id: uuid.UUID | None = None,
+    *,
+    status: str = "pending_review",
 ) -> Application:
     return Application(
         id=app_id or uuid.uuid4(),
         job_id=job_id or uuid.uuid4(),
         profile_id=uuid.uuid4(),
-        status="pending_review",
+        status=status,
         match_score=None,
         match_rationale=None,
         match_strengths=[],
@@ -79,6 +90,45 @@ def _make_score_result(application_id: str, score: float):
         strengths=["relevant experience"],
         gaps=["missing skill X"],
     )
+
+
+def test_remote_policy_caps_remote_only_office_attendance_score():
+    from app.services.match_service import apply_remote_policy_to_score
+
+    profile = _make_profile()
+    profile.target_locations = []
+    job = _make_job(
+        description="This role requires minimum 3 days/week in the Toronto office.",
+        location="Remote",
+        workplace_type="remote",
+    )
+    score_result = _make_score_result(str(uuid.uuid4()), score=0.92)
+
+    adjusted = apply_remote_policy_to_score(score_result, profile, job, 0.65)
+
+    assert adjusted.score < 0.65
+    assert adjusted.score == 0.29
+    assert any("office attendance" in gap for gap in adjusted.gaps)
+    assert "office attendance" in adjusted.rationale
+
+
+def test_remote_policy_does_not_cap_matching_target_location():
+    from app.services.match_service import apply_remote_policy_to_score
+
+    profile = _make_profile()
+    profile.target_locations = ["Toronto"]
+    job = _make_job(
+        description="This role requires minimum 3 days/week in the Toronto office.",
+        location="Remote",
+        workplace_type="remote",
+    )
+    score_result = _make_score_result(str(uuid.uuid4()), score=0.92)
+    original_gaps = list(score_result.gaps)
+
+    adjusted = apply_remote_policy_to_score(score_result, profile, job, 0.65)
+
+    assert adjusted.score == 0.92
+    assert adjusted.gaps == original_gaps
 
 
 def _make_mock_session(app: MagicMock):
@@ -129,6 +179,76 @@ async def test_below_threshold_sets_auto_rejected():
     assert app.match_rationale == "Score is 0.4"
     assert app.match_strengths == ["relevant experience"]
     assert app.match_gaps == ["missing skill X"]
+
+
+@pytest.mark.asyncio
+async def test_below_threshold_preserves_dismissed_status():
+    setup_env()
+    from app.services.match_service import score_and_match
+
+    app_id = uuid.uuid4()
+    job_id = uuid.uuid4()
+    app = _make_application(app_id=app_id, job_id=job_id, status="dismissed")
+    job = _make_job(job_id=job_id)
+    session = _make_mock_session(app)
+
+    score_result = _make_score_result(str(app_id), score=0.4)
+    mock_graph = AsyncMock()
+    mock_graph.ainvoke.return_value = {"scores": [score_result]}
+
+    profile = _make_profile()
+
+    with (
+        patch(_GET_SKILLS, new=AsyncMock(return_value=[])),
+        patch(_GET_EXPS, new=AsyncMock(return_value=[])),
+        patch(_GET_OR_CREATE, new=AsyncMock(return_value=app)),
+        patch(_BUILD_GRAPH, return_value=mock_graph),
+        patch(_GET_SETTINGS) as mock_get_settings,
+    ):
+        settings = MagicMock()
+        settings.match_score_threshold = 0.65
+        mock_get_settings.return_value = settings
+
+        scored = await score_and_match(profile, session, jobs=[job])
+
+    assert scored == []
+    assert app.status == "dismissed"
+    assert app.match_score == 0.4
+
+
+@pytest.mark.asyncio
+async def test_below_threshold_preserves_applied_status():
+    setup_env()
+    from app.services.match_service import score_and_match
+
+    app_id = uuid.uuid4()
+    job_id = uuid.uuid4()
+    app = _make_application(app_id=app_id, job_id=job_id, status="applied")
+    job = _make_job(job_id=job_id)
+    session = _make_mock_session(app)
+
+    score_result = _make_score_result(str(app_id), score=0.4)
+    mock_graph = AsyncMock()
+    mock_graph.ainvoke.return_value = {"scores": [score_result]}
+
+    profile = _make_profile()
+
+    with (
+        patch(_GET_SKILLS, new=AsyncMock(return_value=[])),
+        patch(_GET_EXPS, new=AsyncMock(return_value=[])),
+        patch(_GET_OR_CREATE, new=AsyncMock(return_value=app)),
+        patch(_BUILD_GRAPH, return_value=mock_graph),
+        patch(_GET_SETTINGS) as mock_get_settings,
+    ):
+        settings = MagicMock()
+        settings.match_score_threshold = 0.65
+        mock_get_settings.return_value = settings
+
+        scored = await score_and_match(profile, session, jobs=[job])
+
+    assert scored == []
+    assert app.status == "applied"
+    assert app.match_score == 0.4
 
 
 @pytest.mark.asyncio
