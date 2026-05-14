@@ -6,7 +6,6 @@ from typing import Protocol
 
 
 class ProfileLike(Protocol):
-    remote_ok: bool
     target_locations: list[str]
 
 
@@ -46,9 +45,6 @@ def evaluate_remote_policy(profile: ProfileLike, job: JobLike) -> RemotePolicyVe
 
     if _matches_target_location(profile, text):
         return RemotePolicyVerdict(hard_mismatch=False)
-
-    if getattr(profile, "remote_ok", False):
-        return RemotePolicyVerdict(hard_mismatch=True, gap=OFFICE_ATTENDANCE_GAP)
 
     return RemotePolicyVerdict(hard_mismatch=True, gap=OFFICE_ATTENDANCE_GAP)
 
