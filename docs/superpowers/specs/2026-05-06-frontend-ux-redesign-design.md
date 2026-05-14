@@ -1,5 +1,10 @@
 # Frontend UX redesign
 
+> Historical design document. Several operational references in this file
+> predate the deployed worker-queue migration and Hetzner deployment. Do not use
+> it as the current runtime contract; use `README.md`, `CLAUDE.md`,
+> `docs/DEPLOYMENT.md`, `app/api/internal_cron.py`, and `app/worker/` instead.
+
 **Date:** 2026-05-06
 **Status:** Draft for review
 **Author:** Maksym Panibratenko (with Claude)
