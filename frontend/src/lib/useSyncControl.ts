@@ -36,12 +36,14 @@ export function useSyncControl({ enabled = true }: UseSyncControlOptions = {}): 
   const qc = useQueryClient()
   const { show } = useToast()
   const [status, setStatus] = useState<SyncStatus | null>(null)
+  const [pollKick, setPollKick] = useState(0)
   const prevState = useRef<SyncStatus['state'] | null>(null)
   const fastSyncTimeout = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() => {
     if (!enabled) return
     let cancelled = false
+    let timeoutId: ReturnType<typeof setTimeout> | null = null
     async function poll() {
       try {
         const body = await api.getSyncStatus()
@@ -51,14 +53,19 @@ export function useSyncControl({ enabled = true }: UseSyncControlOptions = {}): 
           qc.invalidateQueries({ queryKey: ['applications'] })
         }
         prevState.current = body.state
+        if (body.state !== 'idle') {
+          timeoutId = setTimeout(poll, POLL_MS)
+        }
       } catch {
         // Silent — control just stays "Sync now" without live state.
       }
     }
     poll()
-    const id = setInterval(poll, POLL_MS)
-    return () => { cancelled = true; clearInterval(id) }
-  }, [qc, enabled])
+    return () => {
+      cancelled = true
+      if (timeoutId) clearTimeout(timeoutId)
+    }
+  }, [qc, enabled, pollKick])
 
   // Cleanup any in-flight delayed invalidation on unmount so it can't fire
   // against a stale QueryClient (e.g., after sign-out).
@@ -77,6 +84,7 @@ export function useSyncControl({ enabled = true }: UseSyncControlOptions = {}): 
       // Belt-and-suspenders for fast syncs that finish before the poller
       // catches a non-idle state — surfaces `matched_now` cache hits in the feed.
       if (fastSyncTimeout.current) clearTimeout(fastSyncTimeout.current)
+      setPollKick((value) => value + 1)
       fastSyncTimeout.current = setTimeout(
         () => qc.invalidateQueries({ queryKey: ['applications'] }),
         FAST_SYNC_INVALIDATE_MS,

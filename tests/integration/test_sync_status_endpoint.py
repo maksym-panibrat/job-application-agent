@@ -9,6 +9,7 @@ from sqlmodel import SQLModel
 
 import app.models  # noqa: F401
 from app.models.company import Company
+from app.models.slug_fetch import SlugFetch
 from app.services import slug_registry_service
 
 
@@ -81,3 +82,47 @@ async def test_status_lists_invalid_slugs(client, auth_headers, seeded_user, db_
     response = await client.get("/api/sync/status", headers=auth_headers)
     body = response.json()
     assert body["invalid_slugs"] == ["openai"]
+
+
+@pytest.mark.asyncio
+async def test_status_reconciles_stale_queued_summary_when_idle(
+    client, auth_headers, seeded_user, db_session
+):
+    _, profile = seeded_user
+    company = Company(
+        canonical_name="Anthropic",
+        normalized_key="anthropic",
+        provider_slugs={"greenhouse": "anthropic"},
+        resolved_at=datetime.now(UTC),
+    )
+    db_session.add(company)
+    await db_session.commit()
+    await db_session.refresh(company)
+
+    profile.target_company_ids = [company.id]
+    profile.last_sync_requested_at = datetime(2026, 5, 14, 4, 0, tzinfo=UTC)
+    profile.last_sync_completed_at = datetime(2026, 5, 13, 22, 45, tzinfo=UTC)
+    profile.last_sync_summary = {
+        "queued_slugs": ["anthropic"],
+        "matched_now": 0,
+        "pruned_slugs": 0,
+    }
+    db_session.add(profile)
+    db_session.add(
+        SlugFetch(
+            source="greenhouse",
+            slug="anthropic",
+            queued_at=None,
+            claimed_at=None,
+            last_status="ok",
+            last_fetched_at=datetime(2026, 5, 14, 4, 0, 20, tzinfo=UTC),
+        )
+    )
+    await db_session.commit()
+
+    response = await client.get("/api/sync/status", headers=auth_headers)
+    body = response.json()
+
+    assert body["state"] == "idle"
+    assert body["last_sync_summary"]["queued_slugs"] == []
+    assert body["last_sync_completed_at"] >= "2026-05-14T04:00:00"
