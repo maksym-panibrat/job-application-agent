@@ -394,7 +394,7 @@ companies:
     tags: [biotech, b2c, late-stage]
   - canonical_name: Maven Clinic
     providers:
-      greenhouse: maven
+      greenhouse: mavenclinic
     tags: [b2b, b2c, late-stage]
   # Climate
   - canonical_name: Watershed
