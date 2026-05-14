@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql import func
 from sqlmodel import select
 
+from app.config import get_settings
 from app.models.application import Application
 from app.models.work_queue import WorkQueue
 from app.worker.handlers import HANDLERS, TransientError
@@ -76,6 +77,12 @@ class MatchHandler:
         app.match_status = "matched"
         app.match_queued_at = None
         app.match_claimed_at = None
+        settings = get_settings()
+        app.status = (
+            "pending_review"
+            if result["score"] >= settings.match_score_threshold
+            else "auto_rejected"
+        )
         session.add(app)
         await log.ainfo("worker.match.done", application_id=str(app.id), score=result["score"])
 

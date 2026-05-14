@@ -22,6 +22,13 @@ def test_system_prompt_contains_location_rule():
     assert "may require clarification" in SCORING_SYSTEM_PROMPT
 
 
+def test_system_prompt_makes_required_office_attendance_hard_mismatch():
+    assert "required recurring office attendance" in SCORING_SYSTEM_PROMPT
+    assert "provider metadata says remote" in SCORING_SYSTEM_PROMPT
+    assert "below the match threshold" in SCORING_SYSTEM_PROMPT
+    assert "minimum 2 days/week in office" in SCORING_SYSTEM_PROMPT
+
+
 def test_system_prompt_documents_all_output_fields():
     for field in ("summary", "strengths", "gaps", "rationale"):
         assert field in SCORING_SYSTEM_PROMPT

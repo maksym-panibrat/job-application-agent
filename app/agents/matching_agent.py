@@ -94,7 +94,11 @@ Grading:
 - 0.0-0.29: fundamental mismatch
 
 Location:
-- JD location is in candidate locations OR (JD remote AND candidate remote): not a gap.
+- Treat required recurring office attendance as a hard location requirement, even if provider metadata says remote.
+- If the JD requires recurring office attendance and the office location is not in candidate target locations, score below the match threshold.
+- Examples: "minimum 2 days/week in office", "must work from NYC office twice a week", or required hybrid/onsite days are hard gaps unless the candidate targets that location.
+- Provider metadata says remote only counts when the JD itself does not require recurring office attendance.
+- JD location is in candidate locations OR (JD remote AND candidate remote with no recurring office requirement): not a gap.
 - Otherwise: hard gap, e.g., "Onsite Seattle, candidate based in CA".
 - Never say "may require clarification" or "depends". Decide.
 
@@ -166,7 +170,7 @@ async def score_one(application: Application, session: AsyncSession) -> dict:
     if job is None or profile is None:
         raise ValueError("missing job or profile")
 
-    from app.services.match_service import format_profile_text
+    from app.services.match_service import apply_remote_policy_to_score, format_profile_text
     from app.services.profile_service import get_skills, get_work_experiences
 
     skills = await get_skills(profile.id, session)
@@ -183,6 +187,8 @@ async def score_one(application: Application, session: AsyncSession) -> dict:
             "description": job.description or job.description_raw or "",
         },
     )
+    settings = get_settings()
+    score = apply_remote_policy_to_score(score, profile, job, settings.match_score_threshold)
     return score.model_dump()
 
 

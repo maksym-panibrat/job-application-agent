@@ -42,7 +42,13 @@ def _make_profile() -> UserProfile:
     )
 
 
-def _make_job(job_id: uuid.UUID | None = None) -> Job:
+def _make_job(
+    job_id: uuid.UUID | None = None,
+    *,
+    description: str = "A great job.",
+    location: str | None = None,
+    workplace_type: str | None = None,
+) -> Job:
     return Job(
         id=job_id or uuid.uuid4(),
         source="adzuna",
@@ -50,7 +56,9 @@ def _make_job(job_id: uuid.UUID | None = None) -> Job:
         title="Software Engineer",
         company_name="Acme Corp",
         apply_url="https://example.com/apply",
-        description="A great job.",
+        location=location,
+        workplace_type=workplace_type,
+        description=description,
     )
 
 
@@ -79,6 +87,45 @@ def _make_score_result(application_id: str, score: float):
         strengths=["relevant experience"],
         gaps=["missing skill X"],
     )
+
+
+def test_remote_policy_caps_remote_only_office_attendance_score():
+    from app.services.match_service import apply_remote_policy_to_score
+
+    profile = _make_profile()
+    profile.target_locations = []
+    job = _make_job(
+        description="This role requires minimum 3 days/week in the Toronto office.",
+        location="Remote",
+        workplace_type="remote",
+    )
+    score_result = _make_score_result(str(uuid.uuid4()), score=0.92)
+
+    adjusted = apply_remote_policy_to_score(score_result, profile, job, 0.65)
+
+    assert adjusted.score < 0.65
+    assert adjusted.score == 0.29
+    assert any("office attendance" in gap for gap in adjusted.gaps)
+    assert "office attendance" in adjusted.rationale
+
+
+def test_remote_policy_does_not_cap_matching_target_location():
+    from app.services.match_service import apply_remote_policy_to_score
+
+    profile = _make_profile()
+    profile.target_locations = ["Toronto"]
+    job = _make_job(
+        description="This role requires minimum 3 days/week in the Toronto office.",
+        location="Remote",
+        workplace_type="remote",
+    )
+    score_result = _make_score_result(str(uuid.uuid4()), score=0.92)
+    original_gaps = list(score_result.gaps)
+
+    adjusted = apply_remote_policy_to_score(score_result, profile, job, 0.65)
+
+    assert adjusted.score == 0.92
+    assert adjusted.gaps == original_gaps
 
 
 def _make_mock_session(app: MagicMock):
