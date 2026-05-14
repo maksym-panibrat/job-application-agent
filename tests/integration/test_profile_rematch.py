@@ -10,6 +10,7 @@ from app.models.application import Application
 from app.models.job import Job
 from app.models.user import User
 from app.models.user_profile import UserProfile
+from app.models.work_queue import WorkQueue
 
 
 async def _make_job(db_session, external_id: str = None) -> Job:
@@ -32,7 +33,6 @@ def _scored_app(job_id, profile_id, *, status: str) -> Application:
         job_id=job_id,
         profile_id=profile_id,
         status=status,
-        match_status="matched",
         match_score=0.8,
         match_summary="Old summary",
         match_rationale="Old rationale",
@@ -69,7 +69,6 @@ async def test_rematch_resets_eligible_apps_only(db_session, auth_headers, seede
         job_id=j5.id,
         profile_id=profile.id,
         status="pending_review",
-        match_status="pending_match",
         match_score=None,
     )
 
@@ -96,14 +95,20 @@ async def test_rematch_resets_eligible_apps_only(db_session, auth_headers, seede
             await db_session.execute(select(Application).where(Application.id == app_id))
         ).scalar_one()
         await db_session.refresh(app)
-        assert app.match_status == "pending_match", f"{label}: match_status not reset"
         assert app.match_score is None, f"{label}: match_score not cleared"
         assert app.match_summary is None, f"{label}: summary not cleared"
         assert app.match_rationale is None, f"{label}: rationale not cleared"
         assert app.match_strengths == [], f"{label}: strengths not cleared"
         assert app.match_gaps == [], f"{label}: gaps not cleared"
         assert app.status == "pending_review", f"{label}: status not lifted to pending_review"
-        assert app.match_queued_at is not None, f"{label}: match_queued_at not set"
+        queue_rows = (
+            await db_session.execute(select(WorkQueue).where(WorkQueue.job_type == "match"))
+        ).scalars().all()
+        assert any(
+            row.payload.get("application_id") == str(app_id)
+            and row.dedupe_key == f"match:{app_id}"
+            for row in queue_rows
+        ), f"{label}: match work not enqueued"
 
     # Untouched apps
     for app_id, expected_status in [
@@ -115,7 +120,6 @@ async def test_rematch_resets_eligible_apps_only(db_session, auth_headers, seede
         ).scalar_one()
         await db_session.refresh(app)
         assert app.status == expected_status
-        assert app.match_status == "matched"  # unchanged
         assert app.match_score == 0.8
 
     # Already-queued unchanged
@@ -123,7 +127,6 @@ async def test_rematch_resets_eligible_apps_only(db_session, auth_headers, seede
         await db_session.execute(select(Application).where(Application.id == queued_id))
     ).scalar_one()
     await db_session.refresh(queued)
-    assert queued.match_status == "pending_match"
     assert queued.match_score is None  # was already None
 
 
@@ -168,6 +171,5 @@ async def test_rematch_isolates_other_profiles(db_session, auth_headers, seeded_
     ).scalar_one()
     await db_session.refresh(mine_after)
     await db_session.refresh(theirs_after)
-    assert mine_after.match_status == "pending_match"
-    assert theirs_after.match_status == "matched"  # untouched
+    assert mine_after.match_score is None
     assert theirs_after.match_score == 0.8

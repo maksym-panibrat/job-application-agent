@@ -1,8 +1,6 @@
 """match handler: score one application."""
 import structlog
-from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.sql import func
 from sqlmodel import select
 
 from app.models.application import Application
@@ -17,17 +15,8 @@ class MatchHandler:
     max_attempts = 5
 
     async def on_terminal_failure(self, session_factory, row: WorkQueue, error: str) -> None:
+        del session_factory
         payload = MatchPayload(**row.payload)
-        async with session_factory() as session:
-            await session.execute(
-                update(Application)
-                .where(
-                    Application.id == payload.application_id,
-                    Application.match_status == "pending_match",
-                )
-                .values(match_status="match_failed", updated_at=func.now())
-            )
-            await session.commit()
         await log.awarning(
             "worker.match.terminal_failure",
             application_id=str(payload.application_id),
@@ -47,7 +36,7 @@ class MatchHandler:
                 application_id=str(payload.application_id),
             )
             return
-        if app.match_score is not None and app.match_status == "matched":
+        if app.match_score is not None:
             await log.ainfo("worker.match.skip_replay", application_id=str(app.id))
             return
 
@@ -73,9 +62,6 @@ class MatchHandler:
         app.match_rationale = result.get("rationale")
         app.match_strengths = result.get("strengths", [])
         app.match_gaps = result.get("gaps", [])
-        app.match_status = "matched"
-        app.match_queued_at = None
-        app.match_claimed_at = None
         session.add(app)
         await log.ainfo("worker.match.done", application_id=str(app.id), score=result["score"])
 

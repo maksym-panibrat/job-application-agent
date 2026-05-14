@@ -39,7 +39,7 @@ async def _seed_interested_profile(db_session, slug: str) -> None:
         search_active=True,
     )
     db_session.add(profile)
-    db_session.add(SlugFetch(source="greenhouse", slug=slug, queued_at=datetime.now(UTC)))
+    db_session.add(SlugFetch(source="greenhouse", slug=slug))
     await db_session.commit()
 
 
@@ -102,8 +102,6 @@ async def test_fetch_slug_handler_upserts_jobs_and_enqueues_match_rows(db_sessio
     assert len(apps) == 1
     assert apps[0].job_id == jobs[0].id
     assert match_jobs == [(str(apps[0].id), f"match:{apps[0].id}")]
-    assert slug_row.last_status == "ok"
-    assert slug_row.queued_at is None
     assert slug_row.consecutive_5xx_count == 0
 
 

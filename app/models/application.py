@@ -21,15 +21,6 @@ class Application(SQLModel, table=True):
     # Values: none, pending, generating, awaiting_review, ready, failed
     generation_status: str = "none"
     generation_attempts: int = 0
-    # Match queue lifecycle: pending_match → matched / error
-    match_status: str = "pending_match"
-    match_attempts: int = 0
-    match_queued_at: datetime | None = Field(
-        default=None, sa_column=Column(sa.DateTime(timezone=True), nullable=True)
-    )
-    match_claimed_at: datetime | None = Field(
-        default=None, sa_column=Column(sa.DateTime(timezone=True), nullable=True)
-    )
     match_score: float | None = None
     match_summary: str | None = None  # 1-line job summary (UI). Single-writer: matching agent.
     match_rationale: str | None = None  # short audit-only rationale (not surfaced in UI).

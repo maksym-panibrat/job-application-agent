@@ -1,5 +1,6 @@
 from unittest.mock import AsyncMock, patch
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -78,14 +79,22 @@ def test_sync_correct_secret_calls_task():
     assert resp.json() == {"enqueued": [], "pruned": 0, "active_profiles": 0}
 
 
-def test_generation_queue_correct_secret_returns_deprecated_shim():
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/internal/cron/generation-queue",
+        "/internal/cron/process-sync-queue",
+        "/internal/cron/process-match-queue",
+        "/internal/cron/post-cutover-match-reconcile",
+    ],
+)
+def test_legacy_cron_endpoints_removed_after_queue_cutover(path):
     client = make_app(secret="real-secret")
     resp = client.post(
-        "/internal/cron/generation-queue",
+        path,
         headers={"X-Cron-Secret": "real-secret"},
     )
-    assert resp.status_code == 202
-    assert resp.json()["status"] == "deprecated"
+    assert resp.status_code == 404
 
 
 def test_maintenance_correct_secret_calls_task():

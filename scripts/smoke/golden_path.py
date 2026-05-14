@@ -37,14 +37,14 @@ Step mapping (matches stabilisation plan):
                                              may be slow)
     Step 7  POST /api/chat/messages        → 200 SSE stream with assistant response
                                              (proves Gemini pipeline wired to prod)
-    Step 8a POST /api/applications/{id}/regenerate
-                                           → 200/202 (XFAIL until PR 8/9)
-    Step 8b Poll GET /api/applications/{id} until generation_status=="awaiting_review"
-                                           → up to 180s (XFAIL until PR 8/9)
+    Step 8a POST /api/applications/{id}/cover-letter
+                                           → 202 queued
+    Step 8b Poll GET /api/applications/{id}/cover-letter/status until queued/running
+                                           → up to 180s
     Step 8c PATCH /api/applications/{id} {"status": "approved"}
                                            → 200 (XFAIL until PR 8/9)
-    Step 8d Poll GET /api/applications/{id} until generation_status=="ready"
-                                           → up to 60s (XFAIL until PR 8/9)
+    Step 8d Poll GET /api/applications/{id}/cover-letter/status until status=="ready"
+                                           → up to 60s
     Step 9  POST /api/applications/{id}/submit
                                            → endpoint exists, token accepted (XFAIL — PR 7)
     Step 10 Cleanup: reset profile full_name to 'Smoke Test' (idempotent teardown)
@@ -53,8 +53,9 @@ Note on Step 6: job sync calls external APIs (Adzuna, Remotive, etc.) and may ta
 production (observed 2026-04-22: server completed in ~150 s while client timed out at 90 s).
 The script uses a 240 s timeout for that step only.
 
-Note on Steps 8a–8d: all four sub-steps are marked XFAIL until PR 8/9 land.  Individual
-sub-step failures are diagnosable from the JSON details in the output.
+Note on Steps 8a–8d: cover-letter generation is asynchronous. Step 8a enqueues
+work, Step 8b verifies queue visibility, and Step 8d waits for completion.
+Individual sub-step failures are diagnosable from the JSON details in the output.
 """
 
 from __future__ import annotations
@@ -487,16 +488,14 @@ async def step8a_regenerate(
     app_id: str,
     verbose: bool,
 ) -> StepResult:
-    """POST /api/applications/{id}/regenerate → 200 or 202.  XFAIL until PR 8/9."""
-    url = f"{base_url}/api/applications/{app_id}/regenerate"
-    label = "step8a_regenerate"
+    """POST /api/applications/{id}/cover-letter → 202 queued."""
+    url = f"{base_url}/api/applications/{app_id}/cover-letter"
+    label = "step8a_cover_letter"
     try:
         r = await client.post(url, headers=_bearer_headers(token), timeout=DEFAULT_TIMEOUT_S)
     except httpx.RequestError as exc:
         return True, {
             "step": "8a",
-            "xfail": True,
-            "note": "generation interrupt/resume broken — targeted by PR 8",
             "error": f"Request failed: {exc}",
         }
 
@@ -507,32 +506,21 @@ async def step8a_regenerate(
     if r.status_code == 401:
         return False, {
             "step": "8a",
-            "error": "401 — token rejected by regenerate endpoint",
+            "error": "401 — token rejected by cover-letter endpoint",
             "body": body,
         }
     if r.status_code == 404:
         return False, {
             "step": "8a",
-            "error": "404 — regenerate endpoint missing (routing broken?)",
+            "error": "404 — cover-letter endpoint missing (routing broken?)",
             "app_id": app_id,
             "body": body,
         }
 
-    # 429 = max attempts reached; treat as XFAIL (smoke user hit limit)
-    if r.status_code == 429:
-        return True, {
+    if r.status_code not in (202, 409):
+        return False, {
             "step": "8a",
-            "xfail": True,
-            "note": "generation interrupt/resume broken — targeted by PR 8",
-            "detail": "429 max generation attempts reached for smoke application",
-            "app_id": app_id,
-        }
-
-    if r.status_code not in (200, 202):
-        return True, {
-            "step": "8a",
-            "xfail": True,
-            "note": "generation interrupt/resume broken — targeted by PR 8",
+            "error": "cover-letter enqueue returned unexpected status",
             "http_status": r.status_code,
             "body": body,
             "app_id": app_id,
@@ -540,10 +528,9 @@ async def step8a_regenerate(
 
     return True, {
         "step": "8a",
-        "xfail": True,
-        "note": "generation interrupt/resume broken — targeted by PR 8",
         "http_status": r.status_code,
-        "generation_status": body.get("generation_status") if isinstance(body, dict) else None,
+        "job_id": body.get("job_id") if isinstance(body, dict) else None,
+        "status": body.get("status") if isinstance(body, dict) else None,
         "app_id": app_id,
     }
 
@@ -555,12 +542,9 @@ async def step8b_poll_awaiting_review(
     app_id: str,
     verbose: bool,
 ) -> StepResult:
-    """Poll GET /api/applications/{id} for generation_status=="awaiting_review".
-
-    XFAIL until PR 8/9.
-    """
-    url = f"{base_url}/api/applications/{app_id}"
-    label = "step8b_poll_awaiting_review"
+    """Poll GET /api/applications/{id}/cover-letter/status until work is visible."""
+    url = f"{base_url}/api/applications/{app_id}/cover-letter/status"
+    label = "step8b_poll_cover_letter_status"
     deadline = time.monotonic() + GENERATION_AWAITING_REVIEW_TIMEOUT_S
     last_status: str | None = None
 
@@ -570,8 +554,6 @@ async def step8b_poll_awaiting_review(
         except httpx.RequestError as exc:
             return True, {
                 "step": "8b",
-                "xfail": True,
-                "note": "generation interrupt/resume broken — targeted by PR 8",
                 "error": f"Poll request failed: {exc}",
             }
 
@@ -580,41 +562,33 @@ async def step8b_poll_awaiting_review(
             _verbose_log(label, "GET", url, r.status_code, body)
 
         if r.status_code != 200:
-            return True, {
+            return False, {
                 "step": "8b",
-                "xfail": True,
-                "note": "generation interrupt/resume broken — targeted by PR 8",
                 "error": f"Poll got HTTP {r.status_code}",
                 "body": body,
             }
 
-        last_status = body.get("generation_status") if isinstance(body, dict) else None
-        if last_status == "awaiting_review":
+        last_status = body.get("status") if isinstance(body, dict) else None
+        if last_status in {"pending", "generating", "ready"}:
             return True, {
                 "step": "8b",
-                "xfail": True,
-                "note": "generation interrupt/resume broken — targeted by PR 8",
-                "generation_status": last_status,
+                "status": last_status,
                 "app_id": app_id,
             }
         if last_status == "failed":
-            return True, {
+            return False, {
                 "step": "8b",
-                "xfail": True,
-                "note": "generation interrupt/resume broken — targeted by PR 8",
-                "detail": "generation_status transitioned to 'failed'",
+                "error": "cover-letter generation failed",
                 "app_id": app_id,
             }
 
         await asyncio.sleep(GENERATION_POLL_INTERVAL_S)
 
-    return True, {
+    return False, {
         "step": "8b",
-        "xfail": True,
-        "note": "generation interrupt/resume broken — targeted by PR 8",
-        "detail": (
+        "error": (
             f"Timed out after {GENERATION_AWAITING_REVIEW_TIMEOUT_S}s waiting for "
-            f"'awaiting_review'; last status: {last_status!r}"
+            f"queued/running generation; last status: {last_status!r}"
         ),
         "app_id": app_id,
     }
@@ -682,8 +656,8 @@ async def step8d_poll_ready(
     app_id: str,
     verbose: bool,
 ) -> StepResult:
-    """Poll GET /api/applications/{id} until generation_status=="ready".  XFAIL until PR 8/9."""
-    url = f"{base_url}/api/applications/{app_id}"
+    """Poll GET /api/applications/{id}/cover-letter/status until status=="ready"."""
+    url = f"{base_url}/api/applications/{app_id}/cover-letter/status"
     label = "step8d_poll_ready"
     deadline = time.monotonic() + GENERATION_READY_TIMEOUT_S
     last_status: str | None = None
@@ -694,8 +668,6 @@ async def step8d_poll_ready(
         except httpx.RequestError as exc:
             return True, {
                 "step": "8d",
-                "xfail": True,
-                "note": "generation interrupt/resume broken — targeted by PR 8",
                 "error": f"Poll request failed: {exc}",
             }
 
@@ -704,39 +676,31 @@ async def step8d_poll_ready(
             _verbose_log(label, "GET", url, r.status_code, body)
 
         if r.status_code != 200:
-            return True, {
+            return False, {
                 "step": "8d",
-                "xfail": True,
-                "note": "generation interrupt/resume broken — targeted by PR 8",
                 "error": f"Poll got HTTP {r.status_code}",
                 "body": body,
             }
 
-        last_status = body.get("generation_status") if isinstance(body, dict) else None
+        last_status = body.get("status") if isinstance(body, dict) else None
         if last_status == "ready":
             return True, {
                 "step": "8d",
-                "xfail": True,
-                "note": "generation interrupt/resume broken — targeted by PR 8",
-                "generation_status": last_status,
+                "status": last_status,
                 "app_id": app_id,
             }
         if last_status == "failed":
-            return True, {
+            return False, {
                 "step": "8d",
-                "xfail": True,
-                "note": "generation interrupt/resume broken — targeted by PR 8",
-                "detail": "generation_status transitioned to 'failed'",
+                "error": "cover-letter generation failed",
                 "app_id": app_id,
             }
 
         await asyncio.sleep(GENERATION_POLL_INTERVAL_S)
 
-    return True, {
+    return False, {
         "step": "8d",
-        "xfail": True,
-        "note": "generation interrupt/resume broken — targeted by PR 8",
-        "detail": (
+        "error": (
             f"Timed out after {GENERATION_READY_TIMEOUT_S}s waiting for "
             f"'ready'; last status: {last_status!r}"
         ),
@@ -987,8 +951,8 @@ async def run(base_url: str, token: str, cron_secret: str, verbose: bool) -> int
                 xfails += 1
         else:
             gen_steps: list[tuple[str, Any]] = [
-                ("8a POST /regenerate", step8a_regenerate),
-                ("8b Poll awaiting_review", step8b_poll_awaiting_review),
+                ("8a POST /cover-letter", step8a_regenerate),
+                ("8b Poll cover-letter status", step8b_poll_awaiting_review),
                 ("8c PATCH approved", step8c_approve),
                 ("8d Poll ready", step8d_poll_ready),
             ]

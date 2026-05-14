@@ -1,12 +1,4 @@
-"""Slug-level fetch state. One row per (source, slug), shared across users.
-
-Lifecycle:
-  validate_slug   → writes row with last_status='ok' (no fetch yet)
-  enqueue_stale   → sets queued_at on existing row (or inserts then sets)
-  next_pending    → claims rows by setting claimed_at
-  mark_fetched    → updates last_status, counters, clears queued_at + claimed_at,
-                    flips is_invalid after 2 consecutive 404s
-"""
+"""Slug-level fetch state. One row per (source, slug), shared across users."""
 
 from datetime import UTC, datetime, timedelta
 
@@ -14,7 +6,7 @@ import structlog
 from sqlalchemy import and_, or_
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlmodel import select
+from sqlmodel import col, select
 
 from app.models.company import Company
 from app.models.slug_fetch import SlugFetch
@@ -32,25 +24,14 @@ async def get(source: str, slug: str, session: AsyncSession) -> SlugFetch | None
 
 
 async def validate_slug(source: str, slug: str, session: AsyncSession) -> bool:
-    """Returns True if the slug exists on the given provider's board.
-
-    Looks up the adapter in app.sources.SOURCES; raises ValueError on unknown
-    provider. On True, upserts a SlugFetch row with last_status='ok'.
-    """
+    """Returns True if the slug exists on the given provider's board."""
     adapter = SOURCES.get(source)
     if adapter is None:
         raise ValueError(f"unknown provider: {source}")
     ok = await adapter.validate(slug)
     if not ok:
         return False
-    stmt = (
-        insert(SlugFetch)
-        .values(source=source, slug=slug, last_status="ok")
-        .on_conflict_do_update(
-            index_elements=["source", "slug"],
-            set_={"last_status": "ok"},
-        )
-    )
+    stmt = insert(SlugFetch).values(source=source, slug=slug).on_conflict_do_nothing()
     await session.execute(stmt)
     await session.commit()
     return True
@@ -72,10 +53,6 @@ async def mark_fetched(
         session.add(row)
 
     row.last_attempted_at = now
-    row.last_status = status
-    row.queued_at = None
-    row.claimed_at = None
-
     if status == "ok":
         row.last_fetched_at = now
         row.consecutive_404_count = 0
@@ -102,53 +79,6 @@ async def mark_fetched(
     return row
 
 
-async def enqueue_stale(profile, session: AsyncSession, *, ttl_hours: int = 6) -> list[str]:
-    """For each (provider, slug) pair in the user's followed Company rows,
-    queue a SlugFetch if its last_fetched_at is NULL or older than now-ttl_hours.
-
-    Returns the list of slugs newly queued (one entry per provider+slug pair;
-    duplicates allowed — same slug under two providers counts twice).
-    Skips Company rows marked unfollowable=True.
-    """
-    company_ids = list(profile.target_company_ids or [])
-    if not company_ids:
-        return []
-    companies = (
-        (
-            await session.execute(
-                select(Company).where(
-                    Company.id.in_(company_ids),
-                    Company.unfollowable.is_(False),
-                )
-            )
-        )
-        .scalars()
-        .all()
-    )
-    if not companies:
-        return []
-
-    cutoff = datetime.now(UTC) - timedelta(hours=ttl_hours)
-    queued: list[str] = []
-    for company in companies:
-        for provider, slug in (company.provider_slugs or {}).items():
-            row = await get(provider, slug, session)
-            if row is None:
-                row = SlugFetch(source=provider, slug=slug, queued_at=datetime.now(UTC))
-                session.add(row)
-                queued.append(slug)
-                continue
-            if row.is_invalid:
-                continue
-            already_queued = row.queued_at is not None
-            is_stale = row.last_fetched_at is None or row.last_fetched_at < cutoff
-            if is_stale and not already_queued:
-                row.queued_at = datetime.now(UTC)
-                queued.append(slug)
-    await session.commit()
-    return queued
-
-
 async def list_stale_for_profile(
     profile,
     session: AsyncSession,
@@ -162,8 +92,8 @@ async def list_stale_for_profile(
         (
             await session.execute(
                 select(Company).where(
-                    Company.id.in_(company_ids),
-                    Company.unfollowable.is_(False),
+                    col(Company.id).in_(company_ids),
+                    col(Company.unfollowable).is_(False),
                 )
             )
         )
@@ -196,7 +126,13 @@ async def prune_invalid_for_profile(profile, session: AsyncSession) -> int:
     if not company_ids:
         return 0
     companies = (
-        (await session.execute(select(Company).where(Company.id.in_(company_ids)))).scalars().all()
+        (
+            await session.execute(
+                select(Company).where(col(Company.id).in_(company_ids))
+            )
+        )
+        .scalars()
+        .all()
     )
     if not companies:
         return 0
@@ -211,7 +147,7 @@ async def prune_invalid_for_profile(profile, session: AsyncSession) -> int:
             (
                 await session.execute(
                     select(SlugFetch).where(
-                        SlugFetch.is_invalid.is_(True),
+                        col(SlugFetch.is_invalid).is_(True),
                         or_(*pair_clauses),
                     )
                 )
@@ -233,44 +169,3 @@ async def prune_invalid_for_profile(profile, session: AsyncSession) -> int:
         session.add(company)
         pruned += len(invalid_keys)
     return pruned
-
-
-async def next_pending(
-    session: AsyncSession, *, limit: int, lease_seconds: int = 300
-) -> list[SlugFetch]:
-    """Claim up to `limit` queued rows. A row is claimable if queued_at is set
-    and (claimed_at is NULL or older than lease_seconds ago).
-    Selected rows have claimed_at set to now() before return."""
-    cutoff = datetime.now(UTC) - timedelta(seconds=lease_seconds)
-    result = await session.execute(
-        select(SlugFetch)
-        .where(
-            SlugFetch.queued_at.is_not(None),
-            (SlugFetch.claimed_at.is_(None)) | (SlugFetch.claimed_at < cutoff),
-            SlugFetch.is_invalid.is_(False),
-        )
-        .order_by(SlugFetch.queued_at)
-        .limit(limit)
-        .with_for_update(skip_locked=True)
-    )
-    rows = list(result.scalars().all())
-    now = datetime.now(UTC)
-    for row in rows:
-        row.claimed_at = now
-    if rows:
-        await session.commit()
-    return rows
-
-
-async def pending_count(session: AsyncSession) -> int:
-    from sqlalchemy import func
-
-    result = await session.execute(
-        select(func.count())
-        .select_from(SlugFetch)
-        .where(
-            SlugFetch.queued_at.is_not(None),
-            SlugFetch.is_invalid.is_(False),
-        )
-    )
-    return int(result.scalar_one())

@@ -77,3 +77,27 @@ async def test_applications_new_columns(db_session):
     cols = {r[0]: (r[1], r[2]) for r in rows}
     assert cols["cover_letter_content"] == ("text", "YES")
     assert cols["generated_at"] == ("timestamp with time zone", "YES")
+
+
+@pytest.mark.asyncio
+async def test_phase_b_cleanup_drops_legacy_queue_columns(db_session):
+    rows = (
+        await db_session.execute(
+            text(
+                """
+        SELECT table_name, column_name
+        FROM information_schema.columns
+        WHERE (table_name = 'slug_fetches'
+               AND column_name IN ('queued_at', 'claimed_at', 'last_status'))
+           OR (table_name = 'applications'
+               AND column_name IN (
+                   'match_status',
+                   'match_queued_at',
+                   'match_claimed_at',
+                   'match_attempts'
+               ))
+    """
+            )
+        )
+    ).all()
+    assert rows == []
