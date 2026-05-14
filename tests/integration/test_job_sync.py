@@ -216,6 +216,37 @@ async def test_upsert_job_populates_description(db_session):
 
 
 @pytest.mark.asyncio
+async def test_upsert_job_preserves_description_beyond_prompt_cap(db_session):
+    from app.agents.matching_agent import MAX_JOB_DESC_CHARS, truncate_description
+
+    raw_body = "remote policy detail " * 1200
+    raw = f"<h2>Role</h2><p>{raw_body}</p>"
+    assert len(raw) > MAX_JOB_DESC_CHARS
+
+    data = JobData(
+        external_id="ext-long-description-1",
+        title="Test Engineer",
+        company_name="Test Co",
+        location="Remote",
+        workplace_type="remote",
+        description_raw=raw,
+        salary=None,
+        contract_type=None,
+        apply_url="https://example.com/apply/long-description-1",
+        posted_at=None,
+    )
+
+    job, _ = await upsert_job(data, "greenhouse", db_session)
+
+    assert job.description_raw == raw
+    assert job.description is not None
+    assert len(job.description) > MAX_JOB_DESC_CHARS
+    prompt_fragment = truncate_description(job.description)
+    assert len(prompt_fragment) < len(job.description)
+    assert prompt_fragment.endswith("[Description truncated]")
+
+
+@pytest.mark.asyncio
 async def test_upsert_job_recomputes_description_on_update(db_session):
     """Re-upserting an existing job recomputes description."""
     data = JobData(
