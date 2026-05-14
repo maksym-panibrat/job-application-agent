@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 import sqlalchemy as sa
 
-from app.models.application import Application
+from app.models.application import Application, GeneratedDocument
 from app.models.job import Job
 from app.models.user import User
 from app.models.user_profile import UserProfile
@@ -81,9 +81,18 @@ async def test_generate_cover_letter_handler_generates_and_flips_ready(db_sessio
     refreshed = (
         await db_session.execute(sa.select(Application).where(Application.id == app_id))
     ).scalar_one()
+    doc = (
+        await db_session.execute(
+            sa.select(GeneratedDocument).where(
+                GeneratedDocument.application_id == app_id,
+                GeneratedDocument.doc_type == "cover_letter",
+            )
+        )
+    ).scalar_one()
     assert refreshed.generation_status == "ready"
     assert refreshed.cover_letter_content == "GENERATED COVER LETTER"
     assert refreshed.generated_at is not None
+    assert doc.content_md == "GENERATED COVER LETTER"
     assert mock_llm.call_count == 1
 
 
