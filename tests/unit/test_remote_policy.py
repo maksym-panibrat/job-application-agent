@@ -53,6 +53,20 @@ def test_provider_remote_does_not_override_jd_office_requirement():
     assert verdict.hard_mismatch is True
 
 
+def test_provider_remote_location_does_not_satisfy_target_location_allowlist():
+    profile = _profile(target_locations=["Remote - US"])
+    job = SimpleNamespace(
+        location="Remote - US",
+        workplace_type="remote",
+        description="Remote role, but candidates must work from the NYC office twice a week.",
+        description_raw=None,
+    )
+
+    verdict = evaluate_remote_policy(profile, job)
+
+    assert verdict.hard_mismatch is True
+
+
 def test_hybrid_schedule_required_is_office_attendance():
     profile = _profile(target_locations=[])
     job = SimpleNamespace(

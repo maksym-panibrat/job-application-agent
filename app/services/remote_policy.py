@@ -43,7 +43,7 @@ def evaluate_remote_policy(profile: ProfileLike, job: JobLike) -> RemotePolicyVe
     if not _requires_office_attendance(text):
         return RemotePolicyVerdict(hard_mismatch=False)
 
-    if _matches_target_location(profile, text):
+    if _matches_target_location(profile, _job_description_text(job)):
         return RemotePolicyVerdict(hard_mismatch=False)
 
     return RemotePolicyVerdict(hard_mismatch=True, gap=OFFICE_ATTENDANCE_GAP)
@@ -53,6 +53,14 @@ def _job_text(job: JobLike) -> str:
     fields = (
         getattr(job, "location", None),
         getattr(job, "workplace_type", None),
+        getattr(job, "description", None),
+        getattr(job, "description_raw", None),
+    )
+    return " ".join(str(field) for field in fields if field).lower()
+
+
+def _job_description_text(job: JobLike) -> str:
+    fields = (
         getattr(job, "description", None),
         getattr(job, "description_raw", None),
     )
