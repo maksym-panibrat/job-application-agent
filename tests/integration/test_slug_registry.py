@@ -1,7 +1,7 @@
 """Integration tests for slug_fetches model + slug_registry_service."""
 
 import uuid
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 
 import httpx
 import pytest
@@ -64,7 +64,6 @@ async def test_validate_slug_writes_row_on_success(db_session):
     assert ok is True
     row = await slug_registry_service.get("greenhouse", "airbnb", db_session)
     assert row is not None
-    assert row.last_status == "ok"
     assert row.last_fetched_at is None  # validate is existence-only
 
 
@@ -82,12 +81,9 @@ async def test_validate_slug_returns_false_on_404_and_writes_no_row(db_session):
 async def test_mark_fetched_ok_resets_counters(db_session):
     await slug_registry_service.mark_fetched("greenhouse", "stripe", "ok", db_session)
     row = await slug_registry_service.get("greenhouse", "stripe", db_session)
-    assert row.last_status == "ok"
     assert row.consecutive_404_count == 0
     assert row.consecutive_5xx_count == 0
     assert row.last_fetched_at is not None
-    assert row.queued_at is None
-    assert row.claimed_at is None
 
 
 @pytest.mark.asyncio
@@ -117,69 +113,33 @@ async def test_mark_fetched_transient_does_not_count_toward_invalid(db_session):
 
 
 @pytest.mark.asyncio
-async def test_enqueue_stale_inserts_for_unknown_slugs(db_session):
+async def test_list_stale_for_profile_includes_unknown_slugs(db_session):
     profile = await _profile_with_slugs(db_session, "airbnb", "stripe")
-    queued = await slug_registry_service.enqueue_stale(profile, db_session, ttl_hours=6)
-    assert sorted(queued) == ["airbnb", "stripe"]
-    for slug in ["airbnb", "stripe"]:
-        row = await slug_registry_service.get("greenhouse", slug, db_session)
-        assert row.queued_at is not None
+    stale = await slug_registry_service.list_stale_for_profile(profile, db_session, ttl_hours=6)
+    assert sorted(stale) == [("greenhouse", "airbnb"), ("greenhouse", "stripe")]
 
 
 @pytest.mark.asyncio
-async def test_enqueue_stale_skips_fresh_slugs(db_session):
+async def test_list_stale_for_profile_skips_fresh_slugs(db_session):
     await slug_registry_service.mark_fetched("greenhouse", "airbnb", "ok", db_session)
     profile = await _profile_with_slugs(db_session, "airbnb", "stripe")
-    queued = await slug_registry_service.enqueue_stale(profile, db_session, ttl_hours=6)
-    assert queued == ["stripe"]
+    stale = await slug_registry_service.list_stale_for_profile(profile, db_session, ttl_hours=6)
+    assert stale == [("greenhouse", "stripe")]
 
 
 @pytest.mark.asyncio
-async def test_enqueue_stale_skips_invalid_slugs(db_session):
+async def test_list_stale_for_profile_skips_invalid_slugs(db_session):
     # Two strikes → invalid
     await slug_registry_service.mark_fetched("greenhouse", "openai", "invalid", db_session)
     await slug_registry_service.mark_fetched("greenhouse", "openai", "invalid", db_session)
     profile = await _profile_with_slugs(db_session, "openai", "stripe")
-    queued = await slug_registry_service.enqueue_stale(profile, db_session, ttl_hours=6)
-    assert queued == ["stripe"]
+    stale = await slug_registry_service.list_stale_for_profile(profile, db_session, ttl_hours=6)
+    assert stale == [("greenhouse", "stripe")]
 
 
 @pytest.mark.asyncio
-async def test_next_pending_claims_and_orders_by_queued_at(db_session):
-    profile = await _profile_with_slugs(db_session, "airbnb", "stripe", "notion")
-    await slug_registry_service.enqueue_stale(profile, db_session, ttl_hours=6)
-    rows = await slug_registry_service.next_pending(db_session, limit=2)
-    assert len(rows) == 2
-    assert all(r.claimed_at is not None for r in rows)
-
-
-@pytest.mark.asyncio
-async def test_next_pending_skips_claimed_within_lease(db_session):
-    profile = await _profile_with_slugs(db_session, "airbnb")
-    await slug_registry_service.enqueue_stale(profile, db_session, ttl_hours=6)
-    first = await slug_registry_service.next_pending(db_session, limit=10)
-    assert len(first) == 1
-    second = await slug_registry_service.next_pending(db_session, limit=10)
-    assert second == []  # locked by lease
-
-
-@pytest.mark.asyncio
-async def test_next_pending_reclaims_after_lease_expires(db_session):
-    profile = await _profile_with_slugs(db_session, "airbnb")
-    await slug_registry_service.enqueue_stale(profile, db_session, ttl_hours=6)
-    rows = await slug_registry_service.next_pending(db_session, limit=10)
-    # Force-expire the lease
-    rows[0].claimed_at = datetime.now(UTC) - timedelta(seconds=600)
-    db_session.add(rows[0])
-    await db_session.commit()
-
-    again = await slug_registry_service.next_pending(db_session, limit=10, lease_seconds=300)
-    assert len(again) == 1
-
-
-@pytest.mark.asyncio
-async def test_enqueue_stale_walks_all_provider_slugs(db_session, seeded_user):
-    """A Company with two provider_slugs entries queues two SlugFetch rows."""
+async def test_list_stale_for_profile_walks_all_provider_slugs(db_session, seeded_user):
+    """A Company with two provider_slugs entries returns two stale pairs."""
     company = Company(
         canonical_name="Linear",
         normalized_key="linear",
@@ -200,21 +160,12 @@ async def test_enqueue_stale_walks_all_provider_slugs(db_session, seeded_user):
     db_session.add(profile)
     await db_session.commit()
 
-    queued = await slug_registry_service.enqueue_stale(profile, db_session, ttl_hours=6)
-    assert sorted(queued) == ["linear", "linear"]
-
-    rows = (
-        (await db_session.execute(select(SlugFetch).where(SlugFetch.slug == "linear")))
-        .scalars()
-        .all()
-    )
-    sources = sorted(r.source for r in rows)
-    assert sources == ["ashby", "greenhouse"]
-    assert all(r.queued_at is not None for r in rows)
+    stale = await slug_registry_service.list_stale_for_profile(profile, db_session, ttl_hours=6)
+    assert sorted(stale) == [("ashby", "linear"), ("greenhouse", "linear")]
 
 
 @pytest.mark.asyncio
-async def test_enqueue_stale_skips_unfollowable_companies(db_session, seeded_user):
+async def test_list_stale_for_profile_skips_unfollowable_companies(db_session, seeded_user):
     company = Company(
         canonical_name="DefunctCo",
         normalized_key="defunctco",
@@ -235,5 +186,5 @@ async def test_enqueue_stale_skips_unfollowable_companies(db_session, seeded_use
     db_session.add(profile)
     await db_session.commit()
 
-    queued = await slug_registry_service.enqueue_stale(profile, db_session)
-    assert queued == []
+    stale = await slug_registry_service.list_stale_for_profile(profile, db_session)
+    assert stale == []

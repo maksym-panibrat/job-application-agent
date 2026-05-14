@@ -37,6 +37,23 @@ async def _run_backfill(db_session):
     await db_session.commit()
 
 
+async def _add_legacy_queue_columns(db_session) -> None:
+    """Migration 1 backfill tests exercise pre-cleanup queue columns while the
+    test schema is created at head, after Migration 2 has removed them."""
+    statements = [
+        "ALTER TABLE slug_fetches ADD COLUMN queued_at timestamptz NULL",
+        "ALTER TABLE slug_fetches ADD COLUMN claimed_at timestamptz NULL",
+        "ALTER TABLE slug_fetches ADD COLUMN last_status text NULL",
+        "ALTER TABLE applications ADD COLUMN match_status text NULL",
+        "ALTER TABLE applications ADD COLUMN match_queued_at timestamptz NULL",
+        "ALTER TABLE applications ADD COLUMN match_claimed_at timestamptz NULL",
+        "ALTER TABLE applications ADD COLUMN match_attempts integer NULL",
+    ]
+    for statement in statements:
+        await db_session.execute(text(statement))
+    await db_session.commit()
+
+
 async def _seed_user_profile_and_job(db_session) -> tuple[uuid.UUID, uuid.UUID]:
     """Insert a User → UserProfile → Job triple and return (profile_id, job_id).
     Uses raw SQL so we don't have to import the ORM classes here."""
@@ -80,6 +97,7 @@ async def test_backfill_fetch_slug_includes_dead_claims_and_skips_recent_and_inv
 ):
     """Slug rows with queued_at and (claimed_at IS NULL OR > 300s ago) get fetch-slug
     rows; recent-claim and invalid rows are skipped."""
+    await _add_legacy_queue_columns(db_session)
     await db_session.execute(
         text(
             """
@@ -118,6 +136,7 @@ async def test_backfill_fetch_slug_includes_dead_claims_and_skips_recent_and_inv
 async def test_backfill_match_carries_attempts(db_session):
     """Matches in pending_match with old-enough match_claimed_at re-enqueued with
     attempts preserved."""
+    await _add_legacy_queue_columns(db_session)
     profile_id, job_id = await _seed_user_profile_and_job(db_session)
     app_id = uuid.uuid4()
     await db_session.execute(
@@ -157,6 +176,7 @@ async def test_backfill_match_carries_attempts(db_session):
 @pytest.mark.asyncio
 async def test_backfill_generation_includes_all_pending(db_session):
     """Two pending generations enqueued; the one in 'ready' state is not."""
+    await _add_legacy_queue_columns(db_session)
     profile_id, _ = await _seed_user_profile_and_job(db_session)
     # 3 distinct jobs for 3 applications.
     job_ids = [uuid.uuid4() for _ in range(3)]
@@ -207,6 +227,7 @@ async def test_backfill_generation_includes_all_pending(db_session):
 async def test_backfill_is_idempotent(db_session):
     """Re-running the three INSERTs on a populated work_queue is a no-op
     (ON CONFLICT DO NOTHING on the partial unique index)."""
+    await _add_legacy_queue_columns(db_session)
     await db_session.execute(
         text(
             """

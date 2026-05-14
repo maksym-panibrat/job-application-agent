@@ -1,6 +1,6 @@
 # Job Application Agent
 
-AI-powered job search assistant: ingests Greenhouse company boards, scores each role against your profile, and generates a tailored cover letter on demand.
+AI-powered job search assistant: follows companies across supported ATS providers, scores each role against your profile, and queues tailored cover-letter generation.
 
 **Live demo:** https://job-search.panibrat.com
 
@@ -9,13 +9,13 @@ AI-powered job search assistant: ingests Greenhouse company boards, scores each 
 ```
 Resume upload + onboarding chat
         ↓
-  Greenhouse public board sync (target_company_slugs)
+  Company sync across supported ATS providers
         ↓
-  Matching agent scores each job
+  Worker fetches jobs and scores matches
         ↓
-  Visitor reviews matches → clicks "Generate cover letter"
+  Visitor reviews matches → queues a cover letter
         ↓
-  "Open application" → Greenhouse form → "Mark as applied"
+  "Open application" → ATS form → "Mark as applied"
 ```
 
 ## Tech stack
@@ -57,7 +57,8 @@ The destructive full reset is for pre-launch data repairs only. It wipes users, 
 Run against production only after workers and cron drainers are paused:
 
 ```bash
-DATABASE_URL=postgresql+asyncpg://... uv run python scripts/wipe_job_data.py --yes-i-mean-prod
+export DATABASE_URL=postgresql+asyncpg://...
+uv run python scripts/wipe_job_data.py --yes-i-mean-prod
 make seed-smoke-user
 ```
 
@@ -67,7 +68,7 @@ Afterward, sign in again, recreate the owner profile, resume, and followed compa
 
 ## Deployment
 
-See [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) for the full GCP + Neon provisioning guide.
+See [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) for the current GHCR + Hetzner deployment flow.
 
 ## License
 

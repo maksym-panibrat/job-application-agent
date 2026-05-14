@@ -16,6 +16,7 @@ from app.models.company import Company
 from app.models.job import Job
 from app.models.user import User
 from app.models.user_profile import UserProfile
+from app.models.work_queue import WorkQueue, WorkQueueStatus
 from app.services import match_service
 from app.services.match_service import list_applications, score_and_match
 from tests.conftest import patch_llm
@@ -404,9 +405,9 @@ async def test_score_cached_only_uses_existing_jobs(db_session):
 
 
 @pytest.mark.asyncio
-async def test_score_and_match_flips_match_status_to_matched(db_session):
-    """After score_and_match persists a score, the Application must transition
-    out of pending_match so run_match_queue doesn't re-score it."""
+async def test_score_and_match_persists_match_score(db_session):
+    """After score_and_match persists a score, match_score becomes the scored
+    predicate used to avoid duplicate scoring."""
     from app.agents.matching_agent import ScoreResult
     from app.models.application import Application
     from app.models.user import User
@@ -440,12 +441,10 @@ async def test_score_and_match_flips_match_status_to_matched(db_session):
     await db_session.refresh(job)
     await db_session.refresh(profile)
 
-    # Pre-create an Application in pending_match state (mimicking enqueue_for_interested_profiles)
+    # Pre-create an Application row for this job/profile.
     app = Application(
         job_id=job.id,
         profile_id=profile.id,
-        match_status="pending_match",
-        match_queued_at=datetime.now(UTC),
     )
     db_session.add(app)
     await db_session.commit()
@@ -473,16 +472,12 @@ async def test_score_and_match_flips_match_status_to_matched(db_session):
         await db_session.execute(sa.select(Application).where(Application.id == app.id))
     ).scalar_one()
     assert refreshed.match_score == 0.85
-    assert refreshed.match_status == "matched"
-    assert refreshed.match_queued_at is None
-    assert refreshed.match_claimed_at is None
 
 
 @pytest.mark.asyncio
-async def test_score_cached_skips_jobs_with_fresh_match_claim(db_session):
-    """If an Application is currently claimed by run_match_queue (fresh
-    match_claimed_at), score_cached must not pick its job again — otherwise
-    we'd double-score and waste an LLM call."""
+async def test_score_cached_skips_jobs_with_active_match_work(db_session):
+    """If an Application has active match work, score_cached must not pick its
+    job again — otherwise we'd double-score and waste an LLM call."""
     from app.models.user import User
     from app.services.profile_service import get_or_create_profile
 
@@ -516,15 +511,24 @@ async def test_score_cached_skips_jobs_with_fresh_match_claim(db_session):
     await db_session.commit()
     await db_session.refresh(job)
 
-    # Simulate the cron worker having claimed this Application 10 seconds ago
     app = Application(
         job_id=job.id,
         profile_id=profile.id,
-        match_status="pending_match",
-        match_queued_at=datetime.now(UTC),
-        match_claimed_at=datetime.now(UTC),  # fresh lease
     )
     db_session.add(app)
+    await db_session.commit()
+    await db_session.refresh(app)
+    db_session.add(
+        WorkQueue(
+            job_type="match",
+            payload={"application_id": str(app.id)},
+            status=WorkQueueStatus.IN_PROGRESS,
+            claimed_at=datetime.now(UTC),
+            claimed_by="worker-1",
+            attempts=1,
+            dedupe_key=f"match:{app.id}",
+        )
+    )
     await db_session.commit()
 
     # score_cached must skip this job (no LangGraph invocation)

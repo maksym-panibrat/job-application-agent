@@ -1,8 +1,9 @@
 """
-Application service — generate_materials() drives the cover-letter agent.
+Application service — queue cover-letter generation and run the generation graph.
 
-Synchronous: callers (the API route) await this directly. No checkpointer,
-no interrupt, no resume. generation_status: none -> generating -> ready/failed.
+HTTP requests enqueue work and return 202; app.worker later calls the LLM helper.
+No checkpointer, interrupt, or resume endpoint. generation_status:
+none -> pending -> generating -> ready/failed.
 """
 
 import time

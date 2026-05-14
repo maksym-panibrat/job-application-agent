@@ -1,11 +1,13 @@
 """Jobs sync and query endpoints."""
 
+from datetime import UTC, datetime
+
 import structlog
 from fastapi import APIRouter, Depends, status
 from fastapi.responses import JSONResponse
-from sqlalchemy import and_, func, or_
+from sqlalchemy import String, func, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlmodel import select
+from sqlmodel import col, select
 
 from app.api.deps import get_current_profile
 from app.config import Settings, get_settings
@@ -14,6 +16,7 @@ from app.models.application import Application
 from app.models.company import Company
 from app.models.slug_fetch import SlugFetch
 from app.models.user_profile import UserProfile
+from app.models.work_queue import WorkQueue
 from app.services import job_sync_service
 from app.services.rate_limit_service import check_daily_quota
 
@@ -59,7 +62,7 @@ async def sync_status(
         companies = (
             (
                 await session.execute(
-                    select(Company.provider_slugs).where(Company.id.in_(company_ids))
+                select(Company.provider_slugs).where(col(Company.id).in_(company_ids))
                 )
             )
             .scalars()
@@ -73,22 +76,45 @@ async def sync_status(
     slugs_pending = 0
     invalid_slugs: list[str] = []
     if pairs:
-        pair_clauses = [and_(SlugFetch.source == p, SlugFetch.slug == s) for p, s in pairs]
-        rows = (await session.execute(select(SlugFetch).where(or_(*pair_clauses)))).scalars().all()
+        rows = (
+            await session.execute(
+                select(SlugFetch).where(
+                    tuple_(col(SlugFetch.source), col(SlugFetch.slug)).in_(pairs)
+                )
+            )
+        ).scalars().all()
         for r in rows:
             if r.is_invalid:
                 invalid_slugs.append(r.slug)
-            elif r.queued_at is not None:
-                slugs_pending += 1
+        dedupe_keys = [f"fetch-slug:{provider}:{slug}" for provider, slug in pairs]
+        slugs_pending = int(
+            (
+                await session.execute(
+                    select(func.count())
+                    .select_from(WorkQueue)
+                    .where(
+                        WorkQueue.job_type == "fetch-slug",
+                        col(WorkQueue.status).in_(("pending", "in_progress")),
+                        col(WorkQueue.dedupe_key).in_(dedupe_keys),
+                    )
+                )
+            ).scalar_one()
+        )
 
     matches_pending = int(
         (
             await session.execute(
                 select(func.count())
-                .select_from(Application)
+                .select_from(WorkQueue)
+                .join(
+                    Application,
+                    col(WorkQueue.payload)["application_id"].astext
+                    == col(Application.id).cast(String),
+                )
                 .where(
+                    WorkQueue.job_type == "match",
+                    col(WorkQueue.status).in_(("pending", "in_progress")),
                     Application.profile_id == profile.id,
-                    Application.match_status == "pending_match",
                 )
             )
         ).scalar_one()
@@ -101,6 +127,22 @@ async def sync_status(
     else:
         state = "idle"
 
+    last_sync_summary = profile.last_sync_summary
+    if (
+        state == "idle"
+        and profile.last_sync_requested_at is not None
+        and (
+            profile.last_sync_completed_at is None
+            or profile.last_sync_completed_at < profile.last_sync_requested_at
+        )
+    ):
+        profile.last_sync_completed_at = datetime.now(UTC)
+        if isinstance(last_sync_summary, dict):
+            last_sync_summary = {**last_sync_summary, "queued_slugs": []}
+            profile.last_sync_summary = last_sync_summary
+        session.add(profile)
+        await session.commit()
+
     return {
         "state": state,
         "slugs_total": len(pairs),
@@ -112,6 +154,6 @@ async def sync_status(
         "last_sync_completed_at": profile.last_sync_completed_at.isoformat()
         if profile.last_sync_completed_at
         else None,
-        "last_sync_summary": profile.last_sync_summary,
+        "last_sync_summary": last_sync_summary,
         "invalid_slugs": sorted(invalid_slugs),
     }

@@ -1,30 +1,15 @@
-"""
-Async task functions called by /internal/cron/* HTTP endpoints (GitHub Actions cron).
-
-Three tasks:
-  run_job_sync      — sync + match for all active profiles
-  run_generation_queue — generate materials for pending applications
-  run_daily_maintenance — staleness cleanup + search auto-pause
-"""
+"""Async maintenance helpers used by cron enqueuers and worker handlers."""
 
 from datetime import UTC, datetime, timedelta
 
 import structlog
-from sqlmodel import select
+from sqlmodel import col, select
 
 log = structlog.get_logger()
 
 
 async def run_job_sync() -> dict:
-    """Bulk sweep: prune invalid slugs + enqueue stale slugs for every active
-    profile. The actual fetch happens in run_sync_queue; matching for
-    cron-discovered jobs happens in run_match_queue.
-
-    Cron MUST go through prune_and_enqueue (not sync_profile) — synchronous
-    LLM scoring across N profiles inside Cloud Run's 300s wall caused the
-    recurring HTTP 504 in /internal/cron/sync (issue #70). The two-function
-    split was finalised in #80.
-    """
+    """Bulk sweep: prune invalid slugs + enqueue stale slugs for active profiles."""
     from app.database import get_session_factory
     from app.models.user_profile import UserProfile
     from app.services.job_sync_service import prune_and_enqueue
@@ -47,71 +32,6 @@ async def run_job_sync() -> dict:
         "profiles_enqueued": profiles_enqueued,
         "slugs_enqueued": slugs_enqueued,
         "slugs_pruned": slugs_pruned,
-    }
-
-
-async def run_generation_queue(*, deadline_seconds: int = 240) -> dict:
-    """Generate materials for applications stuck in pending status.
-
-    Bounded by `deadline_seconds` per Cloud Run's 300s wall: 10 pending apps ×
-    ~10-30s per generate_materials call easily exceeds 300s if Gemini is slow.
-    Iterations after the deadline trips are deferred to the next tick — they
-    stay in the pending generation state and become eligible immediately
-    (no lease in this lifecycle, contrast with run_match_queue's 300s lease).
-
-    Note: `generate_materials` is a synchronous-LLM call (no checkpointer).
-    The contract was changed in commit 4d47205-era; passing `checkpointer=`
-    was a stale kwarg from the LangGraph-interrupt era and TypeError'd at
-    every call (silently caught by the generic except, returning failed=N).
-    """
-    import time
-
-    from app.database import get_session_factory
-    from app.models.application import Application
-    from app.services.application_service import generate_materials
-
-    factory = get_session_factory()
-    deadline = time.monotonic() + deadline_seconds
-
-    async with factory() as session:
-        result = await session.execute(
-            select(Application)
-            .where(
-                Application.generation_status.in_(["pending"]),
-                Application.generation_attempts < 3,
-            )
-            .limit(10)
-        )
-        apps = result.scalars().all()
-        app_ids = [a.id for a in apps]
-
-    attempted = len(app_ids)
-    succeeded = 0
-    failed = 0
-    deferred = 0
-
-    for i, app_id in enumerate(app_ids):
-        if time.monotonic() > deadline:
-            deferred = len(app_ids) - i
-            await log.awarning(
-                "scheduler.generation_queue_deferred",
-                deferred=deferred,
-                processed=i,
-            )
-            break
-        try:
-            async with factory() as session:
-                await generate_materials(app_id, session)
-                succeeded += 1
-        except Exception as exc:
-            failed += 1
-            await log.aexception("scheduler.generation_error", app_id=str(app_id), error=str(exc))
-
-    return {
-        "attempted": attempted,
-        "succeeded": succeeded,
-        "failed": failed,
-        "deferred": deferred,
     }
 
 
@@ -218,7 +138,7 @@ async def fetch_one_slug(*, provider: str, slug: str, session_factory) -> dict:
     import httpx
 
     from app.models.application import Application
-    from app.services import job_service, match_queue_service, slug_registry_service
+    from app.services import job_service, slug_registry_service
     from app.sources import SOURCES
     from app.sources.base import InvalidSlugError, TransientFetchError
     from app.sources.greenhouse_board import DEFAULT_TIMEOUT
@@ -279,13 +199,13 @@ async def fetch_one_slug(*, provider: str, slug: str, session_factory) -> dict:
             job, created = await job_service.upsert_job(jd, provider, session, slug=slug)
             if created:
                 new_count += 1
-            await match_queue_service.enqueue_for_interested_profiles(job, session)
+            await _create_applications_for_interested_profiles(job, session)
             apps = (
                 (
                     await session.execute(
                         select(Application).where(
                             Application.job_id == job.id,
-                            Application.match_status == "pending_match",
+                            col(Application.match_score).is_(None),
                         )
                     )
                 )
@@ -296,7 +216,7 @@ async def fetch_one_slug(*, provider: str, slug: str, session_factory) -> dict:
                 await enqueue(
                     session,
                     job_type="match",
-                    payload={"application_id": app.id},
+                    payload={"application_id": str(app.id)},
                     dedupe_key=f"match:{app.id}",
                 )
                 matches_enqueued += 1
@@ -319,190 +239,56 @@ async def fetch_one_slug(*, provider: str, slug: str, session_factory) -> dict:
     }
 
 
-async def run_sync_queue(*, max_slugs: int = 64, deadline_seconds: int = 240) -> dict:
-    """Drain the slug fetch queue. Per-tick deadline keeps us under Cloud Run's
-    300s wall. Anything not finished is left for the next tick.
+async def _create_applications_for_interested_profiles(job, session) -> int:
+    import uuid
 
-    NOTE: http2=True is intentionally NOT set on the httpx client — the `h2`
-    package is not a project dependency. Falls back to HTTP/1.1.
-    """
-    import asyncio
-    import time
+    from sqlalchemy.dialects.postgresql import insert
 
-    from app.database import get_session_factory
-    from app.services import slug_registry_service
-    from app.sources.base import TransientFetchError
-
-    factory = get_session_factory()
-    deadline = time.monotonic() + deadline_seconds
-    counts = {"fetched": 0, "invalid": 0, "transient": 0, "skipped_deadline": 0}
-
-    async with factory() as session:
-        claimed = await slug_registry_service.next_pending(session, limit=max_slugs)
-    if not claimed:
-        return {**counts, "remaining": 0}
-
-    sem = asyncio.Semaphore(8)
-
-    async def _one(row):
-        if time.monotonic() > deadline:
-            counts["skipped_deadline"] += 1
-            return
-        async with sem:
-            if time.monotonic() > deadline:
-                counts["skipped_deadline"] += 1
-                return
-            try:
-                result = await fetch_one_slug(
-                    provider=row.source,
-                    slug=row.slug,
-                    session_factory=factory,
-                )
-            except TransientFetchError:
-                counts["transient"] += 1
-                return
-            if result["status"] == "ok":
-                counts["fetched"] += 1
-            elif result["status"] == "invalid":
-                counts["invalid"] += 1
-            elif result["status"] == "transient":
-                counts["transient"] += 1
-
-    await asyncio.gather(*(_one(r) for r in claimed), return_exceptions=False)
-
-    async with factory() as session:
-        remaining = await slug_registry_service.pending_count(session)
-    return {**counts, "remaining": remaining}
-
-
-async def run_match_queue(
-    *,
-    batch_size: int = 100,
-    deadline_seconds: int | None = None,
-    max_per_profile: int | None = None,
-) -> dict:
-    """Drain pending_match applications. One LangGraph batch per profile per tick
-    (the agent fans out internally). Per-tick deadline keeps us under Cloud Run's
-    300s wall.
-
-    `deadline_seconds` and `max_per_profile` default to
-    `Settings.matching_tick_deadline_seconds` and
-    `Settings.matching_max_per_profile_per_tick` respectively (see #77 — env-var
-    tunable without a redeploy). Tests can still pass explicit overrides.
-
-    `max_per_profile` caps how many jobs a single profile can own in one
-    score_and_match call. Without it, batch_size=100 concentrated on one
-    profile + slow Gemini latency can exceed the 240s deadline before any
-    inter-profile loop check runs (one-off HTTP 504 in
-    /internal/cron/process-match-queue, 2026-05-02). Apps over the cap stay
-    pending_match with claimed_at set; the 300s lease in next_batch makes
-    them re-eligible the tick after."""
-    import time
-
-    from app.agents.llm_safe import BudgetExhausted
-    from app.config import get_settings
-
-    settings = get_settings()
-    if deadline_seconds is None:
-        deadline_seconds = settings.matching_tick_deadline_seconds
-    if max_per_profile is None:
-        max_per_profile = settings.matching_max_per_profile_per_tick
-    from app.database import get_session_factory
+    from app.data.slug_company import company_name_to_slug
     from app.models.application import Application
-    from app.models.job import Job
+    from app.models.company import Company
     from app.models.user_profile import UserProfile
-    from app.services import match_queue_service
-    from app.services.match_service import score_and_match
 
-    factory = get_session_factory()
-    deadline = time.monotonic() + deadline_seconds
-    succeeded = failed = deferred = 0
-    budget_exhausted = False
+    company_id = job.company_id
+    if company_id is None:
+        slug = company_name_to_slug(job.company_name)
+        resolved = await session.execute(
+            select(Company.id).where(Company.provider_slugs[job.source].astext == slug)
+        )
+        company_id = resolved.scalar_one_or_none()
+        if company_id is None:
+            return 0
 
-    async with factory() as session:
-        batch = await match_queue_service.next_batch(session, limit=batch_size)
-    if not batch:
-        return {
-            "attempted": 0,
-            "succeeded": 0,
-            "failed": 0,
-            "deferred": 0,
-            "budget_exhausted": False,
+    result = await session.execute(
+        select(UserProfile.id).where(
+            UserProfile.search_active.is_(True),
+            col(UserProfile.target_company_ids).contains([company_id]),
+        )
+    )
+    profile_ids = [row[0] for row in result.all()]
+    if not profile_ids:
+        return 0
+
+    now = datetime.now(UTC)
+    rows = [
+        {
+            "id": uuid.uuid4(),
+            "job_id": job.id,
+            "profile_id": profile_id,
+            "status": "pending_review",
+            "generation_status": "none",
+            "generation_attempts": 0,
+            "match_strengths": [],
+            "match_gaps": [],
+            "created_at": now,
+            "updated_at": now,
         }
-    attempted = len(batch)
-
-    # Group by profile_id; one LangGraph invocation per profile
-    by_profile: dict = {}
-    for app in batch:
-        by_profile.setdefault(app.profile_id, []).append(app)
-
-    for profile_id, apps in by_profile.items():
-        if time.monotonic() > deadline:
-            deferred += len(apps)
-            continue
-        # Slice per-profile to bound one score_and_match call's wall time.
-        # Apps beyond the cap remain claimed (lease set by next_batch); they
-        # become re-eligible after the 300s lease expires (~next tick).
-        apps_this_tick = apps[:max_per_profile]
-        deferred += len(apps) - len(apps_this_tick)
-        async with factory() as session:
-            profile = (
-                await session.execute(select(UserProfile).where(UserProfile.id == profile_id))
-            ).scalar_one()
-            jobs = list(
-                (
-                    await session.execute(
-                        select(Job).where(Job.id.in_([a.job_id for a in apps_this_tick]))
-                    )
-                )
-                .scalars()
-                .all()
-            )
-
-            try:
-                await score_and_match(profile, session, jobs=jobs)
-            except BudgetExhausted as exc:
-                # Gemini quota gone — not the app's fault. Release leases so
-                # the next tick re-claims naturally once budget restores.
-                # DO NOT increment attempts (that's for real failures and
-                # accumulates toward match_status='error', which silently
-                # discards perfectly good pending matches during a brief
-                # credit outage — see #74).
-                await log.awarning(
-                    "match_queue.budget_exhausted",
-                    resumes_at=exc.resumes_at.isoformat(),
-                    apps_released=len(apps_this_tick),
-                )
-                budget_exhausted = True
-                for a in apps_this_tick:
-                    await match_queue_service.release_claim(a.id, session)
-                # No point trying remaining profiles — same Gemini, same outcome.
-                break
-            except Exception as exc:
-                await log.aexception("match_queue.batch_error", error=str(exc))
-                for a in apps_this_tick:
-                    await match_queue_service.mark_attempt_failed(a.id, session)
-                failed += len(apps_this_tick)
-                continue
-
-            for a in apps_this_tick:
-                # If it has a score now, mark done. If still no score, scoring
-                # was skipped for a transient reason; release the lease without
-                # incrementing attempts so the next tick can retry.
-                refreshed = (
-                    await session.execute(select(Application).where(Application.id == a.id))
-                ).scalar_one()
-                if refreshed.match_score is not None or refreshed.status == "auto_rejected":
-                    await match_queue_service.mark_done(refreshed.id, session)
-                    succeeded += 1
-                else:
-                    await match_queue_service.release_claim(refreshed.id, session)
-                    deferred += 1
-
-    return {
-        "attempted": attempted,
-        "succeeded": succeeded,
-        "failed": failed,
-        "deferred": deferred,
-        "budget_exhausted": budget_exhausted,
-    }
+        for profile_id in profile_ids
+    ]
+    stmt = (
+        insert(Application)
+        .values(rows)
+        .on_conflict_do_nothing(constraint="uq_applications_job_profile")
+    )
+    result = await session.execute(stmt)
+    return result.rowcount or 0

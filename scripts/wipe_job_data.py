@@ -103,9 +103,6 @@ async def wipe(session: AsyncSession, *, fail_after_mutation: bool = False) -> N
                 UPDATE slug_fetches
                 SET last_fetched_at = NULL,
                     last_attempted_at = NULL,
-                    queued_at = NULL,
-                    claimed_at = NULL,
-                    last_status = NULL,
                     consecutive_5xx_count = 0
                 WHERE is_invalid = FALSE
             """)

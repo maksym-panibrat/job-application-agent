@@ -15,14 +15,7 @@ class SlugFetch(SQLModel, table=True):
     last_attempted_at: datetime | None = Field(
         default=None, sa_column=Column(sa.DateTime(timezone=True), nullable=True)
     )
-    last_status: str | None = None
     consecutive_404_count: int = 0
     consecutive_5xx_count: int = 0
     is_invalid: bool = False
     invalid_reason: str | None = None
-    queued_at: datetime | None = Field(
-        default=None, sa_column=Column(sa.DateTime(timezone=True), nullable=True)
-    )
-    claimed_at: datetime | None = Field(
-        default=None, sa_column=Column(sa.DateTime(timezone=True), nullable=True)
-    )

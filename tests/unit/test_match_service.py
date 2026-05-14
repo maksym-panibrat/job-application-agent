@@ -214,7 +214,6 @@ async def test_below_threshold_preserves_dismissed_status():
     assert scored == []
     assert app.status == "dismissed"
     assert app.match_score == 0.4
-    assert app.match_status == "matched"
 
 
 @pytest.mark.asyncio
@@ -250,7 +249,6 @@ async def test_below_threshold_preserves_applied_status():
     assert scored == []
     assert app.status == "applied"
     assert app.match_score == 0.4
-    assert app.match_status == "matched"
 
 
 @pytest.mark.asyncio

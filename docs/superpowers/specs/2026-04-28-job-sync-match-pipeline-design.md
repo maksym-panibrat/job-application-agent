@@ -1,5 +1,10 @@
 # Job Sync & Match Pipeline — Design
 
+> Historical design document. Superseded by the deployed worker-queue
+> architecture. Do not use this as the current operational contract; use
+> `README.md`, `CLAUDE.md`, `docs/DEPLOYMENT.md`, `app/api/internal_cron.py`,
+> and `app/worker/` instead.
+
 **Status:** Draft
 **Owner:** maksym@panibrat.com
 **Date:** 2026-04-28

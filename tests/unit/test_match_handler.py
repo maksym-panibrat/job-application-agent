@@ -27,7 +27,6 @@ def _application(*, status: str = "pending_review") -> Application:
         job_id=uuid.uuid4(),
         profile_id=uuid.uuid4(),
         status=status,
-        match_status="pending_match",
         match_strengths=[],
         match_gaps=[],
     )
@@ -69,7 +68,7 @@ async def test_match_handler_auto_rejects_below_threshold_score():
         await handler(session, _match_row(app.id))
 
     assert app.status == "auto_rejected"
-    assert app.match_status == "matched"
+    assert app.match_score == 0.29
 
 
 @pytest.mark.asyncio
@@ -84,7 +83,6 @@ async def test_match_handler_score_none_remains_retryable():
             await handler(session, _match_row(app.id))
 
     assert app.match_score is None
-    assert app.match_status == "pending_match"
     assert app.status == "pending_review"
     session.add.assert_not_called()
 
@@ -106,7 +104,6 @@ async def test_match_handler_preserves_dismissed_status_on_passing_score():
         await handler(session, _match_row(app.id))
 
     assert app.status == "dismissed"
-    assert app.match_status == "matched"
     assert app.match_score == 0.92
 
 
@@ -127,5 +124,4 @@ async def test_match_handler_preserves_applied_status_on_below_threshold_score()
         await handler(session, _match_row(app.id))
 
     assert app.status == "applied"
-    assert app.match_status == "matched"
     assert app.match_score == 0.29

@@ -2,8 +2,14 @@ import uuid
 
 import pytest
 from sqlalchemy import text
+from sqlmodel import SQLModel
 
-from scripts.wipe_job_data import wipe
+from scripts.wipe_job_data import (
+    PRESERVE_TABLES,
+    ROW_COUNT_PRESERVE_TABLES,
+    WIPE_TABLES,
+    wipe,
+)
 
 
 CHECKPOINT_TABLES = (
@@ -93,10 +99,9 @@ async def _seed_reset_rows(db_session) -> None:
     await db_session.execute(
         text("""
             INSERT INTO applications (id, job_id, profile_id, status, generation_status,
-                match_status, match_attempts, generation_attempts, match_strengths,
-                match_gaps, created_at, updated_at)
+                generation_attempts, match_strengths, match_gaps, created_at, updated_at)
             VALUES (:app_id, :job_id, :profile_id, 'pending_review', 'ready',
-                'matched', 0, 0, ARRAY[]::varchar[], ARRAY[]::varchar[], now(), now())
+                0, ARRAY[]::varchar[], ARRAY[]::varchar[], now(), now())
         """),
         {"app_id": app_id, "job_id": job_id, "profile_id": profile_id},
     )
@@ -139,6 +144,17 @@ async def _seed_reset_rows(db_session) -> None:
     await db_session.commit()
 
 
+def test_wipe_script_classifies_every_current_model_table():
+    import app.models  # noqa: F401
+
+    model_tables = set(SQLModel.metadata.tables)
+    classified_tables = set(WIPE_TABLES) | set(PRESERVE_TABLES) | set(
+        ROW_COUNT_PRESERVE_TABLES
+    )
+
+    assert model_tables == classified_tables
+
+
 @pytest.mark.asyncio
 async def test_wipe_removes_user_owned_and_job_search_rows_but_preserves_companies(
     db_session,
@@ -173,12 +189,12 @@ async def test_wipe_resets_non_invalid_slug_fetches_and_preserves_invalid_rows(
     await db_session.execute(
         text("""
             INSERT INTO slug_fetches (source, slug, last_fetched_at, last_attempted_at,
-                last_status, consecutive_404_count, consecutive_5xx_count, is_invalid,
-                invalid_reason, queued_at, claimed_at)
+                consecutive_404_count, consecutive_5xx_count, is_invalid,
+                invalid_reason)
             VALUES
-              ('greenhouse', 'validco', now(), now(), 'ok', 0, 3, FALSE, NULL, now(), now()),
-              ('greenhouse', 'deadco', now(), now(), 'invalid', 2, 0, TRUE,
-               'board not found', now(), now())
+              ('greenhouse', 'validco', now(), now(), 0, 3, FALSE, NULL),
+              ('greenhouse', 'deadco', now(), now(), 2, 0, TRUE,
+               'board not found')
         """)
     )
     await db_session.commit()
@@ -188,9 +204,9 @@ async def test_wipe_resets_non_invalid_slug_fetches_and_preserves_invalid_rows(
     rows = (
         await db_session.execute(
             text("""
-                SELECT slug, last_fetched_at, last_attempted_at, last_status,
+                SELECT slug, last_fetched_at, last_attempted_at,
                        consecutive_404_count, consecutive_5xx_count, is_invalid,
-                       invalid_reason, queued_at, claimed_at
+                       invalid_reason
                 FROM slug_fetches
                 ORDER BY slug
             """)
@@ -200,10 +216,7 @@ async def test_wipe_resets_non_invalid_slug_fetches_and_preserves_invalid_rows(
 
     assert by_slug["validco"]["last_fetched_at"] is None
     assert by_slug["validco"]["last_attempted_at"] is None
-    assert by_slug["validco"]["last_status"] is None
     assert by_slug["validco"]["consecutive_5xx_count"] == 0
-    assert by_slug["validco"]["queued_at"] is None
-    assert by_slug["validco"]["claimed_at"] is None
 
     assert by_slug["deadco"]["is_invalid"] is True
     assert by_slug["deadco"]["consecutive_404_count"] == 2
@@ -244,9 +257,9 @@ async def test_wipe_rolls_back_when_failure_is_injected(db_session):
     await _seed_reset_rows(db_session)
     await db_session.execute(
         text("""
-            INSERT INTO slug_fetches (source, slug, last_fetched_at, last_status,
+            INSERT INTO slug_fetches (source, slug, last_fetched_at,
                 consecutive_404_count, consecutive_5xx_count, is_invalid)
-            VALUES ('greenhouse', 'validco', now(), 'ok', 0, 2, FALSE)
+            VALUES ('greenhouse', 'validco', now(), 0, 2, FALSE)
         """)
     )
     await db_session.commit()
@@ -258,8 +271,8 @@ async def test_wipe_rolls_back_when_failure_is_injected(db_session):
     assert await _count(db_session, "jobs") == 1
     row = (
         await db_session.execute(
-            text("SELECT last_fetched_at, last_status FROM slug_fetches WHERE slug = 'validco'")
+            text("SELECT last_fetched_at, consecutive_5xx_count FROM slug_fetches WHERE slug = 'validco'")
         )
     ).one()
     assert row.last_fetched_at is not None
-    assert row.last_status == "ok"
+    assert row.consecutive_5xx_count == 2

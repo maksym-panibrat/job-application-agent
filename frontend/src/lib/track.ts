@@ -1,8 +1,9 @@
 /** In-app event tracking — see spec section 7.
  *
  *  Public API: `track(name, properties?)`. Calls are buffered and flushed
- *  every 5s and on `pagehide`. Failures are swallowed so analytics never
- *  break the app. */
+ *  every 5s and on `pagehide`. The server requires an authenticated profile,
+ *  so calls made before a JWT exists are skipped client-side. Failures are
+ *  swallowed so analytics never break the app. */
 
 interface EventIn {
   name: string
@@ -31,6 +32,11 @@ function getSessionId(): string {
 async function flush(): Promise<void> {
   flushTimer = null
   if (queue.length === 0) return
+  const token = sessionStorage.getItem('access_token')
+  if (!token) {
+    queue.length = 0
+    return
+  }
   const batch = queue.splice(0, MAX_BATCH)
   if (queue.length > 0 && flushTimer == null) {
     flushTimer = window.setTimeout(flush, FLUSH_MS)
@@ -38,7 +44,10 @@ async function flush(): Promise<void> {
   try {
     await fetch('/api/events', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
       body: JSON.stringify({ session_id: getSessionId(), events: batch }),
       keepalive: true,
     })
@@ -48,6 +57,7 @@ async function flush(): Promise<void> {
 }
 
 export function track(name: string, properties?: Record<string, unknown>): void {
+  if (!sessionStorage.getItem('access_token')) return
   queue.push({
     name,
     properties,

@@ -163,7 +163,7 @@ async def test_sync_profile_no_longer_seeds_defaults(db_session):
     db_session.add(user)
     await db_session.commit()
     profile = await get_or_create_profile(user.id, db_session)
-    # Pre-seed two Company rows + target_company_ids so enqueue_stale has
+    # Pre-seed two Company rows + target_company_ids so work_queue enqueueing has
     # something to do, while leaving target_company_slugs empty to prove the
     # legacy seeding path is gone.
     company_ids: list[uuid.UUID] = []

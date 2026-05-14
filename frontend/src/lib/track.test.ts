@@ -27,6 +27,7 @@ describe('track()', () => {
   })
 
   it('does not fetch synchronously — flushes after the timer', async () => {
+    sessionStorage.setItem('access_token', 'test-token')
     const fetchSpy = vi.fn().mockResolvedValue(new Response(null, { status: 204 }))
     globalThis.fetch = fetchSpy as typeof fetch
     const { track, _reset } = await import('./track')
@@ -36,6 +37,7 @@ describe('track()', () => {
   })
 
   it('flushes the queue after 5 seconds', async () => {
+    sessionStorage.setItem('access_token', 'test-token')
     const fetchSpy = vi.fn().mockResolvedValue(new Response(null, { status: 204 }))
     globalThis.fetch = fetchSpy as typeof fetch
     const { track, _reset } = await import('./track')
@@ -52,7 +54,32 @@ describe('track()', () => {
     expect(typeof body.session_id).toBe('string')
   })
 
+  it('sends the bearer token when flushing events', async () => {
+    sessionStorage.setItem('access_token', 'event-token')
+    const fetchSpy = vi.fn().mockResolvedValue(new Response(null, { status: 204 }))
+    globalThis.fetch = fetchSpy as typeof fetch
+    const { track, _reset } = await import('./track')
+    currentReset = _reset
+    track('feed.viewed')
+    await vi.advanceTimersByTimeAsync(5_000)
+    expect(fetchSpy).toHaveBeenCalledTimes(1)
+    expect((fetchSpy.mock.calls[0][1] as RequestInit).headers).toMatchObject({
+      Authorization: 'Bearer event-token',
+    })
+  })
+
+  it('drops queued events without an access token', async () => {
+    const fetchSpy = vi.fn().mockResolvedValue(new Response(null, { status: 204 }))
+    globalThis.fetch = fetchSpy as typeof fetch
+    const { track, _reset } = await import('./track')
+    currentReset = _reset
+    track('auth.signin_clicked', { method: 'google' })
+    await vi.advanceTimersByTimeAsync(5_000)
+    expect(fetchSpy).not.toHaveBeenCalled()
+  })
+
   it('flushes on pagehide', async () => {
+    sessionStorage.setItem('access_token', 'test-token')
     const fetchSpy = vi.fn().mockResolvedValue(new Response(null, { status: 204 }))
     globalThis.fetch = fetchSpy as typeof fetch
     const { track, _reset } = await import('./track')
@@ -63,6 +90,7 @@ describe('track()', () => {
   })
 
   it('caps each batch at 50 events', async () => {
+    sessionStorage.setItem('access_token', 'test-token')
     const fetchSpy = vi.fn().mockResolvedValue(new Response(null, { status: 204 }))
     globalThis.fetch = fetchSpy as typeof fetch
     const { track, _reset } = await import('./track')
@@ -75,6 +103,7 @@ describe('track()', () => {
   })
 
   it('swallows fetch errors silently', async () => {
+    sessionStorage.setItem('access_token', 'test-token')
     const fetchSpy = vi.fn().mockRejectedValue(new Error('network'))
     globalThis.fetch = fetchSpy as typeof fetch
     const { track, _reset } = await import('./track')
@@ -84,6 +113,7 @@ describe('track()', () => {
   })
 
   it('persists session_id across calls', async () => {
+    sessionStorage.setItem('access_token', 'test-token')
     const fetchSpy = vi.fn().mockResolvedValue(new Response(null, { status: 204 }))
     globalThis.fetch = fetchSpy as typeof fetch
     const { track, _reset } = await import('./track')
