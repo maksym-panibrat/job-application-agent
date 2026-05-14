@@ -94,11 +94,17 @@ Grading:
 - 0.0-0.29: fundamental mismatch
 
 Location:
-- Treat required recurring office attendance as a hard location requirement, even if provider metadata says remote.
-- If the JD requires recurring office attendance and the office location is not in candidate target locations, score below the match threshold.
-- Examples: "minimum 2 days/week in office", "must work from NYC office twice a week", or required hybrid/onsite days are hard gaps unless the candidate targets that location.
-- Provider metadata says remote only counts when the JD itself does not require recurring office attendance.
-- JD location is in candidate locations OR (JD remote AND candidate remote with no recurring office requirement): not a gap.
+- Treat required recurring office attendance as a hard location requirement,
+  even if provider metadata says remote.
+- If the JD requires recurring office attendance and the office location is not
+  in candidate target locations, score below the match threshold.
+- Examples: "minimum 2 days/week in office", "must work from NYC office twice a
+  week", or required hybrid/onsite days are hard gaps unless the candidate
+  targets that location.
+- Provider metadata says remote only counts when the JD itself does not require
+  recurring office attendance.
+- JD location is in candidate locations OR (JD remote AND candidate remote with
+  no recurring office requirement): not a gap.
 - Otherwise: hard gap, e.g., "Onsite Seattle, candidate based in CA".
 - Never say "may require clarification" or "depends". Decide.
 

@@ -11,7 +11,6 @@ from scripts.wipe_job_data import (
     wipe,
 )
 
-
 CHECKPOINT_TABLES = (
     "checkpoint_writes",
     "checkpoint_blobs",
@@ -271,7 +270,10 @@ async def test_wipe_rolls_back_when_failure_is_injected(db_session):
     assert await _count(db_session, "jobs") == 1
     row = (
         await db_session.execute(
-            text("SELECT last_fetched_at, consecutive_5xx_count FROM slug_fetches WHERE slug = 'validco'")
+            text(
+                "SELECT last_fetched_at, consecutive_5xx_count "
+                "FROM slug_fetches WHERE slug = 'validco'"
+            )
         )
     ).one()
     assert row.last_fetched_at is not None
