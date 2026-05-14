@@ -14,9 +14,8 @@ future prompt limit increase.
 
 ## Goals
 
-- Wipe all existing job-search artifacts and rebuild them from fresh provider
-  fetches.
-- Preserve user identity, profile, resume, and followed company selections.
+- Wipe all existing user-owned and job-search artifacts, then rebuild from a
+  fresh owner account/profile.
 - Preserve full upstream job descriptions in storage without truncation.
 - Make required in-office attendance an explicit remote-policy rule during
   matching.
@@ -24,8 +23,9 @@ future prompt limit increase.
 
 ## Non-Goals
 
-- Preserve applied, dismissed, generated, or auto-rejected application history.
-  The user explicitly chose a full wipe.
+- Preserve users, profiles, resumes, followed company selections, applied,
+  dismissed, generated, or auto-rejected history. The user explicitly chose a
+  full wipe because no external users are active yet.
 - Add a new structured work-mode extraction schema in this pass.
 - Build UI around remote policy explanations beyond the existing match gaps and
   rationale fields.
@@ -45,19 +45,21 @@ Add or update a production-safe reset path that wipes all job-search artifacts:
   delete only those job types.
 - operational LLM/rate usage state currently tied to the old matching run:
   `llm_status`, `rate_limits`, and `usage_counters`
+- user-owned state:
+  `oauth_accounts`, `users`, `user_profiles`, `skills`, `work_experiences`,
+  `events`, and LangGraph checkpoint tables if present. Checkpoints are keyed
+  by profile-thread identity, so they must not survive a full user/profile
+  reset.
 
 Preserve:
 
-- `users`
-- `oauth_accounts`
-- `user_profiles`
-- profile-owned resume, skills, and work experience rows
 - `companies`
-- followed company selections on profiles
 - `slug_fetches` rows, except for freshness and queue state described below
 
-The reset must also make every non-invalid followed provider slug eligible for a
-fresh crawl. For `slug_fetches` rows where `is_invalid=false`, clear:
+Because users/profiles are wiped, there are no followed provider slugs at reset
+time. The reset must make every non-invalid provider slug in `slug_fetches`
+eligible for a fresh crawl once the owner recreates their profile and follows
+companies again. For `slug_fetches` rows where `is_invalid=false`, clear:
 
 - `last_fetched_at`
 - `last_attempted_at`
@@ -80,16 +82,20 @@ writing stale rows during the wipe.
 
 After the reset:
 
-1. Run the existing sync entrypoint so active profiles enqueue stale followed
+1. The owner signs in again and recreates their profile/resume/followed company
+   selections.
+2. Re-seed the smoke-test user before production smoke verification if the
+   smoke path will be used.
+3. Run the existing sync entrypoint so active profiles enqueue stale followed
    company provider slugs.
-2. Let the worker drain `fetch-slug` jobs.
-3. Each provider adapter fetches current postings and passes full raw
+4. Let the worker drain `fetch-slug` jobs.
+5. Each provider adapter fetches current postings and passes full raw
    descriptions to `job_service.upsert_job`.
-4. `upsert_job` stores raw and cleaned descriptions and links each job to the
+6. `upsert_job` stores raw and cleaned descriptions and links each job to the
    company resolved from the provider slug.
-5. `match_queue_service.enqueue_for_interested_profiles` creates new
+7. `match_queue_service.enqueue_for_interested_profiles` creates new
    applications for active profiles that follow the job's company.
-6. Match workers score the rebuilt applications using the explicit remote
+8. Match workers score the rebuilt applications using the explicit remote
    policy below.
 
 ## Raw Description Preservation
@@ -153,9 +159,10 @@ classifier can promote the same rule into stored fields such as
 
 Focused automated coverage:
 
-- reset script wipes the selected job-search tables and preserves users,
-  profiles, resume/profile rows, companies, and followed company IDs
-- reset clears non-invalid slug freshness so sync enqueues provider slugs again
+- reset script wipes the selected job-search and user-owned tables
+- reset script wipes user-owned rows and preserves companies
+- reset clears all non-invalid slug freshness so sync enqueues provider slugs
+  again after a new profile follows companies
 - reset leaves invalid slug rows invalid
 - source/upsert path preserves descriptions longer than 20k characters
 - prompt tests assert the explicit remote trust policy is present in the
@@ -166,7 +173,10 @@ Focused automated coverage:
 Operational verification after production execution:
 
 - before/after row counts for wiped and preserved tables
-- active profiles still have followed company IDs
+- no pre-reset user/profile/application rows remain
+- company catalog rows remain
+- owner can sign in again and create a fresh profile
+- smoke user is re-seeded before smoke tests that use `SMOKE_BEARER_TOKEN`
 - non-invalid followed slugs are queued or freshly fetched
 - new `jobs` rows have long `description_raw` values when providers return them
 - sampled remote-looking jobs with required office attendance are scored with a
