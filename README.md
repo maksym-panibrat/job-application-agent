@@ -50,6 +50,19 @@ cd frontend && npm test                 # component tests
 cd frontend && npm run build            # build to app/static/
 ```
 
+### Production data repair
+
+The destructive full reset is for pre-launch data repairs only. It wipes users, profiles, resumes, applications, generated documents, jobs, queues, usage state, and LangGraph checkpoints. It preserves companies and invalid slug evidence, and resets non-invalid slug freshness so the recreated owner profile can fetch fresh jobs.
+
+Run against production only after workers and cron drainers are paused:
+
+```bash
+DATABASE_URL=postgresql+asyncpg://... uv run python scripts/wipe_job_data.py --yes-i-mean-prod
+make seed-smoke-user
+```
+
+Afterward, sign in again, recreate the owner profile, resume, and followed companies, verify `target_company_ids` is non-empty, and trigger sync.
+
 `CLAUDE.md` documents the non-obvious behaviours; the directory layout is best read from the source.
 
 ## Deployment
