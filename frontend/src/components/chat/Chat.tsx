@@ -8,8 +8,8 @@ import { track } from '../../lib/track'
 interface Message {
   role: 'user' | 'assistant'
   content: string
-  /** True when the agent indicated it mutated the profile during this turn. */
-  profileMutated?: boolean
+  /** True when the agent indicated a manual search can start after this turn. */
+  searchStartable?: boolean
   error?: boolean
 }
 
@@ -78,7 +78,10 @@ export function Chat({ initialPrompt }: ChatProps) {
           if (meta.profile_mutated) {
             setMessages((prev) => {
               const out = [...prev]
-              out[out.length - 1] = { ...out[out.length - 1], profileMutated: true }
+              out[out.length - 1] = {
+                ...out[out.length - 1],
+                searchStartable: meta.search_startable === true,
+              }
               return out
             })
             qc.invalidateQueries({ queryKey: ['profile'] })
@@ -131,7 +134,7 @@ export function Chat({ initialPrompt }: ChatProps) {
                 : 'bg-surface-2 text-text rounded-bl-sm'
             }`}>
               {m.content || (sending && i === messages.length - 1 ? '…' : '')}
-              {m.role === 'assistant' && m.profileMutated && (
+              {m.role === 'assistant' && m.searchStartable && (
                 <div className="mt-2 pt-2 border-t border-border">
                   <Button
                     size="sm"

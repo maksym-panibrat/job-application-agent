@@ -66,6 +66,18 @@ def test_prompt_proactively_asks_for_target_companies():
     )
 
 
+def test_prompt_selects_companies_from_resume_when_user_has_no_preference():
+    """Most users do not arrive with a company wishlist. The agent should use
+    resume/background signals to choose a small starter set, not block on a
+    preference question."""
+    from app.agents.onboarding import SYSTEM_PROMPT
+
+    lower = SYSTEM_PROMPT.lower()
+    assert "resume" in lower or "background" in lower
+    assert "select" in lower or "pick" in lower or "choose" in lower
+    assert "few" in lower or "3 to" in lower or "3-5" in lower
+
+
 def test_prompt_does_not_mention_target_company_slugs():
     """After E1 the agent talks in company display names only — no slugs,
     no provider buckets in the user-facing instruction."""
