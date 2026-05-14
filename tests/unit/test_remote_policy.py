@@ -5,8 +5,8 @@ from types import SimpleNamespace
 from app.services.remote_policy import evaluate_remote_policy
 
 
-def _profile(target_locations: list[str]) -> SimpleNamespace:
-    return SimpleNamespace(target_locations=target_locations)
+def _profile(target_locations: list[str], remote_ok: bool = True) -> SimpleNamespace:
+    return SimpleNamespace(target_locations=target_locations, remote_ok=remote_ok)
 
 
 def test_remote_only_profile_rejects_required_office_attendance():
@@ -67,6 +67,49 @@ def test_provider_remote_location_does_not_satisfy_target_location_allowlist():
     assert verdict.hard_mismatch is True
 
 
+def test_remote_only_profile_rejects_city_location_without_remote_evidence():
+    profile = _profile(target_locations=[], remote_ok=True)
+    job = SimpleNamespace(
+        location="Mountain View, California; New York City, New York; San Francisco, California",
+        workplace_type=None,
+        description="Build research infrastructure for large-scale AI workloads.",
+        description_raw=None,
+    )
+
+    verdict = evaluate_remote_policy(profile, job)
+
+    assert verdict.hard_mismatch is True
+    assert "remote-only" in verdict.gap
+
+
+def test_remote_only_profile_allows_explicit_remote_location():
+    profile = _profile(target_locations=[], remote_ok=True)
+    job = SimpleNamespace(
+        location="Remote - US",
+        workplace_type=None,
+        description="Build research infrastructure for large-scale AI workloads.",
+        description_raw=None,
+    )
+
+    verdict = evaluate_remote_policy(profile, job)
+
+    assert verdict.hard_mismatch is False
+
+
+def test_remote_pseudo_location_is_not_office_target_location():
+    profile = _profile(target_locations=["Remote"], remote_ok=True)
+    job = SimpleNamespace(
+        location="Remote",
+        workplace_type="remote",
+        description="Remote role, but candidates must work from the NYC office twice a week.",
+        description_raw=None,
+    )
+
+    verdict = evaluate_remote_policy(profile, job)
+
+    assert verdict.hard_mismatch is True
+
+
 def test_hybrid_schedule_required_is_office_attendance():
     profile = _profile(target_locations=[])
     job = SimpleNamespace(
@@ -96,7 +139,7 @@ def test_must_be_located_near_target_city_is_office_attendance():
 
 
 def test_hybrid_metadata_with_unrelated_requirement_is_not_office_attendance():
-    profile = _profile(target_locations=[])
+    profile = _profile(target_locations=[], remote_ok=False)
     job = SimpleNamespace(
         location="Berlin, Germany",
         workplace_type="hybrid",
