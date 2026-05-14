@@ -1,5 +1,10 @@
 # Job Sync & Match Pipeline Implementation Plan
 
+> Historical implementation plan. Superseded by the deployed worker-queue
+> architecture. Do not execute tasks from this file; use `README.md`,
+> `CLAUDE.md`, `docs/DEPLOYMENT.md`, `app/api/internal_cron.py`, and
+> `app/worker/` for the current contract.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Replace the synchronous `POST /api/jobs/sync` (which blew past Cloud Run's 300s timeout) with a 202-returning, queue-driven pipeline that fetches each Greenhouse slug at most once per 6h, matches strictly within a user's slug list, auto-prunes invalid slugs, and seeds 5 defaults to brand-new users.

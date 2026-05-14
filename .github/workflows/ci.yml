@@ -126,11 +126,8 @@ jobs:
 
   build-and-push:
     # Build + push to GHCR, then dispatch a bump into panibrat-infra.
-    # Replaces the old GCP path (migrate → Cloud Run deploy → smoke against Cloud Run URL).
-    # Alembic migrations now happen on the box (Phase B will add the dedicated
-    # alembic-upgrade compose service; for Phase A the existing in-app behavior
-    # — migrations run during local dev only, prod migrations stay manual until
-    # Phase B — is preserved).
+    # Alembic migrations run on the box through panibrat-infra's release-profile
+    # alembic-upgrade service during the job-search deploy.
     runs-on: ubuntu-latest
     needs: [test, frontend, e2e-browser]
     # main push for normal flow; workflow_dispatch lets us bootstrap a GHCR
