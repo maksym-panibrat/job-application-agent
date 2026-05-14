@@ -33,7 +33,7 @@ Step mapping (matches stabilisation plan):
     Step 3  GET /api/profile               → 200 with smoke user's profile
     Step 4  PATCH /api/profile             → update full_name, assert round-trip
     Step 5  GET /api/applications          → 200 list (may be empty)
-    Step 6  POST /internal/cron/sync       → 200 {"status": "ok"}  (X-Cron-Secret gated;
+    Step 6  POST /internal/cron/sync       → 202 {"status": "ok"}  (X-Cron-Secret gated;
                                              may be slow)
     Step 7  POST /api/chat/messages        → 200 SSE stream with assistant response
                                              (proves Gemini pipeline wired to prod)
@@ -318,7 +318,7 @@ async def step6_cron_sync(
     cron_secret: str,
     verbose: bool,
 ) -> StepResult:
-    """POST /internal/cron/sync → 200 {"status": "ok"}.
+    """POST /internal/cron/sync → 202 {"status": "ok"}.
 
     Gated by X-Cron-Secret header (verify_secret dep in app/api/internal_cron.py).
     Uses a longer timeout (SYNC_TIMEOUT_S) because this calls external job APIs.
@@ -358,8 +358,12 @@ async def step6_cron_sync(
             "body": body,
         }
 
-    if r.status_code != 200:
-        return False, {"step": 6, "error": f"Expected 200, got {r.status_code}", "body": body}
+    if r.status_code not in (200, 202):
+        return False, {
+            "step": 6,
+            "error": f"Expected 200/202, got {r.status_code}",
+            "body": body,
+        }
 
     # After PR 4, BudgetExhausted returns 200 + {"status": "budget_exhausted", "resumes_at": ...}
     # instead of silently returning "ok". Both are valid pass outcomes from prod's perspective.

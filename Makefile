@@ -46,7 +46,7 @@ migrate-status:
 # Store the printed token as the SMOKE_BEARER_TOKEN GitHub Actions secret.
 # ---------------------------------------------------------------------------
 smoke-token:
-	uv run python scripts/make_smoke_token.py
+	@uv run python scripts/make_smoke_token.py
 
 # ---------------------------------------------------------------------------
 # seed-smoke-user
