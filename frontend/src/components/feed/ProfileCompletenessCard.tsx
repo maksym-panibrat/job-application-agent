@@ -18,7 +18,7 @@ function checks(profile: Profile): CheckItem[] {
     { id: 'resume',    label: 'Resume',         done: !!profile.base_resume_md,        promptSlug: 'set_resume' },
     { id: 'roles',     label: 'Target roles',   done: profile.target_roles.length > 0, promptSlug: 'set_roles' },
     { id: 'locations', label: 'Locations',      done: profile.target_locations.length > 0 || !!profile.remote_ok, promptSlug: 'set_locations' },
-    { id: 'keywords',  label: 'Search keywords', done: profile.search_keywords.length > 0, promptSlug: 'set_keywords' },
+    { id: 'companies', label: 'Followed companies', done: (profile.target_companies?.length ?? 0) > 0, promptSlug: 'set_companies' },
   ]
 }
 
