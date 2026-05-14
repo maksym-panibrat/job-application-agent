@@ -6,6 +6,14 @@ from sqlalchemy import text
 from scripts.wipe_job_data import wipe
 
 
+CHECKPOINT_TABLES = (
+    "checkpoint_writes",
+    "checkpoint_blobs",
+    "checkpoints",
+    "checkpoint_migrations",
+)
+
+
 async def _count(db_session, table: str) -> int:
     result = await db_session.execute(text(f"SELECT COUNT(*) FROM {table}"))  # noqa: S608
     return result.scalar_one()
@@ -204,15 +212,21 @@ async def test_wipe_resets_non_invalid_slug_fetches_and_preserves_invalid_rows(
 
 @pytest.mark.asyncio
 async def test_wipe_clears_checkpoint_tables_when_present(db_session):
-    for table in ("checkpoints", "checkpoint_blobs", "checkpoint_writes", "checkpoint_migrations"):
-        await db_session.execute(text(f"CREATE TABLE {table} (id text primary key)"))  # noqa: S608
-        await db_session.execute(text(f"INSERT INTO {table} (id) VALUES ('row-1')"))  # noqa: S608
-    await db_session.commit()
+    try:
+        for table in CHECKPOINT_TABLES:
+            await db_session.execute(text(f"CREATE TABLE {table} (id text primary key)"))  # noqa: S608
+            await db_session.execute(text(f"INSERT INTO {table} (id) VALUES ('row-1')"))  # noqa: S608
+        await db_session.commit()
 
-    await wipe(db_session)
+        await wipe(db_session)
 
-    for table in ("checkpoints", "checkpoint_blobs", "checkpoint_writes", "checkpoint_migrations"):
-        assert await _count(db_session, table) == 0
+        for table in CHECKPOINT_TABLES:
+            assert await _count(db_session, table) == 0
+    finally:
+        await db_session.rollback()
+        for table in CHECKPOINT_TABLES:
+            await db_session.execute(text(f"DROP TABLE IF EXISTS {table} CASCADE"))  # noqa: S608
+        await db_session.commit()
 
 
 @pytest.mark.asyncio

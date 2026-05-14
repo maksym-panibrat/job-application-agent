@@ -48,10 +48,8 @@ CHECKPOINT_WIPE_TABLES = (
     "checkpoint_migrations",
 )
 
-PRESERVE_TABLES = (
-    "companies",
-    "slug_fetches",
-)
+PRESERVE_TABLES = ("companies",)
+ROW_COUNT_PRESERVE_TABLES = ("slug_fetches",)
 
 
 async def _counts(session: AsyncSession, tables: tuple[str, ...]) -> dict[str, int]:
@@ -80,13 +78,17 @@ async def wipe(session: AsyncSession, *, fail_after_mutation: bool = False) -> N
     wipe_tables = await _existing_tables(session, WIPE_TABLES)
     checkpoint_tables = await _existing_tables(session, CHECKPOINT_WIPE_TABLES)
     preserve_tables = await _existing_tables(session, PRESERVE_TABLES)
+    row_count_preserve_tables = await _existing_tables(session, ROW_COUNT_PRESERVE_TABLES)
     all_wipe_tables = wipe_tables + checkpoint_tables
 
     print("\nBEFORE — wiped tables:")
     for t, n in (await _counts(session, all_wipe_tables)).items():
         print(f"  {t:25s} {n:>10,}")
-    print("\nBEFORE — preserved tables:")
+    print("\nBEFORE — fully preserved tables:")
     for t, n in (await _counts(session, preserve_tables)).items():
+        print(f"  {t:25s} {n:>10,}")
+    print("\nBEFORE — row-count preserved tables (freshness state will be reset):")
+    for t, n in (await _counts(session, row_count_preserve_tables)).items():
         print(f"  {t:25s} {n:>10,}")
 
     try:
@@ -122,8 +124,11 @@ async def wipe(session: AsyncSession, *, fail_after_mutation: bool = False) -> N
     print("\nAFTER — wiped tables:")
     for t, n in (await _counts(session, all_wipe_tables)).items():
         print(f"  {t:25s} {n:>10,}")
-    print("\nAFTER — preserved tables (should be unchanged):")
+    print("\nAFTER — fully preserved tables (should be unchanged):")
     for t, n in (await _counts(session, preserve_tables)).items():
+        print(f"  {t:25s} {n:>10,}")
+    print("\nAFTER — row-count preserved tables (freshness state was reset):")
+    for t, n in (await _counts(session, row_count_preserve_tables)).items():
         print(f"  {t:25s} {n:>10,}")
 
 
