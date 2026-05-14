@@ -1,6 +1,7 @@
 """Deterministic guard for recurring office attendance requirements."""
 
 from dataclasses import dataclass
+import re
 from typing import Protocol
 
 
@@ -46,6 +47,9 @@ def evaluate_remote_policy(profile: ProfileLike, job: JobLike) -> RemotePolicyVe
     if _matches_target_location(profile, text):
         return RemotePolicyVerdict(hard_mismatch=False)
 
+    if getattr(profile, "remote_ok", False):
+        return RemotePolicyVerdict(hard_mismatch=True, gap=OFFICE_ATTENDANCE_GAP)
+
     return RemotePolicyVerdict(hard_mismatch=True, gap=OFFICE_ATTENDANCE_GAP)
 
 
@@ -67,4 +71,22 @@ def _requires_office_attendance(text: str) -> bool:
 
 def _matches_target_location(profile: ProfileLike, text: str) -> bool:
     target_locations = getattr(profile, "target_locations", None) or []
-    return any(str(location).lower() in text for location in target_locations if location)
+    normalized_text = _normalize_text(text)
+    return any(
+        _contains_token_phrase(normalized_text, str(location))
+        for location in target_locations
+        if location
+    )
+
+
+def _contains_token_phrase(normalized_text: str, phrase: str) -> bool:
+    normalized_phrase = _normalize_text(phrase).strip()
+    if not normalized_phrase:
+        return False
+
+    pattern = rf"(?<![a-z0-9]){re.escape(normalized_phrase)}(?![a-z0-9])"
+    return re.search(pattern, normalized_text) is not None
+
+
+def _normalize_text(text: str) -> str:
+    return re.sub(r"[^a-z0-9]+", " ", text.lower())

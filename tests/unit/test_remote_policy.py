@@ -47,3 +47,45 @@ def test_provider_remote_does_not_override_jd_office_requirement():
     verdict = evaluate_remote_policy(profile, job)
 
     assert verdict.hard_mismatch is True
+
+
+def test_short_target_location_us_does_not_match_inside_must():
+    profile = SimpleNamespace(remote_ok=True, target_locations=["US"])
+    job = SimpleNamespace(
+        location=None,
+        workplace_type=None,
+        description="Candidate must work from the Toronto office twice a week.",
+        description_raw=None,
+    )
+
+    verdict = evaluate_remote_policy(profile, job)
+
+    assert verdict.hard_mismatch is True
+
+
+def test_short_target_location_ca_does_not_match_inside_candidate():
+    profile = SimpleNamespace(remote_ok=True, target_locations=["CA"])
+    job = SimpleNamespace(
+        location=None,
+        workplace_type=None,
+        description="Candidate must work from the Toronto office twice a week.",
+        description_raw=None,
+    )
+
+    verdict = evaluate_remote_policy(profile, job)
+
+    assert verdict.hard_mismatch is True
+
+
+def test_multi_word_target_location_matches_token_boundary_text():
+    profile = SimpleNamespace(remote_ok=True, target_locations=["New York"])
+    job = SimpleNamespace(
+        location=None,
+        workplace_type=None,
+        description="Candidate must work from the New York office twice a week.",
+        description_raw=None,
+    )
+
+    verdict = evaluate_remote_policy(profile, job)
+
+    assert verdict.hard_mismatch is False
