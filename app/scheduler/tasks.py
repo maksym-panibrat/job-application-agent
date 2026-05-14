@@ -486,8 +486,9 @@ async def run_match_queue(
                 continue
 
             for a in apps_this_tick:
-                # If it has a score now, mark done. If still no score (rate-limited),
-                # increment attempts; will retry next tick.
+                # If it has a score now, mark done. If still no score, scoring
+                # was skipped for a transient reason; release the lease without
+                # incrementing attempts so the next tick can retry.
                 refreshed = (
                     await session.execute(select(Application).where(Application.id == a.id))
                 ).scalar_one()
@@ -495,8 +496,8 @@ async def run_match_queue(
                     await match_queue_service.mark_done(refreshed.id, session)
                     succeeded += 1
                 else:
-                    await match_queue_service.mark_attempt_failed(refreshed.id, session)
-                    failed += 1
+                    await match_queue_service.release_claim(refreshed.id, session)
+                    deferred += 1
 
     return {
         "attempted": attempted,

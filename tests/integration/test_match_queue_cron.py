@@ -181,6 +181,56 @@ async def test_run_match_queue_releases_leases_without_failing_attempts_on_budge
 
 
 @pytest.mark.asyncio
+async def test_run_match_queue_releases_claim_without_failed_attempt_on_skipped_score(db_session):
+    profile = await _seed_profile(db_session, "airbnb")
+    profile_id = profile.id
+    job = await _job_for(db_session, "airbnb", external_id="skipped-score")
+    db_session.add(job)
+    await db_session.commit()
+    await db_session.refresh(job)
+    await match_queue_service.enqueue_for_interested_profiles(job, db_session)
+
+    fake_graph = MagicMock()
+
+    async def fake_invoke(state, config=None):
+        from app.agents.matching_agent import ScoreResult
+
+        return {
+            "scores": [
+                ScoreResult(
+                    application_id=state["jobs"][0]["application_id"],
+                    score=None,
+                    summary="deferred",
+                    rationale="LLM scoring temporarily unavailable",
+                    strengths=[],
+                    gaps=[],
+                )
+            ]
+        }
+
+    fake_graph.ainvoke = fake_invoke
+
+    with patch("app.agents.matching_agent.build_graph", return_value=fake_graph):
+        result = await run_match_queue()
+
+    assert result["attempted"] == 1
+    assert result["succeeded"] == 0
+    assert result["failed"] == 0
+    assert result["deferred"] == 1
+
+    db_session.expire_all()
+    app = (
+        await db_session.execute(
+            sa.select(Application).where(Application.profile_id == profile_id)
+        )
+    ).scalar_one()
+    assert app.match_status == "pending_match"
+    assert app.match_score is None
+    assert app.match_attempts == 0
+    assert app.match_claimed_at is None
+
+
+@pytest.mark.asyncio
 async def test_run_match_queue_uses_settings_for_default_caps(db_session, monkeypatch):
     """Defaults for max_per_profile and deadline_seconds come from Settings
     (#77) — env vars `MATCHING_MAX_PER_PROFILE_PER_TICK` and
