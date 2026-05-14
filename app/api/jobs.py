@@ -1,5 +1,7 @@
 """Jobs sync and query endpoints."""
 
+from datetime import UTC, datetime
+
 import structlog
 from fastapi import APIRouter, Depends, status
 from fastapi.responses import JSONResponse
@@ -101,6 +103,22 @@ async def sync_status(
     else:
         state = "idle"
 
+    last_sync_summary = profile.last_sync_summary
+    if (
+        state == "idle"
+        and profile.last_sync_requested_at is not None
+        and (
+            profile.last_sync_completed_at is None
+            or profile.last_sync_completed_at < profile.last_sync_requested_at
+        )
+    ):
+        profile.last_sync_completed_at = datetime.now(UTC)
+        if isinstance(last_sync_summary, dict):
+            last_sync_summary = {**last_sync_summary, "queued_slugs": []}
+            profile.last_sync_summary = last_sync_summary
+        session.add(profile)
+        await session.commit()
+
     return {
         "state": state,
         "slugs_total": len(pairs),
@@ -112,6 +130,6 @@ async def sync_status(
         "last_sync_completed_at": profile.last_sync_completed_at.isoformat()
         if profile.last_sync_completed_at
         else None,
-        "last_sync_summary": profile.last_sync_summary,
+        "last_sync_summary": last_sync_summary,
         "invalid_slugs": sorted(invalid_slugs),
     }
