@@ -290,7 +290,8 @@ async def score_and_match(
 
         passed = score_result.score >= settings.match_score_threshold
         if not passed:
-            app.status = "auto_rejected"
+            if app.status == "pending_review":
+                app.status = "auto_rejected"
         else:
             scored_apps.append(app)
 

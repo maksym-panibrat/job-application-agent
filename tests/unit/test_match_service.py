@@ -63,13 +63,16 @@ def _make_job(
 
 
 def _make_application(
-    app_id: uuid.UUID | None = None, job_id: uuid.UUID | None = None
+    app_id: uuid.UUID | None = None,
+    job_id: uuid.UUID | None = None,
+    *,
+    status: str = "pending_review",
 ) -> Application:
     return Application(
         id=app_id or uuid.uuid4(),
         job_id=job_id or uuid.uuid4(),
         profile_id=uuid.uuid4(),
-        status="pending_review",
+        status=status,
         match_score=None,
         match_rationale=None,
         match_strengths=[],
@@ -176,6 +179,78 @@ async def test_below_threshold_sets_auto_rejected():
     assert app.match_rationale == "Score is 0.4"
     assert app.match_strengths == ["relevant experience"]
     assert app.match_gaps == ["missing skill X"]
+
+
+@pytest.mark.asyncio
+async def test_below_threshold_preserves_dismissed_status():
+    setup_env()
+    from app.services.match_service import score_and_match
+
+    app_id = uuid.uuid4()
+    job_id = uuid.uuid4()
+    app = _make_application(app_id=app_id, job_id=job_id, status="dismissed")
+    job = _make_job(job_id=job_id)
+    session = _make_mock_session(app)
+
+    score_result = _make_score_result(str(app_id), score=0.4)
+    mock_graph = AsyncMock()
+    mock_graph.ainvoke.return_value = {"scores": [score_result]}
+
+    profile = _make_profile()
+
+    with (
+        patch(_GET_SKILLS, new=AsyncMock(return_value=[])),
+        patch(_GET_EXPS, new=AsyncMock(return_value=[])),
+        patch(_GET_OR_CREATE, new=AsyncMock(return_value=app)),
+        patch(_BUILD_GRAPH, return_value=mock_graph),
+        patch(_GET_SETTINGS) as mock_get_settings,
+    ):
+        settings = MagicMock()
+        settings.match_score_threshold = 0.65
+        mock_get_settings.return_value = settings
+
+        scored = await score_and_match(profile, session, jobs=[job])
+
+    assert scored == []
+    assert app.status == "dismissed"
+    assert app.match_score == 0.4
+    assert app.match_status == "matched"
+
+
+@pytest.mark.asyncio
+async def test_below_threshold_preserves_applied_status():
+    setup_env()
+    from app.services.match_service import score_and_match
+
+    app_id = uuid.uuid4()
+    job_id = uuid.uuid4()
+    app = _make_application(app_id=app_id, job_id=job_id, status="applied")
+    job = _make_job(job_id=job_id)
+    session = _make_mock_session(app)
+
+    score_result = _make_score_result(str(app_id), score=0.4)
+    mock_graph = AsyncMock()
+    mock_graph.ainvoke.return_value = {"scores": [score_result]}
+
+    profile = _make_profile()
+
+    with (
+        patch(_GET_SKILLS, new=AsyncMock(return_value=[])),
+        patch(_GET_EXPS, new=AsyncMock(return_value=[])),
+        patch(_GET_OR_CREATE, new=AsyncMock(return_value=app)),
+        patch(_BUILD_GRAPH, return_value=mock_graph),
+        patch(_GET_SETTINGS) as mock_get_settings,
+    ):
+        settings = MagicMock()
+        settings.match_score_threshold = 0.65
+        mock_get_settings.return_value = settings
+
+        scored = await score_and_match(profile, session, jobs=[job])
+
+    assert scored == []
+    assert app.status == "applied"
+    assert app.match_score == 0.4
+    assert app.match_status == "matched"
 
 
 @pytest.mark.asyncio
