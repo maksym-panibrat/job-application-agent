@@ -4,12 +4,12 @@ Match service — scores jobs against a profile and creates Application rows.
 
 import time
 import uuid
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 
 import structlog
-from sqlalchemy import update
+from sqlalchemy import text, update
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlmodel import select
+from sqlmodel import col, select
 
 from app.config import get_settings
 from app.models.application import Application
@@ -21,25 +21,33 @@ log = structlog.get_logger()
 
 
 async def mark_for_rescore(profile_id: uuid.UUID, session: AsyncSession) -> int:
-    """Flip eligible scored applications back to pending_match so the cron re-scores
-    them with the current matching prompt. Returns the number of rows affected.
+    """Clear eligible scored applications and enqueue match work for re-scoring.
 
     Eligibility: status IN ('pending_review', 'auto_rejected') AND match_score IS NOT NULL.
-    Leaves dismissed/applied (user decisions) and already-pending_match rows untouched.
+    Leaves dismissed/applied user decisions untouched.
     """
+    from app.worker.queue_service import enqueue
+
     now = datetime.now(UTC)
-    result = await session.execute(
+    rows = (
+        await session.execute(
+            select(Application.id).where(
+                Application.profile_id == profile_id,
+                col(Application.status).in_(("pending_review", "auto_rejected")),
+                col(Application.match_score).is_not(None),
+            )
+        )
+    ).all()
+    app_ids = [row[0] for row in rows]
+    if not app_ids:
+        return 0
+
+    await session.execute(
         update(Application)
         .where(
-            Application.profile_id == profile_id,
-            Application.status.in_(("pending_review", "auto_rejected")),
-            Application.match_score.isnot(None),
+            col(Application.id).in_(app_ids),
         )
         .values(
-            match_status="pending_match",
-            match_queued_at=now,
-            match_claimed_at=None,
-            match_attempts=0,
             match_score=None,
             match_summary=None,
             match_rationale=None,
@@ -49,8 +57,15 @@ async def mark_for_rescore(profile_id: uuid.UUID, session: AsyncSession) -> int:
             updated_at=now,
         )
     )
+    for app_id in app_ids:
+        await enqueue(
+            session,
+            job_type="match",
+            payload={"application_id": str(app_id)},
+            dedupe_key=f"match:{app_id}",
+        )
     await session.commit()
-    return result.rowcount or 0
+    return len(app_ids)
 
 
 def format_profile_text(
@@ -149,7 +164,7 @@ async def score_and_match(
         matched_result = await session.execute(
             select(Application.job_id).where(
                 Application.profile_id == profile.id,
-                Application.match_score.isnot(None),
+                col(Application.match_score).is_not(None),
             )
         )
         matched_ids = {row[0] for row in matched_result.all()}
@@ -245,12 +260,6 @@ async def score_and_match(
         app.match_strengths = score_result.strengths
         app.match_gaps = score_result.gaps
 
-        # Flip the match-queue lifecycle out of pending_match so the cron
-        # worker (run_match_queue) doesn't re-claim and re-score this row.
-        app.match_status = "matched"
-        app.match_queued_at = None
-        app.match_claimed_at = None
-
         passed = score_result.score >= settings.match_score_threshold
         if not passed:
             app.status = "auto_rejected"
@@ -295,22 +304,23 @@ async def score_cached(
     if not company_ids:
         return []
 
-    # Exclude jobs that are either already scored OR currently leased by the
-    # cron worker (run_match_queue). Without the lease check, a fresh
-    # "Sync now" can race with the */15 cron and score the same Application
-    # twice in parallel — wasting Gemini budget and racing the final write.
-    # The 300s window matches match_queue_service.next_batch's lease.
-    lease_cutoff = datetime.now(UTC) - timedelta(seconds=300)
     excluded_result = await session.execute(
-        select(Application.job_id).where(
-            Application.profile_id == profile.id,
-            (Application.match_score.isnot(None))
-            | (
-                (Application.match_status == "pending_match")
-                & (Application.match_claimed_at.is_not(None))
-                & (Application.match_claimed_at >= lease_cutoff)
-            ),
-        )
+        text("""
+            SELECT a.job_id
+            FROM applications a
+            WHERE a.profile_id = :profile_id
+              AND (
+                a.match_score IS NOT NULL
+                OR EXISTS (
+                  SELECT 1
+                  FROM work_queue w
+                  WHERE w.job_type = 'match'
+                    AND w.status IN ('pending', 'in_progress')
+                    AND w.payload->>'application_id' = a.id::text
+                )
+              )
+        """),
+        {"profile_id": profile.id},
     )
     excluded_ids = {row[0] for row in excluded_result.all()}
 
@@ -348,7 +358,7 @@ async def list_applications(
     if status:
         q = q.where(Application.status == status)
         if status == "pending_review":
-            q = q.where(Application.match_score.isnot(None))
+            q = q.where(col(Application.match_score).is_not(None))
     if min_score is not None:
         q = q.where(Application.match_score >= min_score)
     q = q.order_by(

@@ -11,6 +11,8 @@ import app.models  # noqa: F401
 from app.models.company import Company
 from app.models.slug_fetch import SlugFetch
 from app.services import slug_registry_service
+from app.worker.payloads import FetchSlugPayload
+from app.worker.queue_service import enqueue
 
 
 @pytest.fixture
@@ -52,7 +54,13 @@ async def test_status_syncing_when_user_slug_queued(client, auth_headers, seeded
     profile.target_company_ids = [company.id]
     db_session.add(profile)
     await db_session.commit()
-    await slug_registry_service.enqueue_stale(profile, db_session, ttl_hours=6)
+    await enqueue(
+        db_session,
+        job_type="fetch-slug",
+        payload=FetchSlugPayload(provider="greenhouse", slug="airbnb").model_dump(),
+        dedupe_key="fetch-slug:greenhouse:airbnb",
+    )
+    await db_session.commit()
 
     response = await client.get("/api/sync/status", headers=auth_headers)
     body = response.json()
@@ -112,9 +120,6 @@ async def test_status_reconciles_stale_queued_summary_when_idle(
         SlugFetch(
             source="greenhouse",
             slug="anthropic",
-            queued_at=None,
-            claimed_at=None,
-            last_status="ok",
             last_fetched_at=datetime(2026, 5, 14, 4, 0, 20, tzinfo=UTC),
         )
     )

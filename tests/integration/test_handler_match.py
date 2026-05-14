@@ -55,7 +55,6 @@ async def _seed_application(db_session, *, match_score: float | None = None) -> 
     app = Application(
         job_id=job.id,
         profile_id=profile.id,
-        match_status="pending_match" if match_score is None else "matched",
         match_score=match_score,
         match_strengths=[],
         match_gaps=[],
@@ -105,7 +104,6 @@ async def test_match_handler_scores_one_application(db_session):
     assert mock_score.call_count == 1
     assert refreshed.match_score == 0.85
     assert refreshed.match_summary == "good fit"
-    assert refreshed.match_status == "matched"
 
 
 @pytest.mark.asyncio
@@ -139,11 +137,10 @@ async def test_match_handler_replay_short_circuits_after_success(db_session):
     assert mock_score.call_count == 1
     assert refreshed.match_score == 0.85
     assert refreshed.match_summary == "v1"
-    assert refreshed.match_status == "matched"
 
 
 @pytest.mark.asyncio
-async def test_match_terminal_failure_marks_domain_failed(db_session):
+async def test_match_terminal_failure_logs_without_domain_state(db_session):
     app = await _seed_application(db_session)
     app_id = app.id
     handler = MatchHandler()
@@ -157,7 +154,7 @@ async def test_match_terminal_failure_marks_domain_failed(db_session):
     refreshed = (
         await db_session.execute(sa.select(Application).where(Application.id == app_id))
     ).scalar_one()
-    assert refreshed.match_status == "match_failed"
+    assert refreshed.match_score is None
 
 
 def test_match_handler_registers():

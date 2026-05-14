@@ -9,7 +9,6 @@ These tests verify:
 
 import pytest
 from httpx import ASGITransport, AsyncClient
-from langgraph.checkpoint.memory import MemorySaver
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlmodel import SQLModel
 
@@ -25,24 +24,8 @@ async def client(patch_settings, asyncpg_url):
 
     from app.main import app
 
-    # ASGITransport bypasses the lifespan, so app.state.checkpointer is never
-    # initialized. The /internal/cron/generation-queue endpoint 503s without
-    # one; seed a MemorySaver to exercise the ok path in tests. Clean up after
-    # so subsequent tests (e.g. e2e/test_chat_flow) see a fresh app singleton.
-    had_checkpointer = hasattr(app.state, "checkpointer")
-    prior_checkpointer = getattr(app.state, "checkpointer", None)
-    app.state.checkpointer = MemorySaver()
-    try:
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-            yield ac
-    finally:
-        if had_checkpointer:
-            app.state.checkpointer = prior_checkpointer
-        else:
-            try:
-                del app.state.checkpointer
-            except AttributeError:
-                pass
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        yield ac
 
 
 CRON_SECRET = "dev-cron-secret"  # matches default SecretStr("dev-cron-secret") in config.py
@@ -62,14 +45,21 @@ async def test_cron_sync_returns_structured_summary(client):
 
 
 @pytest.mark.asyncio
-async def test_cron_generation_queue_returns_structured_summary(client):
-    resp = await client.post(
+@pytest.mark.parametrize(
+    "path",
+    [
         "/internal/cron/generation-queue",
+        "/internal/cron/process-sync-queue",
+        "/internal/cron/process-match-queue",
+        "/internal/cron/post-cutover-match-reconcile",
+    ],
+)
+async def test_removed_legacy_cron_post_endpoints_do_not_accept_ticks(client, path):
+    resp = await client.post(
+        path,
         headers={"X-Cron-Secret": CRON_SECRET},
     )
-    assert resp.status_code == 202
-    data = resp.json()
-    assert data["status"] == "deprecated"
+    assert resp.status_code == 405
 
 
 @pytest.mark.asyncio

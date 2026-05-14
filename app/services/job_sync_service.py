@@ -3,9 +3,9 @@
 Two contracts here, by design (#80):
 
   prune_and_enqueue(profile, session)
-    Bulk-cron-safe and HTTP-warm-up: drop slugs marked is_invalid, enqueue
-    stale slugs for background fetch, update profile.last_sync_*. Fast (no
-    LLM). Returns {queued_slugs, matched_now=0, pruned_slugs}.
+    Bulk-cron-safe and HTTP-warm-up: drop slugs marked is_invalid, enqueue stale
+    provider slugs into work_queue, update profile.last_sync_*. Fast (no LLM).
+    Returns {queued_slugs, matched_now=0, pruned_slugs}.
 
   sync_profile(profile, session)
     User-triggered HTTP path (POST /api/jobs/sync). Calls prune_and_enqueue
@@ -14,8 +14,7 @@ Two contracts here, by design (#80):
     wall + N-profile fan-out blew up the synchronous scoring path (#70 /
     commit 191df6a regression / fixed by #71).
 
-The actual fetch happens in app.scheduler.tasks.run_sync_queue.
-The actual matching happens in app.scheduler.tasks.run_match_queue.
+The actual fetch and matching happen in the always-on worker.
 """
 
 from datetime import UTC, datetime
@@ -30,6 +29,8 @@ from app.models.company import Company
 from app.models.slug_fetch import SlugFetch
 from app.models.user_profile import UserProfile
 from app.services import match_service, slug_registry_service
+from app.worker.payloads import FetchSlugPayload
+from app.worker.queue_service import enqueue
 
 log = structlog.get_logger()
 
@@ -90,7 +91,17 @@ async def prune_and_enqueue(profile: UserProfile, session: AsyncSession) -> dict
     """
     pruned = await _prune_invalid_provider_slugs(profile, session)
 
-    queued = await slug_registry_service.enqueue_stale(profile, session, ttl_hours=6)
+    stale = await slug_registry_service.list_stale_for_profile(profile, session, ttl_hours=6)
+    queued: list[str] = []
+    for provider, slug in stale:
+        row_id = await enqueue(
+            session,
+            job_type="fetch-slug",
+            payload=FetchSlugPayload(provider=provider, slug=slug).model_dump(),
+            dedupe_key=f"fetch-slug:{provider}:{slug}",
+        )
+        if row_id is not None:
+            queued.append(slug)
     summary = {
         "queued_slugs": queued,
         "matched_now": 0,
