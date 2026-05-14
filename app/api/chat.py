@@ -2,9 +2,9 @@
 
 If the agent mutates the user's profile during a turn (detected via a
 before/after snapshot of profile.updated_at), the endpoint emits an
-`event: meta\\ndata: {"profile_mutated": true}\\n\\n` event before
-the terminal `[DONE]`. The frontend uses this to render an inline
-'Search now' CTA under the mutating reply.
+`event: meta` payload before the terminal `[DONE]`. The payload reports both
+the mutation and whether the profile has enough provider slugs for a manual
+search to actually start.
 """
 
 import json
@@ -12,11 +12,12 @@ import json
 import structlog
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlmodel import col, select
 
 from app.api.deps import get_current_profile
 from app.database import get_db, get_session_factory
+from app.models.company import Company
 from app.models.user_profile import UserProfile
 
 log = structlog.get_logger()
@@ -31,6 +32,32 @@ async def _profile_updated_at(session_factory, profile_id):
             await s.execute(select(UserProfile.updated_at).where(UserProfile.id == profile_id))
         ).first()
     return row[0] if row else None
+
+
+async def _profile_can_start_search(session_factory, profile_id) -> bool:
+    """Return true only when /api/jobs/sync has at least one provider slug pair
+    to enqueue and the location gate is satisfied."""
+    async with session_factory() as s:
+        profile = await s.get(UserProfile, profile_id)
+        if profile is None:
+            return False
+
+        has_location = bool(profile.target_locations) or bool(profile.remote_ok)
+        company_ids = list(profile.target_company_ids or [])
+        if not has_location or not company_ids:
+            return False
+
+        rows = (
+            await s.execute(
+                select(Company.provider_slugs).where(col(Company.id).in_(company_ids))
+            )
+        ).scalars().all()
+
+    for provider_slugs in rows:
+        for slug in (provider_slugs or {}).values():
+            if isinstance(slug, str) and slug.strip():
+                return True
+    return False
 
 
 @router.post("/messages")
@@ -109,7 +136,11 @@ async def send_message(
             # AFTER the agent finishes, check for profile mutation.
             after = await _profile_updated_at(factory, profile.id)
             if before != after:
-                yield 'event: meta\ndata: {"profile_mutated": true}\n\n'
+                payload = {
+                    "profile_mutated": True,
+                    "search_startable": await _profile_can_start_search(factory, profile.id),
+                }
+                yield f"event: meta\ndata: {json.dumps(payload)}\n\n"
         except BudgetExhausted as exc:
             await log.awarning("chat.budget_exhausted", resumes_at=exc.resumes_at.isoformat())
             payload = {

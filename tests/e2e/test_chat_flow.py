@@ -215,11 +215,91 @@ async def test_chat_emits_meta_event_when_profile_mutated(test_app):
     joined = "\n".join(lines)
     assert "event: meta" in joined, f"missing meta event; got:\n{joined}"
     assert '"profile_mutated": true' in joined, f"missing payload; got:\n{joined}"
+    assert '"search_startable": false' in joined, f"missing search gate payload; got:\n{joined}"
 
     # Order: meta MUST appear before [DONE]
     meta_idx = next(i for i, line in enumerate(lines) if line == "event: meta")
     done_idx = next(i for i, line in enumerate(lines) if line == "data: [DONE]")
     assert meta_idx < done_idx, "meta event must precede [DONE]"
+
+
+@pytest.mark.asyncio
+async def test_chat_meta_marks_search_startable_when_profile_has_provider_slugs(test_app):
+    """The chat CTA should only appear when a manual sync can actually walk at
+    least one provider slug for the profile."""
+    from datetime import UTC, datetime
+    from unittest.mock import MagicMock, patch
+
+    from langchain_core.messages import AIMessageChunk
+    from sqlalchemy import select, update
+
+    from app.database import get_session_factory
+    from app.models.company import Company
+    from app.models.user_profile import UserProfile
+
+    await test_app.get("/api/profile")
+
+    factory = get_session_factory()
+    async with factory() as s:
+        profile = (await s.execute(select(UserProfile).limit(1))).scalar_one()
+        company = Company(
+            canonical_name="Stripe",
+            normalized_key=f"stripe-{profile.id}",
+            provider_slugs={"greenhouse": "stripe"},
+            resolved_at=datetime.now(UTC),
+        )
+        s.add(company)
+        await s.flush()
+        await s.execute(
+            update(UserProfile)
+            .where(UserProfile.id == profile.id)
+            .values(
+                remote_ok=True,
+                target_locations=[],
+                target_company_ids=[company.id],
+                updated_at=datetime.now(UTC),
+            )
+        )
+        await s.commit()
+        profile_id = profile.id
+
+    async def stream_then_mutate(*args, **kwargs):
+        yield (AIMessageChunk(content="ok"), {})
+        async with factory() as s:
+            await s.execute(
+                update(UserProfile)
+                .where(UserProfile.id == profile_id)
+                .values(updated_at=datetime.now(UTC))
+            )
+            await s.commit()
+
+    fake_graph = MagicMock()
+    fake_graph.astream = stream_then_mutate
+
+    from app.main import app as fastapi_app
+
+    prev_checkpointer = getattr(fastapi_app.state, "checkpointer", None)
+    fastapi_app.state.checkpointer = MagicMock()
+    try:
+        with patch("app.agents.onboarding.build_graph", return_value=fake_graph):
+            async with test_app.stream(
+                "POST",
+                "/api/chat/messages",
+                json={"message": "set my companies"},
+            ) as resp:
+                assert resp.status_code == 200
+                lines = []
+                async for line in resp.aiter_lines():
+                    lines.append(line)
+                    if line == "data: [DONE]":
+                        break
+    finally:
+        fastapi_app.state.checkpointer = prev_checkpointer
+
+    joined = "\n".join(lines)
+    assert "event: meta" in joined, f"missing meta event; got:\n{joined}"
+    assert '"profile_mutated": true' in joined, f"missing profile mutation payload; got:\n{joined}"
+    assert '"search_startable": true' in joined, f"missing true search gate payload; got:\n{joined}"
 
 
 @pytest.mark.asyncio

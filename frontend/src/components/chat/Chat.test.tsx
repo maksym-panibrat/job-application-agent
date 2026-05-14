@@ -56,14 +56,14 @@ describe('Chat', () => {
     globalThis.fetch = originalFetch
   })
 
-  it('renders a Search now button when the agent reply emits profile_mutated meta', async () => {
+  it('renders a Search now button when the agent reply says search can start', async () => {
     const originalFetch = globalThis.fetch
     let syncCalled = false
     globalThis.fetch = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
       if (url === '/api/chat/messages') {
         const body =
           'data: {"content":"updated"}\n\n' +
-          'event: meta\ndata: {"profile_mutated": true}\n\n' +
+          'event: meta\ndata: {"profile_mutated": true, "search_startable": true}\n\n' +
           'data: [DONE]\n\n'
         return Promise.resolve(sseStreamResponse(body))
       }
@@ -84,6 +84,28 @@ describe('Chat', () => {
     const cta = await screen.findByRole('button', { name: /search now/i })
     await user.click(cta)
     await waitFor(() => expect(syncCalled).toBe(true))
+    globalThis.fetch = originalFetch
+  })
+
+  it('does not render Search now when profile changed but search lacks provider slugs', async () => {
+    const originalFetch = globalThis.fetch
+    globalThis.fetch = vi.fn().mockImplementation((url: string) => {
+      if (url === '/api/chat/messages') {
+        const body =
+          'data: {"content":"updated"}\n\n' +
+          'event: meta\ndata: {"profile_mutated": true, "search_startable": false}\n\n' +
+          'data: [DONE]\n\n'
+        return Promise.resolve(sseStreamResponse(body))
+      }
+      return originalFetch(url)
+    }) as typeof fetch
+
+    const user = userEvent.setup()
+    render(withCtx(<Chat />))
+    await user.type(screen.getByPlaceholderText(/type your/i), 'set roles')
+    await user.click(screen.getByRole('button', { name: /^send$/i }))
+    await waitFor(() => expect(screen.getByText('updated')).toBeInTheDocument())
+    expect(screen.queryByRole('button', { name: /search now/i })).not.toBeInTheDocument()
     globalThis.fetch = originalFetch
   })
 })
