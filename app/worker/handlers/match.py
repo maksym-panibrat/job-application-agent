@@ -69,7 +69,16 @@ class MatchHandler:
                 raise TransientError(str(exc), retry_after_seconds=retry_after) from exc
             raise
 
-        app.match_score = result["score"]
+        score = result["score"]
+        if score is None:
+            await log.awarning(
+                "worker.match.scoring_skipped",
+                application_id=str(app.id),
+                rationale=str(result.get("rationale") or "")[:200],
+            )
+            raise TransientError("matching score skipped")
+
+        app.match_score = score
         app.match_summary = result["summary"]
         app.match_rationale = result.get("rationale")
         app.match_strengths = result.get("strengths", [])
@@ -78,13 +87,10 @@ class MatchHandler:
         app.match_queued_at = None
         app.match_claimed_at = None
         settings = get_settings()
-        app.status = (
-            "pending_review"
-            if result["score"] >= settings.match_score_threshold
-            else "auto_rejected"
-        )
+        if score < settings.match_score_threshold and app.status == "pending_review":
+            app.status = "auto_rejected"
         session.add(app)
-        await log.ainfo("worker.match.done", application_id=str(app.id), score=result["score"])
+        await log.ainfo("worker.match.done", application_id=str(app.id), score=score)
 
 
 HANDLERS["match"] = MatchHandler()
