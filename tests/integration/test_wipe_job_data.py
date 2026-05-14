@@ -214,6 +214,7 @@ async def test_wipe_resets_non_invalid_slug_fetches_and_preserves_invalid_rows(
 async def test_wipe_clears_checkpoint_tables_when_present(db_session):
     try:
         for table in CHECKPOINT_TABLES:
+            await db_session.execute(text(f"DROP TABLE IF EXISTS {table} CASCADE"))  # noqa: S608
             await db_session.execute(text(f"CREATE TABLE {table} (id text primary key)"))  # noqa: S608
             await db_session.execute(text(f"INSERT INTO {table} (id) VALUES ('row-1')"))  # noqa: S608
         await db_session.commit()

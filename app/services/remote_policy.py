@@ -22,17 +22,17 @@ class RemotePolicyVerdict:
     gap: str | None = None
 
 
-OFFICE_TERMS = ("office", "onsite", "on-site", "hybrid")
-REQUIREMENT_TERMS = (
-    "minimum",
-    "required",
-    "requires",
-    "must",
-    "days per week",
-    "days/week",
-    "work from",
-    "located near",
-    "twice a week",
+OFFICE_ATTENDANCE_PATTERNS = (
+    r"\b(?:requires?|required|must)\b.{0,80}\b(?:office|onsite|on site)\b",
+    r"\b(?:office|onsite|on site)\b.{0,80}\b(?:requires?|required|must|minimum)\b",
+    r"\b(?:minimum\s+)?\d+\s+days?\s+(?:per\s+)?week\b.{0,80}\b(?:office|onsite|on site)\b",
+    r"\b(?:office|onsite|on site)\b.{0,80}\b(?:minimum\s+)?\d+\s+days?\s+(?:per\s+)?week\b",
+    r"\bwork\s+from\b.{0,80}\b(?:office|onsite|on site)\b",
+    r"\b(?:office|onsite|on site)\b.{0,80}\btwice\s+a\s+week\b",
+    r"\btwice\s+a\s+week\b.{0,80}\b(?:office|onsite|on site)\b",
+    r"\bhybrid\s+schedule\b.{0,40}\b(?:requires?|required|must)\b",
+    r"\b(?:requires?|required|must)\b.{0,40}\bhybrid\s+schedule\b",
+    r"\bmust(?:\s+be)?\s+located\s+near\b",
 )
 OFFICE_ATTENDANCE_GAP = "Requires recurring office attendance outside target locations"
 
@@ -60,9 +60,11 @@ def _job_text(job: JobLike) -> str:
 
 
 def _requires_office_attendance(text: str) -> bool:
-    has_office_term = any(term in text for term in OFFICE_TERMS)
-    has_requirement_language = any(term in text for term in REQUIREMENT_TERMS)
-    return has_office_term and has_requirement_language
+    normalized_text = _normalize_text(text)
+    return any(
+        re.search(pattern, normalized_text) is not None
+        for pattern in OFFICE_ATTENDANCE_PATTERNS
+    )
 
 
 def _matches_target_location(profile: ProfileLike, text: str) -> bool:

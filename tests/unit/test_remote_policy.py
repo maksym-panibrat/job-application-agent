@@ -53,6 +53,48 @@ def test_provider_remote_does_not_override_jd_office_requirement():
     assert verdict.hard_mismatch is True
 
 
+def test_hybrid_schedule_required_is_office_attendance():
+    profile = _profile(target_locations=[])
+    job = SimpleNamespace(
+        location=None,
+        workplace_type=None,
+        description="Hybrid schedule required.",
+        description_raw=None,
+    )
+
+    verdict = evaluate_remote_policy(profile, job)
+
+    assert verdict.hard_mismatch is True
+
+
+def test_must_be_located_near_target_city_is_office_attendance():
+    profile = _profile(target_locations=[])
+    job = SimpleNamespace(
+        location=None,
+        workplace_type=None,
+        description="Candidates must be located near New York.",
+        description_raw=None,
+    )
+
+    verdict = evaluate_remote_policy(profile, job)
+
+    assert verdict.hard_mismatch is True
+
+
+def test_hybrid_metadata_with_unrelated_requirement_is_not_office_attendance():
+    profile = _profile(target_locations=[])
+    job = SimpleNamespace(
+        location="Berlin, Germany",
+        workplace_type="hybrid",
+        description="5+ yrs Python required.",
+        description_raw=None,
+    )
+
+    verdict = evaluate_remote_policy(profile, job)
+
+    assert verdict.hard_mismatch is False
+
+
 def test_short_target_location_us_does_not_match_inside_must():
     profile = _profile(target_locations=["US"])
     job = SimpleNamespace(
