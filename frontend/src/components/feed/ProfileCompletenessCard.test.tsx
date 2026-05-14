@@ -52,6 +52,11 @@ describe('ProfileCompletenessCard', () => {
     expect(container.firstChild).toBeNull()
   })
 
+  it('does not require optional search keywords for a healthy profile', () => {
+    const { container } = renderCard(fullProfile({ search_keywords: [] }))
+    expect(container.firstChild).toBeNull()
+  })
+
   it('renders setup state when resume missing', () => {
     renderCard(fullProfile({ base_resume_md: null }))
     expect(screen.getByText(/set up your search/i)).toBeInTheDocument()
@@ -61,6 +66,11 @@ describe('ProfileCompletenessCard', () => {
   it('renders setup state when target_roles is empty', () => {
     renderCard(fullProfile({ target_roles: [] }))
     expect(screen.getByText(/target roles/i)).toBeInTheDocument()
+  })
+
+  it('renders setup state when no companies are followed', () => {
+    renderCard(fullProfile({ target_companies: [] }))
+    expect(screen.getByText(/followed companies/i)).toBeInTheDocument()
   })
 
   it('renders the paused state when search_active=false', () => {
