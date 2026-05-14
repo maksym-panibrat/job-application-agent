@@ -45,16 +45,18 @@ def _make_profile() -> UserProfile:
 def _make_job(
     job_id: uuid.UUID | None = None,
     *,
+    title: str = "Software Engineer",
+    company_name: str = "Acme Corp",
     description: str = "A great job.",
-    location: str | None = None,
-    workplace_type: str | None = None,
+    location: str | None = "Remote",
+    workplace_type: str | None = "remote",
 ) -> Job:
     return Job(
         id=job_id or uuid.uuid4(),
         source="adzuna",
         external_id=str(uuid.uuid4()),
-        title="Software Engineer",
-        company_name="Acme Corp",
+        title=title,
+        company_name=company_name,
         apply_url="https://example.com/apply",
         location=location,
         workplace_type=workplace_type,
@@ -129,6 +131,52 @@ def test_remote_policy_does_not_cap_matching_target_location():
 
     assert adjusted.score == 0.92
     assert adjusted.gaps == original_gaps
+
+
+@pytest.mark.asyncio
+async def test_remote_only_city_location_at_threshold_is_auto_rejected():
+    setup_env()
+    from app.services.match_service import score_and_match
+
+    app_id = uuid.uuid4()
+    job_id = uuid.uuid4()
+    app = _make_application(app_id=app_id, job_id=job_id)
+    job = _make_job(
+        job_id=job_id,
+        title="Staff Software Engineer - AI Research Infrastructure",
+        company_name="Databricks",
+        location="Mountain View, California; New York City, New York; San Francisco, California",
+        workplace_type=None,
+        description="Build research infrastructure for large-scale AI workloads.",
+    )
+    session = _make_mock_session(app)
+
+    score_result = _make_score_result(str(app_id), score=0.65)
+    mock_graph = AsyncMock()
+    mock_graph.ainvoke.return_value = {"scores": [score_result]}
+
+    profile = _make_profile()
+    profile.target_locations = []
+    profile.remote_ok = True
+
+    with (
+        patch(_GET_SKILLS, new=AsyncMock(return_value=[])),
+        patch(_GET_EXPS, new=AsyncMock(return_value=[])),
+        patch(_GET_OR_CREATE, new=AsyncMock(return_value=app)),
+        patch(_BUILD_GRAPH, return_value=mock_graph),
+        patch(_GET_SETTINGS) as mock_get_settings,
+    ):
+        settings = MagicMock()
+        settings.match_score_threshold = 0.65
+        mock_get_settings.return_value = settings
+
+        scored = await score_and_match(profile, session, jobs=[job])
+
+    assert scored == []
+    assert app.status == "auto_rejected"
+    assert app.match_score == 0.29
+    assert "remote-only profile" in app.match_rationale
+    assert any("remote-only profile" in gap for gap in app.match_gaps)
 
 
 def _make_mock_session(app: MagicMock):

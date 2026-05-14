@@ -73,6 +73,8 @@ async def _seed_job(
         company_name=company_name,
         apply_url="https://example.com/apply",
         description="A great engineering role.",
+        location="Remote",
+        workplace_type="remote",
         salary=salary,
         posted_at=posted_at,
     )
@@ -434,6 +436,8 @@ async def test_score_and_match_persists_match_score(db_session):
         company_name="Airbnb",
         company_id=airbnb_co.id,
         apply_url="https://x",
+        location="Remote",
+        workplace_type="remote",
         is_active=True,
     )
     db_session.add(job)
@@ -545,6 +549,10 @@ async def test_score_cached_skips_jobs_with_active_match_work(db_session):
 async def test_score_and_match_persists_summary_and_uses_location(db_session):
     """Scored Application gets match_summary populated and rationale stays for audit."""
     profile = await _seed_profile(db_session)
+    profile.target_locations = ["Berlin"]
+    db_session.add(profile)
+    await db_session.commit()
+
     job = Job(
         source="greenhouse",
         external_id=str(uuid.uuid4()),
