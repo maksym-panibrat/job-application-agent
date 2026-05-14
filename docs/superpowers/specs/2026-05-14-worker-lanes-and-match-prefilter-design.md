@@ -3,8 +3,9 @@
 ## Context
 
 Production currently uses one physical `work_queue` table and one worker process
-that claims any eligible job type. A large match backlog can consume worker
-capacity even when non-LLM work, such as provider fetching, is ready to run.
+that claims any eligible job type from one shared worker pool. A large match
+backlog can consume worker capacity even when non-LLM work, such as provider
+fetching, is ready to run.
 
 Live queue depth on 2026-05-14 showed thousands of pending `match` rows and only
 a few `fetch-slug` rows. That is the failure mode this design addresses: LLM
@@ -18,7 +19,7 @@ locations.
 
 ## Goals
 
-- Split worker runtime capacity into LLM and non-LLM lanes.
+- Split one physical worker process into LLM and non-LLM internal worker pools.
 - Keep total LLM job concurrency bounded to 6-8 concurrent jobs.
 - Allow fetch and maintenance work to drain separately from the LLM backlog.
 - Add deterministic pre-checks before LLM match scoring.
@@ -37,16 +38,27 @@ locations.
 
 ## Worker Lane Model
 
-Keep one physical `work_queue` table. Add a worker setting that restricts which
-job types a worker process may claim:
+Keep one physical `work_queue` table and one physical worker process. Inside
+that process, start multiple internal worker pools. Each pool has its own
+job-type allowlist and concurrency cap.
 
 ```text
-WORKER_JOB_TYPES=match,generate-cover-letter
-WORKER_JOB_TYPES=fetch-slug,maintenance
+WORKER_LLM_JOB_TYPES=match,generate-cover-letter
+WORKER_LLM_CONCURRENCY=6
+WORKER_NON_LLM_JOB_TYPES=fetch-slug,maintenance
+WORKER_NON_LLM_CONCURRENCY=8
 ```
 
-An unset `WORKER_JOB_TYPES` keeps the current behavior and allows all registered
-job types. This preserves local development and makes rollback simple.
+Implementation can use asyncio tasks rather than OS threads because the current
+worker stack is async. The required invariant is operational, not mechanical:
+one process runs multiple independent lane workers, and each lane enforces its
+own concurrency limit. If a future blocking operation requires actual threads,
+that can be hidden behind the lane worker interface without changing the queue
+contract.
+
+An unset lane configuration keeps the current behavior: one unfiltered pool
+using `WORKER_CONCURRENCY`. This preserves local development and makes rollback
+simple.
 
 `claim_one()` accepts an optional job-type allowlist. When present, the claim
 query only considers eligible rows whose `job_type` is in that allowlist. The
@@ -56,24 +68,23 @@ not-before semantics continue to apply.
 The worker startup log includes:
 
 - `worker_id`
-- `concurrency`
+- lane names
+- per-lane concurrency
 - `visibility_timeout_s`
-- configured `job_types`, using `all` when no filter is set
+- per-lane `job_types`, using `all` only for the rollback/default pool
 
 ## Production Runtime Shape
 
-Production runs two worker services from the same image:
+Production runs one worker service from the app image. That one process starts
+both internal lane pools:
 
 ```text
-job-search-worker-llm
+job-search-worker
   command: python -m app.worker
-  WORKER_JOB_TYPES=match,generate-cover-letter
-  WORKER_CONCURRENCY=6
-
-job-search-worker-non-llm
-  command: python -m app.worker
-  WORKER_JOB_TYPES=fetch-slug,maintenance
-  WORKER_CONCURRENCY=8
+  WORKER_LLM_JOB_TYPES=match,generate-cover-letter
+  WORKER_LLM_CONCURRENCY=6
+  WORKER_NON_LLM_JOB_TYPES=fetch-slug,maintenance
+  WORKER_NON_LLM_CONCURRENCY=8
 ```
 
 The LLM lane owns every job type that can call an LLM:
@@ -94,6 +105,10 @@ accidentally multiply LLM traffic by scaling separate LLM consumers.
 The non-LLM concurrency should start at `8`, matching the existing provider
 fetch concurrency expectation. It can be tuned independently because the lane
 does not call LLM APIs.
+
+The process-level supervisor owns shutdown. On `SIGTERM` or `SIGINT`, it stops
+all lane polling loops, waits for every in-flight lane task to finish, and then
+exits. A shutdown must not abandon in-flight jobs differently depending on lane.
 
 ## Deterministic Match Prefilter
 
@@ -140,7 +155,8 @@ Existing queue-depth emission remains useful because all rows stay in
 `work_queue`. Add lane context to worker logs so production can distinguish LLM
 and non-LLM consumers:
 
-- `worker.started` includes `job_types`
+- `worker.started` includes lane configuration
+- job claim/start/done/failure logs include `lane`
 - job completion/failure logs continue to include `job_type`
 
 Operational queue checks should group by `job_type` and `status`. The important
@@ -153,10 +169,11 @@ Filtered claiming must not alter finalization semantics:
 
 - `mark_done`, `mark_failed`, and `release_with_backoff` remain lease-owner
   scoped.
-- Unknown job types are only claimed by workers whose allowlist includes them,
-  or by unfiltered workers.
-- A misconfigured lane with no matching job types simply polls and idles.
-- If `WORKER_JOB_TYPES` contains whitespace, empty entries, or duplicate
+- Unknown job types are only claimed by a lane whose allowlist includes them,
+  or by the rollback/default unfiltered pool.
+- A misconfigured lane with no matching job types simply polls and idles; it
+  must not block the other lane.
+- If a lane job-type env var contains whitespace, empty entries, or duplicate
   entries, parsing trims and deduplicates the list.
 
 Deterministic prefilter failures are code failures, not domain mismatches. If
@@ -177,9 +194,12 @@ Queue service tests:
 
 Worker lifecycle tests:
 
-- A match-lane worker does not process `fetch-slug`.
-- A non-LLM worker does not process `match`.
-- Worker startup accepts comma-separated `WORKER_JOB_TYPES`.
+- One worker process starts both LLM and non-LLM lane pools.
+- The LLM lane does not process `fetch-slug` or `maintenance`.
+- The non-LLM lane does not process `match` or `generate-cover-letter`.
+- LLM concurrency is capped independently from non-LLM concurrency.
+- Non-LLM rows can complete while the LLM lane is saturated.
+- Worker startup accepts comma-separated lane job-type env vars.
 
 Match handler tests:
 
@@ -193,15 +213,16 @@ Match handler tests:
 
 ## Rollout
 
-1. Ship code that supports filtered claiming while leaving `WORKER_JOB_TYPES`
-   unset in the current worker.
-2. Deploy the code and verify the unfiltered worker still drains all job types.
-3. Update infra to run the LLM and non-LLM worker services with the environment
-   variables above.
+1. Ship code that supports filtered claiming and internal lane pools while
+   leaving lane env vars unset in production.
+2. Deploy the code and verify the default unfiltered pool still drains all job
+   types.
+3. Update the single worker service env to enable the LLM and non-LLM lanes.
 4. Verify queue depth grouped by job type:
    non-LLM rows should not wait behind match backlog.
-5. Keep the old single-worker service disabled but easy to restore for one
-   deploy cycle.
+5. Keep the default unfiltered-pool rollback path available for one deploy
+   cycle.
 
-Rollback is setting `WORKER_JOB_TYPES` unset and returning to a single worker
-service. No database migration rollback is required.
+Rollback is unsetting the lane env vars so the process returns to the existing
+single unfiltered pool using `WORKER_CONCURRENCY`. No database migration
+rollback is required.
