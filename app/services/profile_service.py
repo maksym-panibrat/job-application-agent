@@ -3,6 +3,7 @@ from datetime import UTC, datetime
 
 import structlog
 from sqlalchemy import delete
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
@@ -28,8 +29,14 @@ async def get_or_create_profile(user_id: uuid.UUID, session: AsyncSession) -> Us
     if profile is None:
         profile = UserProfile(user_id=user_id)
         session.add(profile)
-        await session.commit()
-        await session.refresh(profile)
+        try:
+            await session.commit()
+            await session.refresh(profile)
+        except IntegrityError:
+            await session.rollback()
+            profile = await get_profile_by_user(user_id, session)
+            if profile is None:
+                raise
     return profile
 
 
