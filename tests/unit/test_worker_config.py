@@ -24,9 +24,10 @@ def clear_worker_env(monkeypatch):
 
 
 def _clear_worker_env(monkeypatch):
-    for key in WORKER_ENV_VARS:
-        monkeypatch.delenv(key, raising=False)
-        monkeypatch.delenv(key.lower(), raising=False)
+    worker_env_names = {key.lower() for key in WORKER_ENV_VARS}
+    for key in list(os.environ):
+        if key.lower() in worker_env_names:
+            monkeypatch.delenv(key, raising=False)
 
 
 def test_worker_config_defaults():
@@ -103,3 +104,13 @@ def test_clear_worker_env_removes_lowercase_variants(monkeypatch):
 
     assert "worker_llm_job_types" not in os.environ
     assert "worker_concurrency" not in os.environ
+
+
+def test_clear_worker_env_removes_mixed_case_variants(monkeypatch):
+    monkeypatch.setenv("WoRkEr_LlM_JoB_TyPeS", "match")
+    monkeypatch.setenv("WoRkEr_CoNcUrReNcY", "99")
+
+    _clear_worker_env(monkeypatch)
+
+    assert "WoRkEr_LlM_JoB_TyPeS" not in os.environ
+    assert "WoRkEr_CoNcUrReNcY" not in os.environ
