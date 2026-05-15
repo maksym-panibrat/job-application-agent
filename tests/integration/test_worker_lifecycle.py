@@ -295,6 +295,8 @@ async def test_slow_lane_drains_while_llm_lane_is_saturated(db_session, monkeypa
         max_attempts = 3
 
         async def __call__(self, session, row):
+            await started_llm.wait()
+            assert not release_llm.is_set()
             slow_done.set()
 
     monkeypatch.setenv("WORKER_LLM_JOB_TYPES", "test-llm-blocking")
