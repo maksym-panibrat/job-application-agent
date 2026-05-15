@@ -2,7 +2,7 @@
 
 from types import SimpleNamespace
 
-from app.services.remote_policy import evaluate_remote_policy
+from app.services.remote_policy import evaluate_remote_policy, evaluate_us_location_policy
 
 
 def _profile(target_locations: list[str]) -> SimpleNamespace:
@@ -147,5 +147,98 @@ def test_multi_word_target_location_matches_token_boundary_text():
     )
 
     verdict = evaluate_remote_policy(profile, job)
+
+    assert verdict.hard_mismatch is False
+
+
+def test_us_location_policy_allows_explicit_us_signal():
+    job = SimpleNamespace(
+        location="Remote - United States",
+        workplace_type="remote",
+        description="Applicants must be authorized to work in the U.S.",
+        description_raw=None,
+    )
+
+    verdict = evaluate_us_location_policy(job)
+
+    assert verdict.hard_mismatch is False
+
+
+def test_us_location_policy_rejects_explicit_non_us_position():
+    job = SimpleNamespace(
+        location="Toronto, Canada",
+        workplace_type="remote",
+        description="Remote role open to candidates based in Canada.",
+        description_raw=None,
+    )
+
+    verdict = evaluate_us_location_policy(job)
+
+    assert verdict.hard_mismatch is True
+    assert verdict.gap == "Position is not US-based"
+
+
+def test_us_location_policy_rejects_ambiguous_remote_position():
+    job = SimpleNamespace(
+        location="Remote",
+        workplace_type="remote",
+        description="Work from anywhere with a distributed engineering team.",
+        description_raw=None,
+    )
+
+    verdict = evaluate_us_location_policy(job)
+
+    assert verdict.hard_mismatch is True
+    assert verdict.gap == "Position is not US-based"
+
+
+def test_us_location_policy_allows_state_name_signal():
+    job = SimpleNamespace(
+        location="Remote",
+        workplace_type="remote",
+        description="Candidates may work remotely from California.",
+        description_raw=None,
+    )
+
+    verdict = evaluate_us_location_policy(job)
+
+    assert verdict.hard_mismatch is False
+
+
+def test_us_location_policy_allows_state_abbreviation_signal():
+    job = SimpleNamespace(
+        location="San Francisco, CA",
+        workplace_type="hybrid",
+        description=None,
+        description_raw=None,
+    )
+
+    verdict = evaluate_us_location_policy(job)
+
+    assert verdict.hard_mismatch is False
+
+
+def test_us_location_policy_allows_contextual_state_abbreviation_signal():
+    job = SimpleNamespace(
+        location="Remote",
+        workplace_type="remote",
+        description="Applicants must be based in CA.",
+        description_raw=None,
+    )
+
+    verdict = evaluate_us_location_policy(job)
+
+    assert verdict.hard_mismatch is False
+
+
+def test_us_location_policy_allows_city_state_signal():
+    job = SimpleNamespace(
+        location=None,
+        workplace_type="hybrid",
+        description="Hybrid role based in New York, NY.",
+        description_raw=None,
+    )
+
+    verdict = evaluate_us_location_policy(job)
 
     assert verdict.hard_mismatch is False

@@ -35,6 +35,131 @@ OFFICE_ATTENDANCE_PATTERNS = (
     r"\bmust(?:\s+be)?\s+located\s+near\b",
 )
 OFFICE_ATTENDANCE_GAP = "Requires recurring office attendance outside target locations"
+NON_US_POSITION_GAP = "Position is not US-based"
+
+US_STATE_NAMES = (
+    "alabama",
+    "alaska",
+    "arizona",
+    "arkansas",
+    "california",
+    "colorado",
+    "connecticut",
+    "delaware",
+    "florida",
+    "georgia",
+    "hawaii",
+    "idaho",
+    "illinois",
+    "indiana",
+    "iowa",
+    "kansas",
+    "kentucky",
+    "louisiana",
+    "maine",
+    "maryland",
+    "massachusetts",
+    "michigan",
+    "minnesota",
+    "mississippi",
+    "missouri",
+    "montana",
+    "nebraska",
+    "nevada",
+    "new hampshire",
+    "new jersey",
+    "new mexico",
+    "new york",
+    "north carolina",
+    "north dakota",
+    "ohio",
+    "oklahoma",
+    "oregon",
+    "pennsylvania",
+    "rhode island",
+    "south carolina",
+    "south dakota",
+    "tennessee",
+    "texas",
+    "utah",
+    "vermont",
+    "virginia",
+    "washington",
+    "west virginia",
+    "wisconsin",
+    "wyoming",
+)
+US_STATE_ABBREVIATIONS = (
+    "AL",
+    "AK",
+    "AZ",
+    "AR",
+    "CA",
+    "CO",
+    "CT",
+    "DE",
+    "FL",
+    "GA",
+    "HI",
+    "ID",
+    "IL",
+    "IN",
+    "IA",
+    "KS",
+    "KY",
+    "LA",
+    "ME",
+    "MD",
+    "MA",
+    "MI",
+    "MN",
+    "MS",
+    "MO",
+    "MT",
+    "NE",
+    "NV",
+    "NH",
+    "NJ",
+    "NM",
+    "NY",
+    "NC",
+    "ND",
+    "OH",
+    "OK",
+    "OR",
+    "PA",
+    "RI",
+    "SC",
+    "SD",
+    "TN",
+    "TX",
+    "UT",
+    "VT",
+    "VA",
+    "WA",
+    "WV",
+    "WI",
+    "WY",
+    "DC",
+)
+US_STATE_ABBREVIATION_PATTERN = "|".join(US_STATE_ABBREVIATIONS)
+US_COUNTRY_PATTERNS = (
+    re.compile(r"(?<![A-Za-z0-9])united\s+states(?![A-Za-z0-9])", re.IGNORECASE),
+    re.compile(r"(?<![A-Za-z0-9])u\.s\.a?\.?(?![A-Za-z0-9])", re.IGNORECASE),
+    re.compile(r"(?<![A-Za-z0-9])usa(?![A-Za-z0-9])", re.IGNORECASE),
+    re.compile(r"(?<![A-Za-z0-9])US(?![A-Za-z0-9])"),
+)
+US_STATE_ABBREVIATION_RE = re.compile(
+    rf"(?<![A-Za-z0-9])(?:{US_STATE_ABBREVIATION_PATTERN})(?![A-Za-z0-9])"
+)
+CITY_STATE_RE = re.compile(
+    rf"\b[A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+){{0,3}},\s*"
+    rf"(?:{US_STATE_ABBREVIATION_PATTERN})(?![A-Za-z0-9])"
+)
+CONTEXTUAL_STATE_ABBREVIATION_RE = re.compile(
+    rf"\b(?:based\s+in|located\s+in|from|in|within|near)\s+"
+    rf"(?:{US_STATE_ABBREVIATION_PATTERN})(?![A-Za-z0-9])"
+)
 
 
 def evaluate_remote_policy(profile: ProfileLike, job: JobLike) -> RemotePolicyVerdict:
@@ -49,14 +174,25 @@ def evaluate_remote_policy(profile: ProfileLike, job: JobLike) -> RemotePolicyVe
     return RemotePolicyVerdict(hard_mismatch=True, gap=OFFICE_ATTENDANCE_GAP)
 
 
+def evaluate_us_location_policy(job: JobLike) -> RemotePolicyVerdict:
+    if _has_us_location_signal(job):
+        return RemotePolicyVerdict(hard_mismatch=False)
+
+    return RemotePolicyVerdict(hard_mismatch=True, gap=NON_US_POSITION_GAP)
+
+
 def _job_text(job: JobLike) -> str:
+    return _job_owned_text(job).lower()
+
+
+def _job_owned_text(job: JobLike) -> str:
     fields = (
         getattr(job, "location", None),
         getattr(job, "workplace_type", None),
         getattr(job, "description", None),
         getattr(job, "description_raw", None),
     )
-    return " ".join(str(field) for field in fields if field).lower()
+    return " ".join(str(field) for field in fields if field)
 
 
 def _job_description_text(job: JobLike) -> str:
@@ -82,6 +218,20 @@ def _matches_target_location(profile: ProfileLike, text: str) -> bool:
         _contains_token_phrase(normalized_text, str(location))
         for location in target_locations
         if location
+    )
+
+
+def _has_us_location_signal(job: JobLike) -> bool:
+    text = _job_owned_text(job)
+    normalized_text = _normalize_text(text)
+    location_text = str(getattr(job, "location", None) or "")
+
+    return (
+        any(pattern.search(text) is not None for pattern in US_COUNTRY_PATTERNS)
+        or any(_contains_token_phrase(normalized_text, state) for state in US_STATE_NAMES)
+        or US_STATE_ABBREVIATION_RE.search(location_text) is not None
+        or CITY_STATE_RE.search(text) is not None
+        or CONTEXTUAL_STATE_ABBREVIATION_RE.search(text) is not None
     )
 
 

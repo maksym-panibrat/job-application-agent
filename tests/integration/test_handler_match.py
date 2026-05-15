@@ -21,7 +21,7 @@ async def _seed_application(
     match_score: float | None = None,
     app_status: str = "pending_review",
     profile_locations: list[str] | None = None,
-    job_location: str | None = None,
+    job_location: str | None = "Remote - United States",
     workplace_type: str | None = None,
     description: str | None = None,
     description_raw: str | None = None,
@@ -127,7 +127,8 @@ async def test_match_handler_prefilter_visible_remote_policy_reject(db_session):
     app = await _seed_application(
         db_session,
         description=(
-            "Remote role, but candidates must work from the NYC office twice a week."
+            "Remote role in the United States, but candidates must work "
+            "from the New York, NY office twice a week."
         ),
     )
     app_id = app.id
@@ -162,7 +163,7 @@ async def test_match_handler_prefilter_preserves_user_owned_status(db_session):
     app = await _seed_application(
         db_session,
         app_status="dismissed",
-        description="Candidates must work from the Toronto office twice a week.",
+        description="Candidates must work from the New York, NY office twice a week.",
     )
     app_id = app.id
     handler = MatchHandler()
@@ -184,11 +185,67 @@ async def test_match_handler_prefilter_preserves_user_owned_status(db_session):
 
 
 @pytest.mark.asyncio
+async def test_match_handler_prefilter_visible_non_us_reject(db_session):
+    app = await _seed_application(
+        db_session,
+        job_location="Toronto, Canada",
+        workplace_type="remote",
+        description="Remote role open to candidates based in Canada.",
+    )
+    app_id = app.id
+    handler = MatchHandler()
+
+    with patch("app.agents.matching_agent.score_one", AsyncMock()) as mock_score:
+        await handler(db_session, _match_row(app.id))
+        await db_session.commit()
+
+    db_session.expire_all()
+    refreshed = (
+        await db_session.execute(sa.select(Application).where(Application.id == app_id))
+    ).scalar_one()
+    assert mock_score.call_count == 0
+    assert refreshed.status == "auto_rejected"
+    assert refreshed.match_score is not None
+    assert refreshed.match_score < 0.3
+    assert refreshed.match_summary == "Deterministic mismatch: non-US position"
+    assert refreshed.match_rationale == "Position is not US-based"
+    assert refreshed.match_strengths == []
+    assert refreshed.match_gaps == ["Position is not US-based"]
+
+
+@pytest.mark.asyncio
+async def test_match_handler_prefilter_non_us_preserves_user_owned_status(db_session):
+    app = await _seed_application(
+        db_session,
+        app_status="applied",
+        job_location="Remote",
+        workplace_type="remote",
+        description="Work from anywhere with a distributed engineering team.",
+    )
+    app_id = app.id
+    handler = MatchHandler()
+
+    with patch("app.agents.matching_agent.score_one", AsyncMock()) as mock_score:
+        await handler(db_session, _match_row(app.id))
+        await db_session.commit()
+
+    db_session.expire_all()
+    refreshed = (
+        await db_session.execute(sa.select(Application).where(Application.id == app_id))
+    ).scalar_one()
+    assert mock_score.call_count == 0
+    assert refreshed.status == "applied"
+    assert refreshed.match_score is not None
+    assert refreshed.match_summary == "Deterministic mismatch: non-US position"
+    assert refreshed.match_gaps == ["Position is not US-based"]
+
+
+@pytest.mark.asyncio
 async def test_match_handler_prefilter_allows_target_location_match(db_session):
     app = await _seed_application(
         db_session,
-        profile_locations=["Toronto"],
-        description="Candidates must work from the Toronto office twice a week.",
+        profile_locations=["San Francisco"],
+        description="Candidates must work from the San Francisco, CA office twice a week.",
     )
     handler = MatchHandler()
 
