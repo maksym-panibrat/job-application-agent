@@ -96,7 +96,9 @@ async def claim_one(
     params: dict[str, Any] = {"timeout": visibility_timeout_s, "worker_id": worker_id}
     job_type_filter = ""
     if job_types is not None:
-        allowed_job_types = [job_type for job_type in job_types if job_type]
+        allowed_job_types = [
+            normalized for job_type in job_types if (normalized := job_type.strip())
+        ]
         if not allowed_job_types:
             return None
         params["job_types"] = allowed_job_types

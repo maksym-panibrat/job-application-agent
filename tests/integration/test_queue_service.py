@@ -326,6 +326,22 @@ async def test_claim_one_job_type_filter_preserves_not_before(db_session):
 
 
 @pytest.mark.asyncio
+async def test_claim_one_job_type_filter_treats_whitespace_as_blank(db_session):
+    await enqueue(db_session, job_type="match", payload={})
+    await enqueue(db_session, job_type=" ", payload={})
+    await db_session.commit()
+
+    claimed = await claim_one(
+        db_session,
+        worker_id="llm-worker",
+        visibility_timeout_s=600,
+        job_types=[" ", ""],
+    )
+
+    assert claimed is None
+
+
+@pytest.mark.asyncio
 async def test_claim_one_job_type_filter_reclaims_matching_stale_row(db_session):
     row_id = await enqueue(db_session, job_type="match", payload={})
     await db_session.execute(
