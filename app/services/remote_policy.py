@@ -157,6 +157,50 @@ CONTEXTUAL_STATE_ABBREVIATION_RE = re.compile(
     rf"\b(?:based\s+in|located\s+in|from|in|within|near)\s+"
     rf"(?:{US_STATE_ABBREVIATION_PATTERN})(?![A-Za-z0-9])"
 )
+US_COUNTRY_OR_STATE_NAME_PATTERN = "|".join(
+    (
+        r"united\s+states",
+        r"u\.s\.a?\.?",
+        "usa",
+        *tuple(re.escape(state) for state in US_STATE_NAMES),
+    )
+)
+US_LOCATION_NAME_TOKEN_PATTERN = rf"(?:the\s+)?(?:{US_COUNTRY_OR_STATE_NAME_PATTERN})"
+US_LOCATION_ABBREVIATION_TOKEN_PATTERN = rf"(?:US|{US_STATE_ABBREVIATION_PATTERN})"
+EXCLUSIONARY_US_PREFIX_PATTERN = (
+    r"(?:not\s+(?:available|open|accepted|considered|allowed|permitted)"
+    r"|unavailable|excluding|excludes?|except(?:ing)?|outside(?:\s+of)?|not\s+based)"
+)
+EXCLUSIONARY_US_SUFFIX_PATTERN = (
+    r"(?:not\s+(?:eligible|accepted|considered|allowed|permitted|available)"
+    r"|ineligible|excluded|unavailable)"
+)
+EXCLUSIONARY_US_NAME_PATTERNS = (
+    re.compile(
+        rf"\b{EXCLUSIONARY_US_PREFIX_PATTERN}\b.{{0,80}}"
+        rf"(?<![A-Za-z0-9]){US_LOCATION_NAME_TOKEN_PATTERN}(?![A-Za-z0-9])",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        rf"(?<![A-Za-z0-9]){US_LOCATION_NAME_TOKEN_PATTERN}(?![A-Za-z0-9])"
+        rf".{{0,80}}\b(?:applicants?|candidates?|residents?|workers?)?\s*"
+        rf"(?:are|is)?\s*{EXCLUSIONARY_US_SUFFIX_PATTERN}\b",
+        re.IGNORECASE,
+    ),
+)
+EXCLUSIONARY_US_ABBREVIATION_PATTERNS = (
+    re.compile(
+        rf"\b(?i:{EXCLUSIONARY_US_PREFIX_PATTERN})\b.{{0,80}}"
+        rf"(?<![A-Za-z0-9-]){US_LOCATION_ABBREVIATION_TOKEN_PATTERN}"
+        rf"(?![A-Za-z0-9])"
+    ),
+    re.compile(
+        rf"(?<![A-Za-z0-9-]){US_LOCATION_ABBREVIATION_TOKEN_PATTERN}"
+        rf"(?![A-Za-z0-9]).{{0,80}}"
+        rf"\b(?i:(?:applicants?|candidates?|residents?|workers?)?\s*"
+        rf"(?:are|is)?\s*{EXCLUSIONARY_US_SUFFIX_PATTERN})\b"
+    ),
+)
 
 
 def evaluate_remote_policy(profile: ProfileLike, job: JobLike) -> RemotePolicyVerdict:
@@ -222,11 +266,24 @@ def _has_us_location_signal(job: JobLike) -> bool:
     text = _job_owned_text(job)
     normalized_text = _normalize_text(text)
 
+    if _has_exclusionary_us_location_signal(text):
+        return False
+
     return (
         any(pattern.search(text) is not None for pattern in US_COUNTRY_PATTERNS)
         or any(_contains_token_phrase(normalized_text, state) for state in US_STATE_NAMES)
         or CITY_STATE_RE.search(text) is not None
         or CONTEXTUAL_STATE_ABBREVIATION_RE.search(text) is not None
+    )
+
+
+def _has_exclusionary_us_location_signal(text: str) -> bool:
+    return any(
+        pattern.search(text) is not None
+        for pattern in (
+            *EXCLUSIONARY_US_NAME_PATTERNS,
+            *EXCLUSIONARY_US_ABBREVIATION_PATTERNS,
+        )
     )
 
 
