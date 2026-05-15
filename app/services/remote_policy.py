@@ -149,6 +149,16 @@ US_COUNTRY_PATTERNS = (
     re.compile(r"(?<![A-Za-z0-9])usa(?![A-Za-z0-9])", re.IGNORECASE),
     re.compile(r"(?<![A-Za-z0-9])US(?![A-Za-z0-9])"),
 )
+NON_US_LOCATION_TOKENS = (
+    "canada",
+    "united kingdom",
+    "uk",
+    "germany",
+    "tbilisi",
+    "india",
+    "europe",
+    "european union",
+)
 CITY_STATE_RE = re.compile(
     rf"(?<!,\s)\b[A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+){{0,3}},\s*"
     rf"(?:{US_STATE_ABBREVIATION_PATTERN})(?![A-Za-z0-9])"
@@ -216,6 +226,9 @@ def evaluate_remote_policy(profile: ProfileLike, job: JobLike) -> RemotePolicyVe
 
 
 def evaluate_us_location_policy(job: JobLike) -> RemotePolicyVerdict:
+    if _has_overriding_non_us_location_signal(job):
+        return RemotePolicyVerdict(hard_mismatch=True, gap=NON_US_POSITION_GAP)
+
     if _has_us_location_signal(job):
         return RemotePolicyVerdict(hard_mismatch=False)
 
@@ -274,6 +287,22 @@ def _has_us_location_signal(job: JobLike) -> bool:
         or any(_contains_token_phrase(normalized_text, state) for state in US_STATE_NAMES)
         or CITY_STATE_RE.search(text) is not None
         or CONTEXTUAL_STATE_ABBREVIATION_RE.search(text) is not None
+    )
+
+
+def _has_overriding_non_us_location_signal(job: JobLike) -> bool:
+    location = getattr(job, "location", None)
+    if not location:
+        return False
+
+    location_text = str(location)
+    if any(pattern.search(location_text) for pattern in US_COUNTRY_PATTERNS):
+        return False
+
+    normalized_location = _normalize_text(location_text)
+    return any(
+        _contains_token_phrase(normalized_location, token)
+        for token in NON_US_LOCATION_TOKENS
     )
 
 

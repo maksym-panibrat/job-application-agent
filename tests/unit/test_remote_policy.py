@@ -178,6 +178,34 @@ def test_us_location_policy_rejects_explicit_non_us_position():
     assert verdict.gap == "Position is not US-based"
 
 
+def test_us_location_policy_rejects_non_us_location_despite_us_customer_text():
+    job = SimpleNamespace(
+        location="Toronto, Canada",
+        workplace_type="remote",
+        description="Remote support role helping support US customers.",
+        description_raw=None,
+    )
+
+    verdict = evaluate_us_location_policy(job)
+
+    assert verdict.hard_mismatch is True
+    assert verdict.gap == "Position is not US-based"
+
+
+def test_us_location_policy_rejects_tbilisi_georgia_as_non_us_location():
+    job = SimpleNamespace(
+        location="Tbilisi, Georgia",
+        workplace_type="remote",
+        description="Remote role for a distributed support team.",
+        description_raw=None,
+    )
+
+    verdict = evaluate_us_location_policy(job)
+
+    assert verdict.hard_mismatch is True
+    assert verdict.gap == "Position is not US-based"
+
+
 def test_us_location_policy_rejects_remote_canada_unavailable_in_us():
     job = SimpleNamespace(
         location="Remote - Canada",
