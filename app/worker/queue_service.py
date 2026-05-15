@@ -90,15 +90,26 @@ async def claim_one(
     *,
     worker_id: str,
     visibility_timeout_s: int,
+    job_types: list[str] | tuple[str, ...] | None = None,
 ) -> WorkQueue | None:
     """Atomically claim the next pending or stale non-self in-progress row."""
+    params: dict[str, Any] = {"timeout": visibility_timeout_s, "worker_id": worker_id}
+    job_type_filter = ""
+    if job_types is not None:
+        allowed_job_types = [job_type for job_type in job_types if job_type]
+        if not allowed_job_types:
+            return None
+        params["job_types"] = allowed_job_types
+        job_type_filter = "AND job_type = ANY(CAST(:job_types AS text[]))"
+
     result = await session.execute(
         text(
-            """
+            f"""
             WITH claimed AS (
               SELECT id
               FROM work_queue
               WHERE (not_before IS NULL OR not_before <= now())
+                {job_type_filter}
                 AND (
                   status = 'pending'
                   OR (
@@ -126,7 +137,7 @@ async def claim_one(
                       work_queue.dedupe_key
             """
         ),
-        {"timeout": visibility_timeout_s, "worker_id": worker_id},
+        params,
     )
     row = result.first()
     if row is None:

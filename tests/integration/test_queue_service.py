@@ -278,3 +278,108 @@ async def test_release_with_backoff_raises_stale_lease_for_wrong_worker(db_sessi
     ).scalar_one()
     assert row.status == WorkQueueStatus.IN_PROGRESS
     assert row.claimed_by == "w1"
+
+
+@pytest.mark.asyncio
+async def test_claim_one_filters_to_allowed_job_types(db_session):
+    fetch_id = await enqueue(db_session, job_type="fetch-slug", payload={"order": "old"})
+    match_id = await enqueue(db_session, job_type="match", payload={"order": "new"})
+    await db_session.execute(
+        text("UPDATE work_queue SET enqueued_at = now() - interval '1 hour' WHERE id = :id"),
+        {"id": fetch_id},
+    )
+    await db_session.commit()
+
+    claimed = await claim_one(
+        db_session,
+        worker_id="llm-worker",
+        visibility_timeout_s=600,
+        job_types=["match", "generate-cover-letter"],
+    )
+    await db_session.commit()
+
+    assert claimed is not None
+    assert claimed.id == match_id
+    assert claimed.job_type == "match"
+
+
+@pytest.mark.asyncio
+async def test_claim_one_job_type_filter_preserves_not_before(db_session):
+    row_id = await enqueue(db_session, job_type="match", payload={})
+    await db_session.execute(
+        text(
+            "UPDATE work_queue SET not_before = now() + interval '5 minutes' "
+            "WHERE id = :id"
+        ),
+        {"id": row_id},
+    )
+    await db_session.commit()
+
+    claimed = await claim_one(
+        db_session,
+        worker_id="llm-worker",
+        visibility_timeout_s=600,
+        job_types=["match"],
+    )
+
+    assert claimed is None
+
+
+@pytest.mark.asyncio
+async def test_claim_one_job_type_filter_reclaims_matching_stale_row(db_session):
+    row_id = await enqueue(db_session, job_type="match", payload={})
+    await db_session.execute(
+        text(
+            """
+            UPDATE work_queue
+            SET status='in_progress',
+                claimed_at = now() - interval '700 seconds',
+                claimed_by = 'dead-worker',
+                attempts = 1
+            WHERE id = :id
+            """
+        ),
+        {"id": row_id},
+    )
+    await db_session.commit()
+
+    claimed = await claim_one(
+        db_session,
+        worker_id="llm-worker",
+        visibility_timeout_s=600,
+        job_types=["match"],
+    )
+    await db_session.commit()
+
+    assert claimed is not None
+    assert claimed.id == row_id
+    assert claimed.claimed_by == "llm-worker"
+    assert claimed.attempts == 2
+
+
+@pytest.mark.asyncio
+async def test_claim_one_job_type_filter_ignores_other_stale_rows(db_session):
+    row_id = await enqueue(db_session, job_type="fetch-slug", payload={})
+    await db_session.execute(
+        text(
+            """
+            UPDATE work_queue
+            SET status='in_progress',
+                claimed_at = now() - interval '700 seconds',
+                claimed_by = 'dead-worker',
+                attempts = 1
+            WHERE id = :id
+            """
+        ),
+        {"id": row_id},
+    )
+    await db_session.commit()
+
+    claimed = await claim_one(
+        db_session,
+        worker_id="llm-worker",
+        visibility_timeout_s=600,
+        job_types=["match", "generate-cover-letter"],
+    )
+
+    assert claimed is None
