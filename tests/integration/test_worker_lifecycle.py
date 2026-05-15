@@ -232,6 +232,8 @@ async def test_worker_lanes_process_allowed_job_types(db_session, monkeypatch):
     from app.worker.handlers import HANDLERS
 
     calls: list[str] = []
+    started_lanes: list[str] = []
+    original_run_lane = worker_main._run_lane
 
     class Record:
         max_attempts = 3
@@ -249,6 +251,17 @@ async def test_worker_lanes_process_allowed_job_types(db_session, monkeypatch):
     monkeypatch.setitem(HANDLERS, "test-llm", Record("llm"))
     monkeypatch.setitem(HANDLERS, "test-slow", Record("slow"))
 
+    async def recording_run_lane(lane, *, settings, session_factory, shutdown_task):
+        started_lanes.append(lane.name)
+        await original_run_lane(
+            lane,
+            settings=settings,
+            session_factory=session_factory,
+            shutdown_task=shutdown_task,
+        )
+
+    monkeypatch.setattr(worker_main, "_run_lane", recording_run_lane)
+
     await enqueue(db_session, job_type="test-llm", payload={})
     await enqueue(db_session, job_type="test-slow", payload={})
     await db_session.commit()
@@ -260,6 +273,7 @@ async def test_worker_lanes_process_allowed_job_types(db_session, monkeypatch):
 
     await asyncio.gather(worker_main.run(), stop_soon())
 
+    assert sorted(started_lanes) == ["llm", "slow"]
     assert sorted(calls) == ["llm", "slow"]
 
 
@@ -295,10 +309,13 @@ async def test_slow_lane_drains_while_llm_lane_is_saturated(db_session, monkeypa
     await db_session.commit()
 
     async def stop_after_slow_done():
-        await started_llm.wait()
-        await asyncio.wait_for(slow_done.wait(), timeout=2)
-        release_llm.set()
-        worker_main._shutdown.set()
+        try:
+            await started_llm.wait()
+            await asyncio.wait_for(slow_done.wait(), timeout=2)
+            assert not release_llm.is_set()
+        finally:
+            release_llm.set()
+            worker_main._shutdown.set()
 
     await asyncio.gather(worker_main.run(), stop_after_slow_done())
 
