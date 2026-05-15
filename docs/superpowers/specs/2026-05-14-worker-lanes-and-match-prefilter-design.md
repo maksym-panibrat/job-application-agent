@@ -4,13 +4,13 @@
 
 Production currently uses one physical `work_queue` table and one worker process
 that claims any eligible job type from one shared worker pool. A large match
-backlog can consume worker capacity even when non-LLM work, such as provider
-fetching, is ready to run.
+backlog can consume worker capacity even when slow/background work, such as
+provider fetching, is ready to run.
 
 Live queue depth on 2026-05-14 showed thousands of pending `match` rows and only
 a few `fetch-slug` rows. That is the failure mode this design addresses: LLM
-work must be bounded by the API limit, while non-LLM work must keep draining
-independently.
+work must be bounded by the API limit, while slow/background work must keep
+draining independently.
 
 Matching also performs deterministic remote-policy enforcement after the LLM
 score. That still spends LLM capacity on jobs the code can already reject, such
@@ -19,7 +19,7 @@ locations.
 
 ## Goals
 
-- Split one physical worker process into LLM and non-LLM internal worker pools.
+- Split one physical worker process into LLM and slow internal worker pools.
 - Keep total LLM job concurrency bounded to 6-8 concurrent jobs.
 - Allow fetch and maintenance work to drain separately from the LLM backlog.
 - Add deterministic pre-checks before LLM match scoring.
@@ -45,8 +45,8 @@ job-type allowlist and concurrency cap.
 ```text
 WORKER_LLM_JOB_TYPES=match,generate-cover-letter
 WORKER_LLM_CONCURRENCY=6
-WORKER_NON_LLM_JOB_TYPES=fetch-slug,maintenance
-WORKER_NON_LLM_CONCURRENCY=8
+WORKER_SLOW_JOB_TYPES=fetch-slug,maintenance
+WORKER_SLOW_CONCURRENCY=8
 ```
 
 Implementation can use asyncio tasks rather than OS threads because the current
@@ -83,8 +83,8 @@ job-search-worker
   command: python -m app.worker
   WORKER_LLM_JOB_TYPES=match,generate-cover-letter
   WORKER_LLM_CONCURRENCY=6
-  WORKER_NON_LLM_JOB_TYPES=fetch-slug,maintenance
-  WORKER_NON_LLM_CONCURRENCY=8
+  WORKER_SLOW_JOB_TYPES=fetch-slug,maintenance
+  WORKER_SLOW_CONCURRENCY=8
 ```
 
 The LLM lane owns every job type that can call an LLM:
@@ -92,7 +92,7 @@ The LLM lane owns every job type that can call an LLM:
 - `match`
 - `generate-cover-letter`
 
-The non-LLM lane owns jobs that should not be blocked by LLM backlog:
+The slow lane owns jobs that should not be blocked by LLM backlog:
 
 - `fetch-slug`
 - `maintenance`
@@ -102,9 +102,9 @@ observability shows the provider API limit is not being approached. Cover-letter
 generation and match scoring share this same cap so the deployment cannot
 accidentally multiply LLM traffic by scaling separate LLM consumers.
 
-The non-LLM concurrency should start at `8`, matching the existing provider
-fetch concurrency expectation. It can be tuned independently because the lane
-does not call LLM APIs.
+The slow-lane concurrency should start at `8`, matching the existing provider
+fetch concurrency expectation. It can be tuned independently because these jobs
+do not call LLM APIs.
 
 The process-level supervisor owns shutdown. On `SIGTERM` or `SIGINT`, it stops
 all lane polling loops, waits for every in-flight lane task to finish, and then
@@ -153,14 +153,14 @@ the worker prefilter.
 
 Existing queue-depth emission remains useful because all rows stay in
 `work_queue`. Add lane context to worker logs so production can distinguish LLM
-and non-LLM consumers:
+and slow-lane consumers:
 
 - `worker.started` includes lane configuration
 - job claim/start/done/failure logs include `lane`
 - job completion/failure logs continue to include `job_type`
 
 Operational queue checks should group by `job_type` and `status`. The important
-runtime invariant is that pending non-LLM rows can drain even when `match`
+runtime invariant is that pending slow-lane rows can drain even when `match`
 backlog is large.
 
 ## Failure Handling
@@ -194,11 +194,11 @@ Queue service tests:
 
 Worker lifecycle tests:
 
-- One worker process starts both LLM and non-LLM lane pools.
+- One worker process starts both LLM and slow lane pools.
 - The LLM lane does not process `fetch-slug` or `maintenance`.
-- The non-LLM lane does not process `match` or `generate-cover-letter`.
-- LLM concurrency is capped independently from non-LLM concurrency.
-- Non-LLM rows can complete while the LLM lane is saturated.
+- The slow lane does not process `match` or `generate-cover-letter`.
+- LLM concurrency is capped independently from slow-lane concurrency.
+- Slow-lane rows can complete while the LLM lane is saturated.
 - Worker startup accepts comma-separated lane job-type env vars.
 
 Match handler tests:
@@ -217,9 +217,9 @@ Match handler tests:
    leaving lane env vars unset in production.
 2. Deploy the code and verify the default unfiltered pool still drains all job
    types.
-3. Update the single worker service env to enable the LLM and non-LLM lanes.
+3. Update the single worker service env to enable the LLM and slow lanes.
 4. Verify queue depth grouped by job type:
-   non-LLM rows should not wait behind match backlog.
+   slow-lane rows should not wait behind match backlog.
 5. Keep the default unfiltered-pool rollback path available for one deploy
    cycle.
 
