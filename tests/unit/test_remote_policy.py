@@ -248,6 +248,62 @@ def test_us_location_policy_rejects_remote_canada_us_applicants_not_eligible():
     assert verdict.gap == "Position is not US-based"
 
 
+def test_us_location_policy_rejects_non_us_role_literal():
+    job = SimpleNamespace(
+        location="Remote",
+        workplace_type="remote",
+        description="This is a non-US role.",
+        description_raw=None,
+    )
+
+    verdict = evaluate_us_location_policy(job)
+
+    assert verdict.hard_mismatch is True
+    assert verdict.gap == "Position is not US-based"
+
+
+def test_us_location_policy_rejects_non_us_candidates_literal():
+    job = SimpleNamespace(
+        location="Remote",
+        workplace_type="remote",
+        description="Non-US candidates only.",
+        description_raw=None,
+    )
+
+    verdict = evaluate_us_location_policy(job)
+
+    assert verdict.hard_mismatch is True
+    assert verdict.gap == "Position is not US-based"
+
+
+def test_us_location_policy_rejects_non_us_applicants_literal():
+    job = SimpleNamespace(
+        location="Remote",
+        workplace_type="remote",
+        description="Remote role for non-US applicants.",
+        description_raw=None,
+    )
+
+    verdict = evaluate_us_location_policy(job)
+
+    assert verdict.hard_mismatch is True
+    assert verdict.gap == "Position is not US-based"
+
+
+def test_us_location_policy_rejects_non_dotted_us_role_literal():
+    job = SimpleNamespace(
+        location="Remote",
+        workplace_type="remote",
+        description="This is a non-U.S. role.",
+        description_raw=None,
+    )
+
+    verdict = evaluate_us_location_policy(job)
+
+    assert verdict.hard_mismatch is True
+    assert verdict.gap == "Position is not US-based"
+
+
 def test_us_location_policy_rejects_canadian_country_abbreviation():
     job = SimpleNamespace(
         location="Toronto, ON, CA",

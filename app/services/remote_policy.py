@@ -199,6 +199,7 @@ EXCLUSIONARY_US_NAME_PATTERNS = (
     ),
 )
 EXCLUSIONARY_US_ABBREVIATION_PATTERNS = (
+    re.compile(r"(?<![A-Za-z0-9])non[-\s]+U\.?S\.?(?![A-Za-z0-9])", re.IGNORECASE),
     re.compile(
         rf"\b(?i:{EXCLUSIONARY_US_PREFIX_PATTERN})\b.{{0,80}}"
         rf"(?<![A-Za-z0-9-]){US_LOCATION_ABBREVIATION_TOKEN_PATTERN}"
