@@ -379,7 +379,7 @@ async def test_worker_run_cleans_up_sibling_lanes_when_one_lane_raises(monkeypat
     monkeypatch.setattr(worker_main, "_run_lane", fake_run_lane)
 
     with pytest.raises(RuntimeError, match="lane exploded"):
-        await worker_main.run()
+        await asyncio.wait_for(worker_main.run(), timeout=2)
 
     assert started_sibling.is_set()
     assert sibling_cancelled.is_set()
@@ -441,7 +441,7 @@ async def test_run_lane_cancels_inflight_after_drain_budget(monkeypatch):
     )
 
     try:
-        await handler_started.wait()
+        await asyncio.wait_for(handler_started.wait(), timeout=2)
         worker_main._shutdown.set()
         await lane_task
     finally:
