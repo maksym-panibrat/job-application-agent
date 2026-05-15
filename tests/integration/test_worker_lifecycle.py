@@ -267,9 +267,10 @@ async def test_worker_lanes_process_allowed_job_types(db_session, monkeypatch):
     await db_session.commit()
 
     async def stop_soon():
-        while len(calls) < 2:
-            await asyncio.sleep(0.05)
-        worker_main._shutdown.set()
+        try:
+            await asyncio.wait_for(_wait_for_calls(calls, count=2), timeout=2)
+        finally:
+            worker_main._shutdown.set()
 
     await asyncio.gather(worker_main.run(), stop_soon())
 
@@ -337,3 +338,114 @@ async def test_slow_lane_drains_while_llm_lane_is_saturated(db_session, monkeypa
         ("test-llm-blocking", "done"),
         ("test-slow-fast", "done"),
     ]
+
+
+async def _wait_for_calls(calls: list[str], *, count: int) -> None:
+    while len(calls) < count:
+        await asyncio.sleep(0.05)
+
+
+@pytest.mark.asyncio
+async def test_worker_run_cleans_up_sibling_lanes_when_one_lane_raises(monkeypatch):
+    started_sibling = asyncio.Event()
+    sibling_cancelled = asyncio.Event()
+
+    async def fake_run_lane(lane, *, settings, session_factory, shutdown_task):
+        if lane.name == "llm":
+            await started_sibling.wait()
+            raise RuntimeError("lane exploded")
+
+        started_sibling.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            sibling_cancelled.set()
+            raise
+
+    class FakeSettings:
+        concurrency = 2
+        visibility_timeout_s = 30
+
+        def lane_configs(self):
+            from app.worker.config import WorkerLane
+
+            return [
+                WorkerLane(name="llm", job_types=("test-llm",), concurrency=1),
+                WorkerLane(name="slow", job_types=("test-slow",), concurrency=1),
+            ]
+
+    monkeypatch.setattr(worker_main, "WorkerSettings", FakeSettings)
+    monkeypatch.setattr(worker_main, "get_session_factory", lambda: object())
+    monkeypatch.setattr(worker_main, "_run_lane", fake_run_lane)
+
+    with pytest.raises(RuntimeError, match="lane exploded"):
+        await worker_main.run()
+
+    assert started_sibling.is_set()
+    assert sibling_cancelled.is_set()
+
+
+@pytest.mark.asyncio
+async def test_run_lane_cancels_inflight_after_drain_budget(monkeypatch):
+    from app.worker.config import WorkerLane
+
+    handler_started = asyncio.Event()
+    handler_cancelled = asyncio.Event()
+    claim_count = 0
+
+    class FakeSettings:
+        visibility_timeout_s = 30
+        poll_interval_s = 60
+        drain_budget_s = 0
+
+    class FakeSession:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return None
+
+        async def commit(self):
+            return None
+
+    class FakeJob:
+        id = 1
+        job_type = "test-blocking"
+        attempts = 1
+
+    async def fake_claim_one(session, *, worker_id, visibility_timeout_s, job_types):
+        nonlocal claim_count
+        claim_count += 1
+        return FakeJob() if claim_count == 1 else None
+
+    async def fake_handle_one(job_row, session_factory, settings, *, lane):
+        handler_started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            handler_cancelled.set()
+            raise
+
+    monkeypatch.setattr(worker_main, "claim_one", fake_claim_one)
+    monkeypatch.setattr(worker_main, "_handle_one", fake_handle_one)
+
+    worker_main._shutdown.clear()
+    shutdown_task = asyncio.create_task(worker_main._shutdown.wait())
+    lane_task = asyncio.create_task(
+        worker_main._run_lane(
+            WorkerLane(name="test", job_types=None, concurrency=1),
+            settings=FakeSettings(),
+            session_factory=FakeSession,
+            shutdown_task=shutdown_task,
+        )
+    )
+
+    try:
+        await handler_started.wait()
+        worker_main._shutdown.set()
+        await lane_task
+    finally:
+        worker_main._shutdown.clear()
+        await worker_main._cancel_pending([lane_task, shutdown_task])
+
+    assert handler_cancelled.is_set()

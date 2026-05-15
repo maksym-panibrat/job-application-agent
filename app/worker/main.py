@@ -78,6 +78,14 @@ async def _release_for_retry(session_factory, job_row, seconds: int) -> None:
         await session.commit()
 
 
+async def _cancel_pending(tasks: set[asyncio.Task] | list[asyncio.Task]) -> None:
+    pending = [task for task in tasks if not task.done()]
+    for task in pending:
+        task.cancel()
+    if pending:
+        await asyncio.gather(*pending, return_exceptions=True)
+
+
 async def _handle_one(
     job_row,
     session_factory,
@@ -234,61 +242,79 @@ async def _run_lane(
     shutdown_task: asyncio.Task,
 ) -> None:
     inflight: set[asyncio.Task] = set()
+    cancelled = False
 
-    while not _shutdown.is_set():
-        if len(inflight) >= lane.concurrency:
-            await asyncio.wait(
-                inflight | {shutdown_task},
-                return_when=asyncio.FIRST_COMPLETED,
-            )
-            continue
-
-        async with session_factory() as session:
-            job = await claim_one(
-                session,
-                worker_id=_worker_id,
-                visibility_timeout_s=settings.visibility_timeout_s,
-                job_types=lane.job_types,
-            )
-            await session.commit()
-
-        if job is None:
-            try:
-                await asyncio.wait_for(
-                    asyncio.shield(shutdown_task),
-                    timeout=settings.poll_interval_s,
+    try:
+        while not _shutdown.is_set():
+            if len(inflight) >= lane.concurrency:
+                await asyncio.wait(
+                    inflight | {shutdown_task},
+                    return_when=asyncio.FIRST_COMPLETED,
                 )
-            except TimeoutError:
-                pass
-            continue
+                continue
 
+            async with session_factory() as session:
+                job = await claim_one(
+                    session,
+                    worker_id=_worker_id,
+                    visibility_timeout_s=settings.visibility_timeout_s,
+                    job_types=lane.job_types,
+                )
+                await session.commit()
+
+            if job is None:
+                try:
+                    await asyncio.wait_for(
+                        asyncio.shield(shutdown_task),
+                        timeout=settings.poll_interval_s,
+                    )
+                except TimeoutError:
+                    pass
+                continue
+
+            await log.ainfo(
+                "worker.job_start",
+                lane=lane.name,
+                job_id=job.id,
+                job_type=job.job_type,
+                attempts=job.attempts,
+                worker_id=_worker_id,
+            )
+            task = asyncio.create_task(
+                _handle_one(job, session_factory, settings, lane=lane.name)
+            )
+            inflight.add(task)
+            task.add_done_callback(inflight.discard)
+    except asyncio.CancelledError:
+        cancelled = True
+        raise
+    finally:
         await log.ainfo(
-            "worker.job_start",
+            "worker.shutdown_drain_start",
             lane=lane.name,
-            job_id=job.id,
-            job_type=job.job_type,
-            attempts=job.attempts,
-            worker_id=_worker_id,
+            inflight=len(inflight),
+            drain_budget_s=settings.drain_budget_s,
         )
-        task = asyncio.create_task(
-            _handle_one(job, session_factory, settings, lane=lane.name)
+        if cancelled:
+            await _cancel_pending(inflight)
+        elif inflight:
+            _, pending = await asyncio.wait(
+                inflight,
+                timeout=settings.drain_budget_s,
+            )
+            if pending:
+                await log.awarning(
+                    "worker.shutdown_drain_timeout",
+                    lane=lane.name,
+                    pending=len(pending),
+                    drain_budget_s=settings.drain_budget_s,
+                )
+                await _cancel_pending(list(pending))
+        await log.ainfo(
+            "worker.shutdown_drain_done",
+            lane=lane.name,
+            inflight=sum(1 for task in inflight if not task.done()),
         )
-        inflight.add(task)
-        task.add_done_callback(inflight.discard)
-
-    await log.ainfo(
-        "worker.shutdown_drain_start",
-        lane=lane.name,
-        inflight=len(inflight),
-        drain_budget_s=settings.drain_budget_s,
-    )
-    if inflight:
-        await asyncio.wait(inflight, timeout=settings.drain_budget_s)
-    await log.ainfo(
-        "worker.shutdown_drain_done",
-        lane=lane.name,
-        inflight=len(inflight),
-    )
 
 
 async def run() -> None:
@@ -332,4 +358,15 @@ async def run() -> None:
         )
         for lane in lanes
     ]
-    await asyncio.gather(*lane_tasks)
+    try:
+        await asyncio.gather(*lane_tasks)
+    except asyncio.CancelledError:
+        _shutdown.set()
+        await _cancel_pending(lane_tasks)
+        raise
+    except Exception:
+        _shutdown.set()
+        await _cancel_pending(lane_tasks)
+        raise
+    finally:
+        await _cancel_pending([shutdown_task])
