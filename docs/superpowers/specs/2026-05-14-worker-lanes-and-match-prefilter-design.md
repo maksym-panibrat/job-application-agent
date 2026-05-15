@@ -46,7 +46,7 @@ job-type allowlist and concurrency cap.
 WORKER_LLM_JOB_TYPES=match,generate-cover-letter
 WORKER_LLM_CONCURRENCY=6
 WORKER_SLOW_JOB_TYPES=fetch-slug,maintenance
-WORKER_SLOW_CONCURRENCY=8
+WORKER_SLOW_CONCURRENCY=20
 ```
 
 Implementation can use asyncio tasks rather than OS threads because the current
@@ -84,7 +84,7 @@ job-search-worker
   WORKER_LLM_JOB_TYPES=match,generate-cover-letter
   WORKER_LLM_CONCURRENCY=6
   WORKER_SLOW_JOB_TYPES=fetch-slug,maintenance
-  WORKER_SLOW_CONCURRENCY=8
+  WORKER_SLOW_CONCURRENCY=20
 ```
 
 The LLM lane owns every job type that can call an LLM:
@@ -102,8 +102,8 @@ observability shows the provider API limit is not being approached. Cover-letter
 generation and match scoring share this same cap so the deployment cannot
 accidentally multiply LLM traffic by scaling separate LLM consumers.
 
-The slow-lane concurrency should start at `8`, matching the existing provider
-fetch concurrency expectation. It can be tuned independently because these jobs
+The slow-lane concurrency should start at `20`, matching the desired provider
+fetch drain capacity. It can be tuned independently because these jobs
 do not call LLM APIs.
 
 The process-level supervisor owns shutdown. On `SIGTERM` or `SIGINT`, it stops
