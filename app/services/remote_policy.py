@@ -149,11 +149,8 @@ US_COUNTRY_PATTERNS = (
     re.compile(r"(?<![A-Za-z0-9])usa(?![A-Za-z0-9])", re.IGNORECASE),
     re.compile(r"(?<![A-Za-z0-9])US(?![A-Za-z0-9])"),
 )
-US_STATE_ABBREVIATION_RE = re.compile(
-    rf"(?<![A-Za-z0-9])(?:{US_STATE_ABBREVIATION_PATTERN})(?![A-Za-z0-9])"
-)
 CITY_STATE_RE = re.compile(
-    rf"\b[A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+){{0,3}},\s*"
+    rf"(?<!,\s)\b[A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+){{0,3}},\s*"
     rf"(?:{US_STATE_ABBREVIATION_PATTERN})(?![A-Za-z0-9])"
 )
 CONTEXTUAL_STATE_ABBREVIATION_RE = re.compile(
@@ -224,12 +221,10 @@ def _matches_target_location(profile: ProfileLike, text: str) -> bool:
 def _has_us_location_signal(job: JobLike) -> bool:
     text = _job_owned_text(job)
     normalized_text = _normalize_text(text)
-    location_text = str(getattr(job, "location", None) or "")
 
     return (
         any(pattern.search(text) is not None for pattern in US_COUNTRY_PATTERNS)
         or any(_contains_token_phrase(normalized_text, state) for state in US_STATE_NAMES)
-        or US_STATE_ABBREVIATION_RE.search(location_text) is not None
         or CITY_STATE_RE.search(text) is not None
         or CONTEXTUAL_STATE_ABBREVIATION_RE.search(text) is not None
     )
