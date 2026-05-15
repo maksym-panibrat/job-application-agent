@@ -15,7 +15,7 @@ draining independently.
 Matching also performs deterministic remote-policy enforcement after the LLM
 score. That still spends LLM capacity on jobs the code can already reject, such
 as roles requiring recurring office attendance outside the user's target
-locations.
+locations or roles that are not explicitly US-based.
 
 ## Goals
 
@@ -23,6 +23,7 @@ locations.
 - Keep total LLM job concurrency bounded to 6-8 concurrent jobs.
 - Allow fetch and maintenance work to drain separately from the LLM backlog.
 - Add deterministic pre-checks before LLM match scoring.
+- Restrict match scoring to jobs that are explicitly US-based.
 - Make deterministic match rejections visible and explicit in the normal
   application review surface.
 - Preserve the existing `work_queue` table, dedupe keys, lease ownership,
@@ -114,7 +115,35 @@ exits. A shutdown must not abandon in-flight jobs differently depending on lane.
 
 Before calling `matching_agent.score_one()` in the `match` handler, load the
 application's related job and profile and run deterministic pre-checks. The
-first pre-check is the existing remote policy:
+first pre-check is a strict US-location allowlist based only on job-owned
+fields:
+
+```text
+job.location
+job.workplace_type
+job.description
+job.description_raw
+```
+
+The handler may call the LLM only when those fields contain an explicit US
+signal, such as `United States`, `USA`, `U.S.`, `US`, a US state name or
+abbreviation, or a recognizable city/state phrase such as `New York, NY`.
+Postings with explicit non-US signals and no US signal are deterministic
+mismatches. Ambiguous remote postings with no US signal are also deterministic
+mismatches; absence of a location signal should not spend LLM budget.
+
+Persisted US-location rejection shape:
+
+```text
+status: auto_rejected, if the application is still pending_review
+match_score: below match_score_threshold
+match_summary: Deterministic mismatch: non-US position
+match_rationale: Position is not US-based
+match_strengths: []
+match_gaps: [Position is not US-based]
+```
+
+The second pre-check is the existing remote policy:
 
 ```text
 evaluate_remote_policy(profile, job)
@@ -203,6 +232,9 @@ Worker lifecycle tests:
 
 Match handler tests:
 
+- A non-US or ambiguous remote job persists a visible `auto_rejected`
+  application with explicit non-US summary, rationale, and gap.
+- A US-based job proceeds to the normal LLM scoring path.
 - A remote-policy hard mismatch persists a visible `auto_rejected` application
   with explicit summary, rationale, and gap.
 - The deterministic mismatch path does not call `matching_agent.score_one()`.

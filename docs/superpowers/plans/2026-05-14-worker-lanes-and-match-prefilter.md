@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Run one physical worker process with separate in-process LLM and slow-lane pools, and skip LLM matching for deterministic hard remote-policy mismatches.
+**Goal:** Run one physical worker process with separate in-process LLM and slow-lane pools, and skip LLM matching for deterministic hard mismatches including non-US jobs and remote-policy failures.
 
-**Architecture:** Keep one `work_queue` table and add filtered claiming by job type. The worker starts either the current single unfiltered pool or two named lane pools from env config. The match handler loads the application, job, and profile, runs `evaluate_remote_policy()` before `matching_agent.score_one()`, and persists visible deterministic rejections.
+**Architecture:** Keep one `work_queue` table and add filtered claiming by job type. The worker starts either the current single unfiltered pool or two named lane pools from env config. The match handler loads the application, job, and profile, rejects jobs that are not explicitly US-based using only job-owned fields, then runs `evaluate_remote_policy()` before `matching_agent.score_one()`, and persists visible deterministic rejections.
 
 **Tech Stack:** Python 3.12, FastAPI app code, SQLModel/SQLAlchemy async sessions, Postgres `FOR UPDATE SKIP LOCKED`, pytest, pytest-asyncio.
 
@@ -17,7 +17,7 @@
 - Modify `app/worker/config.py`: add lane env vars and parsing helpers to `WorkerSettings`.
 - Modify `app/worker/main.py`: introduce lane pool orchestration inside one process and pass lane allowlists to `claim_one()`.
 - Modify `tests/integration/test_worker_lifecycle.py`: prove one process runs independent LLM and slow pools.
-- Modify `app/worker/handlers/match.py`: add deterministic pre-LLM remote-policy rejection.
+- Modify `app/worker/handlers/match.py`: add deterministic pre-LLM non-US and remote-policy rejection.
 - Modify `tests/integration/test_handler_match.py`: prove visible deterministic rejection and no LLM call.
 - Optional docs check only: `docs/superpowers/specs/2026-05-14-worker-lanes-and-match-prefilter-design.md` already defines the behavior and should not need implementation edits.
 
@@ -685,8 +685,21 @@ git commit -m "feat(worker): run independent in-process lanes"
 ## Task 4: Deterministic Match Prefilter
 
 **Files:**
+- Modify: `app/services/remote_policy.py`
 - Modify: `app/worker/handlers/match.py`
+- Test: `tests/unit/test_remote_policy.py`
 - Test: `tests/integration/test_handler_match.py`
+
+**Approved amendment:** The deterministic prefilter also enforces strict
+US-only job matching before the LLM call. Use only job-owned fields
+(`location`, `workplace_type`, `description`, `description_raw`) for this rule.
+Allow the LLM path only when those fields contain an explicit US signal such as
+`United States`, `USA`, `U.S.`, `US`, a US state name or abbreviation, or a
+recognizable city/state phrase such as `New York, NY`. Reject explicit non-US
+postings with no US signal. Reject ambiguous remote postings with no US signal.
+Persist the visible rejection with summary
+`Deterministic mismatch: non-US position` and gap/rationale
+`Position is not US-based`; preserve user-owned statuses.
 
 - [ ] **Step 1: Extend the match handler seed helper**
 
