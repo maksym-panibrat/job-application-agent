@@ -277,17 +277,11 @@ def _matches_target_location(profile: ProfileLike, text: str) -> bool:
 
 def _has_us_location_signal(job: JobLike) -> bool:
     text = _job_owned_text(job)
-    normalized_text = _normalize_text(text)
 
     if _has_exclusionary_us_location_signal(text):
         return False
 
-    return (
-        any(pattern.search(text) is not None for pattern in US_COUNTRY_PATTERNS)
-        or any(_contains_token_phrase(normalized_text, state) for state in US_STATE_NAMES)
-        or CITY_STATE_RE.search(text) is not None
-        or CONTEXTUAL_STATE_ABBREVIATION_RE.search(text) is not None
-    )
+    return _has_positive_us_location_signal(text)
 
 
 def _has_overriding_non_us_location_signal(job: JobLike) -> bool:
@@ -296,14 +290,40 @@ def _has_overriding_non_us_location_signal(job: JobLike) -> bool:
         return False
 
     location_text = str(location)
-    if any(pattern.search(location_text) for pattern in US_COUNTRY_PATTERNS):
-        return False
-
     normalized_location = _normalize_text(location_text)
-    return any(
+    if any(
         _contains_token_phrase(normalized_location, token)
         for token in NON_US_LOCATION_TOKENS
+    ):
+        return True
+
+    if _has_positive_us_location_signal(location_text):
+        return False
+
+    return not _is_ambiguous_location_text(normalized_location)
+
+
+def _has_positive_us_location_signal(text: str) -> bool:
+    normalized_text = _normalize_text(text)
+    return (
+        any(pattern.search(text) is not None for pattern in US_COUNTRY_PATTERNS)
+        or any(_contains_token_phrase(normalized_text, state) for state in US_STATE_NAMES)
+        or CITY_STATE_RE.search(text) is not None
+        or CONTEXTUAL_STATE_ABBREVIATION_RE.search(text) is not None
     )
+
+
+def _is_ambiguous_location_text(normalized_location: str) -> bool:
+    if not normalized_location:
+        return True
+    return normalized_location in {
+        "remote",
+        "remote anywhere",
+        "anywhere",
+        "worldwide",
+        "global",
+        "distributed",
+    }
 
 
 def _has_exclusionary_us_location_signal(text: str) -> bool:
