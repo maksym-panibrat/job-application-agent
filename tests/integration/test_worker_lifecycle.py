@@ -225,3 +225,96 @@ async def test_mark_done_failure_releases_row_for_replay(db_session, monkeypatch
     assert row[1] is None
     assert row[2] is None
     assert row[3] is not None
+
+
+@pytest.mark.asyncio
+async def test_worker_lanes_process_allowed_job_types(db_session, monkeypatch):
+    from app.worker.handlers import HANDLERS
+
+    calls: list[str] = []
+
+    class Record:
+        max_attempts = 3
+
+        def __init__(self, name: str) -> None:
+            self.name = name
+
+        async def __call__(self, session, row):
+            calls.append(self.name)
+
+    monkeypatch.setenv("WORKER_LLM_JOB_TYPES", "test-llm")
+    monkeypatch.setenv("WORKER_LLM_CONCURRENCY", "1")
+    monkeypatch.setenv("WORKER_SLOW_JOB_TYPES", "test-slow")
+    monkeypatch.setenv("WORKER_SLOW_CONCURRENCY", "1")
+    monkeypatch.setitem(HANDLERS, "test-llm", Record("llm"))
+    monkeypatch.setitem(HANDLERS, "test-slow", Record("slow"))
+
+    await enqueue(db_session, job_type="test-llm", payload={})
+    await enqueue(db_session, job_type="test-slow", payload={})
+    await db_session.commit()
+
+    async def stop_soon():
+        while len(calls) < 2:
+            await asyncio.sleep(0.05)
+        worker_main._shutdown.set()
+
+    await asyncio.gather(worker_main.run(), stop_soon())
+
+    assert sorted(calls) == ["llm", "slow"]
+
+
+@pytest.mark.asyncio
+async def test_slow_lane_drains_while_llm_lane_is_saturated(db_session, monkeypatch):
+    started_llm = asyncio.Event()
+    release_llm = asyncio.Event()
+    slow_done = asyncio.Event()
+    from app.worker.handlers import HANDLERS
+
+    class SlowLlm:
+        max_attempts = 3
+
+        async def __call__(self, session, row):
+            started_llm.set()
+            await release_llm.wait()
+
+    class FastSlow:
+        max_attempts = 3
+
+        async def __call__(self, session, row):
+            slow_done.set()
+
+    monkeypatch.setenv("WORKER_LLM_JOB_TYPES", "test-llm-blocking")
+    monkeypatch.setenv("WORKER_LLM_CONCURRENCY", "1")
+    monkeypatch.setenv("WORKER_SLOW_JOB_TYPES", "test-slow-fast")
+    monkeypatch.setenv("WORKER_SLOW_CONCURRENCY", "1")
+    monkeypatch.setitem(HANDLERS, "test-llm-blocking", SlowLlm())
+    monkeypatch.setitem(HANDLERS, "test-slow-fast", FastSlow())
+
+    await enqueue(db_session, job_type="test-llm-blocking", payload={})
+    await enqueue(db_session, job_type="test-slow-fast", payload={})
+    await db_session.commit()
+
+    async def stop_after_slow_done():
+        await started_llm.wait()
+        await asyncio.wait_for(slow_done.wait(), timeout=2)
+        release_llm.set()
+        worker_main._shutdown.set()
+
+    await asyncio.gather(worker_main.run(), stop_after_slow_done())
+
+    statuses = (
+        await db_session.execute(
+            text(
+                """
+                SELECT job_type, status
+                FROM work_queue
+                WHERE job_type IN ('test-llm-blocking', 'test-slow-fast')
+                ORDER BY job_type
+                """
+            )
+        )
+    ).all()
+    assert statuses == [
+        ("test-llm-blocking", "done"),
+        ("test-slow-fast", "done"),
+    ]
