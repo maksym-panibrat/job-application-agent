@@ -1,20 +1,28 @@
-def test_worker_config_defaults(monkeypatch):
-    for key in (
-        "WORKER_CONCURRENCY",
-        "WORKER_POLL_INTERVAL_S",
-        "WORKER_VISIBILITY_TIMEOUT_S",
-        "WORKER_DRAIN_BUDGET_S",
-        "WORKER_TRANSIENT_BACKOFF_BASE_S",
-        "WORKER_TRANSIENT_BACKOFF_MAX_S",
-        "WORKER_UNKNOWN_TYPE_BACKOFF_S",
-        "WORKER_MARK_DONE_RETRY_BACKOFF_S",
-        "WORKER_LLM_JOB_TYPES",
-        "WORKER_LLM_CONCURRENCY",
-        "WORKER_SLOW_JOB_TYPES",
-        "WORKER_SLOW_CONCURRENCY",
-    ):
+import pytest
+
+WORKER_ENV_VARS = (
+    "WORKER_CONCURRENCY",
+    "WORKER_POLL_INTERVAL_S",
+    "WORKER_VISIBILITY_TIMEOUT_S",
+    "WORKER_DRAIN_BUDGET_S",
+    "WORKER_TRANSIENT_BACKOFF_BASE_S",
+    "WORKER_TRANSIENT_BACKOFF_MAX_S",
+    "WORKER_UNKNOWN_TYPE_BACKOFF_S",
+    "WORKER_MARK_DONE_RETRY_BACKOFF_S",
+    "WORKER_LLM_JOB_TYPES",
+    "WORKER_LLM_CONCURRENCY",
+    "WORKER_SLOW_JOB_TYPES",
+    "WORKER_SLOW_CONCURRENCY",
+)
+
+
+@pytest.fixture(autouse=True)
+def clear_worker_env(monkeypatch):
+    for key in WORKER_ENV_VARS:
         monkeypatch.delenv(key, raising=False)
 
+
+def test_worker_config_defaults():
     from app.worker.config import WorkerSettings
 
     settings = WorkerSettings()
@@ -30,10 +38,7 @@ def test_worker_config_defaults(monkeypatch):
     assert settings.slow_concurrency == 20
 
 
-def test_worker_settings_default_single_pool(monkeypatch):
-    monkeypatch.delenv("WORKER_LLM_JOB_TYPES", raising=False)
-    monkeypatch.delenv("WORKER_SLOW_JOB_TYPES", raising=False)
-
+def test_worker_settings_default_single_pool():
     from app.worker.config import WorkerLane, WorkerSettings
 
     settings = WorkerSettings()
