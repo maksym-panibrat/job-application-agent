@@ -1,3 +1,5 @@
+import os
+
 import pytest
 
 WORKER_ENV_VARS = (
@@ -18,8 +20,13 @@ WORKER_ENV_VARS = (
 
 @pytest.fixture(autouse=True)
 def clear_worker_env(monkeypatch):
+    _clear_worker_env(monkeypatch)
+
+
+def _clear_worker_env(monkeypatch):
     for key in WORKER_ENV_VARS:
         monkeypatch.delenv(key, raising=False)
+        monkeypatch.delenv(key.lower(), raising=False)
 
 
 def test_worker_config_defaults():
@@ -86,3 +93,13 @@ def test_worker_settings_blank_lane_envs_fall_back_to_default(monkeypatch):
     assert settings.lane_configs() == [
         WorkerLane(name="default", job_types=None, concurrency=settings.concurrency)
     ]
+
+
+def test_clear_worker_env_removes_lowercase_variants(monkeypatch):
+    monkeypatch.setenv("worker_llm_job_types", "match")
+    monkeypatch.setenv("worker_concurrency", "99")
+
+    _clear_worker_env(monkeypatch)
+
+    assert "worker_llm_job_types" not in os.environ
+    assert "worker_concurrency" not in os.environ
