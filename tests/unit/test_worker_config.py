@@ -8,6 +8,10 @@ def test_worker_config_defaults(monkeypatch):
         "WORKER_TRANSIENT_BACKOFF_MAX_S",
         "WORKER_UNKNOWN_TYPE_BACKOFF_S",
         "WORKER_MARK_DONE_RETRY_BACKOFF_S",
+        "WORKER_LLM_JOB_TYPES",
+        "WORKER_LLM_CONCURRENCY",
+        "WORKER_SLOW_JOB_TYPES",
+        "WORKER_SLOW_CONCURRENCY",
     ):
         monkeypatch.delenv(key, raising=False)
 
@@ -22,3 +26,58 @@ def test_worker_config_defaults(monkeypatch):
     assert settings.transient_backoff_max_s == 300
     assert settings.unknown_type_backoff_s == 300
     assert settings.mark_done_retry_backoff_s == 60
+    assert settings.llm_concurrency == 6
+    assert settings.slow_concurrency == 20
+
+
+def test_worker_settings_default_single_pool(monkeypatch):
+    monkeypatch.delenv("WORKER_LLM_JOB_TYPES", raising=False)
+    monkeypatch.delenv("WORKER_SLOW_JOB_TYPES", raising=False)
+
+    from app.worker.config import WorkerLane, WorkerSettings
+
+    settings = WorkerSettings()
+
+    assert settings.lanes_enabled is False
+    assert settings.lane_configs() == [
+        WorkerLane(name="default", job_types=None, concurrency=settings.concurrency)
+    ]
+
+
+def test_worker_settings_parses_lane_job_types(monkeypatch):
+    monkeypatch.setenv("WORKER_LLM_JOB_TYPES", " match, generate-cover-letter,match ")
+    monkeypatch.setenv("WORKER_LLM_CONCURRENCY", "6")
+    monkeypatch.setenv("WORKER_SLOW_JOB_TYPES", "fetch-slug, maintenance")
+    monkeypatch.setenv("WORKER_SLOW_CONCURRENCY", "20")
+
+    from app.worker.config import WorkerLane, WorkerSettings
+
+    settings = WorkerSettings()
+
+    assert settings.lanes_enabled is True
+    assert settings.lane_configs() == [
+        WorkerLane(
+            name="llm",
+            job_types=("match", "generate-cover-letter"),
+            concurrency=6,
+        ),
+        WorkerLane(
+            name="slow",
+            job_types=("fetch-slug", "maintenance"),
+            concurrency=20,
+        ),
+    ]
+
+
+def test_worker_settings_blank_lane_envs_fall_back_to_default(monkeypatch):
+    monkeypatch.setenv("WORKER_LLM_JOB_TYPES", " , ")
+    monkeypatch.setenv("WORKER_SLOW_JOB_TYPES", "")
+
+    from app.worker.config import WorkerLane, WorkerSettings
+
+    settings = WorkerSettings()
+
+    assert settings.lanes_enabled is True
+    assert settings.lane_configs() == [
+        WorkerLane(name="default", job_types=None, concurrency=settings.concurrency)
+    ]
