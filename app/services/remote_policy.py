@@ -159,6 +159,27 @@ NON_US_LOCATION_TOKENS = (
     "europe",
     "european union",
 )
+NON_US_LOCATION_TOKEN_PATTERN = "|".join(
+    re.escape(token) for token in sorted(NON_US_LOCATION_TOKENS, key=len, reverse=True)
+)
+CONTEXTUAL_NON_US_LOCATION_PATTERNS = (
+    re.compile(
+        rf"\b(?:based\s+in|located\s+in)\b.{{0,80}}"
+        rf"(?<![A-Za-z0-9])(?:{NON_US_LOCATION_TOKEN_PATTERN})(?![A-Za-z0-9])",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        rf"\b(?:remote|work(?:ing)?|hire|hiring|eligible|open)\b.{{0,40}}"
+        rf"\bfrom\b.{{0,40}}"
+        rf"(?<![A-Za-z0-9])(?:{NON_US_LOCATION_TOKEN_PATTERN})(?![A-Za-z0-9])",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        rf"\b(?:candidates?|applicants?|employees?|workers?)\s+from\b.{{0,40}}"
+        rf"(?<![A-Za-z0-9])(?:{NON_US_LOCATION_TOKEN_PATTERN})(?![A-Za-z0-9])",
+        re.IGNORECASE,
+    ),
+)
 CITY_STATE_RE = re.compile(
     rf"(?<!,\s)\b[A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+){{0,3}},\s*"
     rf"(?:{US_STATE_ABBREVIATION_PATTERN})(?![A-Za-z0-9])"
@@ -288,7 +309,7 @@ def _has_us_location_signal(job: JobLike) -> bool:
 def _has_overriding_non_us_location_signal(job: JobLike) -> bool:
     location = getattr(job, "location", None)
     if not location:
-        return False
+        return _has_contextual_non_us_description_location_signal(job)
 
     location_text = str(location)
     normalized_location = _normalize_text(location_text)
@@ -301,7 +322,17 @@ def _has_overriding_non_us_location_signal(job: JobLike) -> bool:
     if _has_positive_us_location_signal(location_text):
         return False
 
-    return not _is_ambiguous_location_text(normalized_location)
+    return not _is_ambiguous_location_text(
+        normalized_location
+    ) or _has_contextual_non_us_description_location_signal(job)
+
+
+def _has_contextual_non_us_description_location_signal(job: JobLike) -> bool:
+    description_text = _job_description_text(job)
+    return any(
+        pattern.search(description_text) is not None
+        for pattern in CONTEXTUAL_NON_US_LOCATION_PATTERNS
+    )
 
 
 def _has_positive_us_location_signal(text: str) -> bool:
