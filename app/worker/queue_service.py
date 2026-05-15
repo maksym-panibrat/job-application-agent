@@ -107,7 +107,15 @@ async def claim_one(
                     AND (claimed_by IS NULL OR claimed_by <> :worker_id)
                   )
                 )
-              ORDER BY enqueued_at ASC
+              ORDER BY
+                CASE job_type
+                  WHEN 'generate-cover-letter' THEN 0
+                  WHEN 'fetch-slug' THEN 1
+                  WHEN 'maintenance' THEN 2
+                  WHEN 'match' THEN 3
+                  ELSE 4
+                END ASC,
+                enqueued_at ASC
               FOR UPDATE SKIP LOCKED
               LIMIT 1
             )

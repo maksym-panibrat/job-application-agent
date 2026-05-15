@@ -111,6 +111,34 @@ async def test_claim_one_picks_oldest_pending_row(db_session):
 
 
 @pytest.mark.asyncio
+async def test_claim_one_prioritizes_fetch_slug_ahead_of_older_match_backlog(db_session):
+    older_match = await enqueue(
+        db_session,
+        job_type="match",
+        payload={"application_id": "older"},
+        dedupe_key="match:older",
+    )
+    newer_fetch = await enqueue(
+        db_session,
+        job_type="fetch-slug",
+        payload={"provider": "greenhouse", "slug": "openai"},
+        dedupe_key="fetch-slug:greenhouse:openai",
+    )
+    await db_session.execute(
+        text("UPDATE work_queue SET enqueued_at = now() - interval '1 hour' WHERE id = :id"),
+        {"id": older_match},
+    )
+    await db_session.commit()
+
+    claimed = await claim_one(db_session, worker_id="w1", visibility_timeout_s=600)
+    await db_session.commit()
+
+    assert claimed is not None
+    assert claimed.id == newer_fetch
+    assert claimed.job_type == "fetch-slug"
+
+
+@pytest.mark.asyncio
 async def test_claim_one_empty_returns_none(db_session):
     claimed = await claim_one(db_session, worker_id="w1", visibility_timeout_s=600)
 
