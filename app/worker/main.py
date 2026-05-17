@@ -11,7 +11,7 @@ import uuid
 import structlog
 
 from app.database import get_session_factory
-from app.worker.config import WorkerSettings
+from app.worker.config import WorkerLane, WorkerSettings
 from app.worker.handlers import (  # noqa: F401
     HANDLERS,
     TransientError,
@@ -78,7 +78,21 @@ async def _release_for_retry(session_factory, job_row, seconds: int) -> None:
         await session.commit()
 
 
-async def _handle_one(job_row, session_factory, settings: WorkerSettings) -> None:
+async def _cancel_pending(tasks: set[asyncio.Task] | list[asyncio.Task]) -> None:
+    pending = [task for task in tasks if not task.done()]
+    for task in pending:
+        task.cancel()
+    if pending:
+        await asyncio.gather(*pending, return_exceptions=True)
+
+
+async def _handle_one(
+    job_row,
+    session_factory,
+    settings: WorkerSettings,
+    *,
+    lane: str,
+) -> None:
     handler = HANDLERS.get(job_row.job_type)
     if handler is None:
         async with session_factory() as session:
@@ -91,6 +105,7 @@ async def _handle_one(job_row, session_factory, settings: WorkerSettings) -> Non
             await session.commit()
         await log.awarning(
             "worker.unknown_job_type",
+            lane=lane,
             job_id=job_row.id,
             job_type=job_row.job_type,
         )
@@ -107,6 +122,7 @@ async def _handle_one(job_row, session_factory, settings: WorkerSettings) -> Non
         except Exception:
             await log.aexception(
                 "worker.terminal_failure_hook_retry",
+                lane=lane,
                 job_id=job_row.id,
                 job_type=job_row.job_type,
             )
@@ -121,6 +137,7 @@ async def _handle_one(job_row, session_factory, settings: WorkerSettings) -> Non
         else:
             await log.aerror(
                 "worker.handler_max_attempts",
+                lane=lane,
                 job_id=job_row.id,
                 job_type=job_row.job_type,
                 attempts=job_row.attempts,
@@ -145,6 +162,7 @@ async def _handle_one(job_row, session_factory, settings: WorkerSettings) -> Non
             await session.commit()
         await log.awarning(
             "worker.transient_failure",
+            lane=lane,
             job_id=job_row.id,
             job_type=job_row.job_type,
             error=str(exc),
@@ -157,6 +175,7 @@ async def _handle_one(job_row, session_factory, settings: WorkerSettings) -> Non
         except Exception:
             await log.aexception(
                 "worker.terminal_failure_hook_retry",
+                lane=lane,
                 job_id=job_row.id,
                 job_type=job_row.job_type,
             )
@@ -171,6 +190,7 @@ async def _handle_one(job_row, session_factory, settings: WorkerSettings) -> Non
         else:
             await log.aexception(
                 "worker.job_failed",
+                lane=lane,
                 job_id=job_row.id,
                 job_type=job_row.job_type,
             )
@@ -185,6 +205,7 @@ async def _handle_one(job_row, session_factory, settings: WorkerSettings) -> Non
     except Exception:
         await log.aexception(
             "worker.mark_done_failed",
+            lane=lane,
             job_id=job_row.id,
             job_type=job_row.job_type,
         )
@@ -197,6 +218,7 @@ async def _handle_one(job_row, session_factory, settings: WorkerSettings) -> Non
         except Exception:
             await log.aexception(
                 "worker.mark_done_release_failed",
+                lane=lane,
                 job_id=job_row.id,
                 job_type=job_row.job_type,
             )
@@ -204,6 +226,7 @@ async def _handle_one(job_row, session_factory, settings: WorkerSettings) -> Non
     else:
         await log.ainfo(
             "worker.job_done",
+            lane=lane,
             job_id=job_row.id,
             job_type=job_row.job_type,
             worker_id=_worker_id,
@@ -211,8 +234,92 @@ async def _handle_one(job_row, session_factory, settings: WorkerSettings) -> Non
         )
 
 
+async def _run_lane(
+    lane: WorkerLane,
+    *,
+    settings: WorkerSettings,
+    session_factory,
+    shutdown_task: asyncio.Task,
+) -> None:
+    inflight: set[asyncio.Task] = set()
+    cancelled = False
+
+    try:
+        while not _shutdown.is_set():
+            if len(inflight) >= lane.concurrency:
+                await asyncio.wait(
+                    inflight | {shutdown_task},
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                continue
+
+            async with session_factory() as session:
+                job = await claim_one(
+                    session,
+                    worker_id=_worker_id,
+                    visibility_timeout_s=settings.visibility_timeout_s,
+                    job_types=lane.job_types,
+                )
+                await session.commit()
+
+            if job is None:
+                try:
+                    await asyncio.wait_for(
+                        asyncio.shield(shutdown_task),
+                        timeout=settings.poll_interval_s,
+                    )
+                except TimeoutError:
+                    pass
+                continue
+
+            await log.ainfo(
+                "worker.job_start",
+                lane=lane.name,
+                job_id=job.id,
+                job_type=job.job_type,
+                attempts=job.attempts,
+                worker_id=_worker_id,
+            )
+            task = asyncio.create_task(
+                _handle_one(job, session_factory, settings, lane=lane.name)
+            )
+            inflight.add(task)
+            task.add_done_callback(inflight.discard)
+    except asyncio.CancelledError:
+        cancelled = True
+        raise
+    finally:
+        await log.ainfo(
+            "worker.shutdown_drain_start",
+            lane=lane.name,
+            inflight=len(inflight),
+            drain_budget_s=settings.drain_budget_s,
+        )
+        if cancelled:
+            await _cancel_pending(inflight)
+        elif inflight:
+            _, pending = await asyncio.wait(
+                inflight,
+                timeout=settings.drain_budget_s,
+            )
+            if pending:
+                await log.awarning(
+                    "worker.shutdown_drain_timeout",
+                    lane=lane.name,
+                    pending=len(pending),
+                    drain_budget_s=settings.drain_budget_s,
+                )
+                await _cancel_pending(list(pending))
+        await log.ainfo(
+            "worker.shutdown_drain_done",
+            lane=lane.name,
+            inflight=sum(1 for task in inflight if not task.done()),
+        )
+
+
 async def run() -> None:
     settings = WorkerSettings()
+    lanes = settings.lane_configs()
     _shutdown.clear()
     try:
         loop = asyncio.get_running_loop()
@@ -221,7 +328,6 @@ async def run() -> None:
     except (NotImplementedError, RuntimeError, ValueError):
         pass
 
-    inflight: set[asyncio.Task] = set()
     shutdown_task = asyncio.create_task(_shutdown.wait(), name="shutdown-waiter")
     factory = get_session_factory()
 
@@ -229,51 +335,38 @@ async def run() -> None:
         "worker.started",
         worker_id=_worker_id,
         concurrency=settings.concurrency,
+        lanes=[
+            {
+                "name": lane.name,
+                "concurrency": lane.concurrency,
+                "job_types": lane.job_types,
+            }
+            for lane in lanes
+        ],
         visibility_timeout_s=settings.visibility_timeout_s,
     )
 
-    while not _shutdown.is_set():
-        if len(inflight) >= settings.concurrency:
-            await asyncio.wait(
-                inflight | {shutdown_task},
-                return_when=asyncio.FIRST_COMPLETED,
-            )
-            continue
-
-        async with factory() as session:
-            job = await claim_one(
-                session,
-                worker_id=_worker_id,
-                visibility_timeout_s=settings.visibility_timeout_s,
-            )
-            await session.commit()
-
-        if job is None:
-            try:
-                await asyncio.wait_for(
-                    asyncio.shield(shutdown_task),
-                    timeout=settings.poll_interval_s,
-                )
-            except TimeoutError:
-                pass
-            continue
-
-        await log.ainfo(
-            "worker.job_start",
-            job_id=job.id,
-            job_type=job.job_type,
-            attempts=job.attempts,
-            worker_id=_worker_id,
+    lane_tasks = [
+        asyncio.create_task(
+            _run_lane(
+                lane,
+                settings=settings,
+                session_factory=factory,
+                shutdown_task=shutdown_task,
+            ),
+            name=f"worker-lane-{lane.name}",
         )
-        task = asyncio.create_task(_handle_one(job, factory, settings))
-        inflight.add(task)
-        task.add_done_callback(inflight.discard)
-
-    await log.ainfo(
-        "worker.shutdown_drain_start",
-        inflight=len(inflight),
-        drain_budget_s=settings.drain_budget_s,
-    )
-    if inflight:
-        await asyncio.wait(inflight, timeout=settings.drain_budget_s)
-    await log.ainfo("worker.shutdown_drain_done", inflight=len(inflight))
+        for lane in lanes
+    ]
+    try:
+        await asyncio.gather(*lane_tasks)
+    except asyncio.CancelledError:
+        _shutdown.set()
+        await _cancel_pending(lane_tasks)
+        raise
+    except Exception:
+        _shutdown.set()
+        await _cancel_pending(lane_tasks)
+        raise
+    finally:
+        await _cancel_pending([shutdown_task])
