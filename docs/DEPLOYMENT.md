@@ -48,8 +48,7 @@ infra repo procedures.
 The public API avoids long-running LLM/fetch work:
 
 - `POST /api/jobs/sync` returns `202`, prunes invalid followed companies,
-  enqueues stale provider slugs, and synchronously scores only cached jobs for
-  quick UI feedback.
+  and enqueues stale provider slugs. Fetching and matching run in workers.
 - `POST /api/applications/{id}/cover-letter` returns `202`, flips the
   application to `pending`, and enqueues `generate-cover-letter`.
 - Clients poll `GET /api/applications/{id}/cover-letter/status` while the

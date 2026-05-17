@@ -2,6 +2,7 @@
 
 import uuid
 from datetime import UTC, datetime
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from sqlmodel import select
@@ -70,8 +71,7 @@ async def test_mark_stale_jobs(db_session):
 
 @pytest.mark.asyncio
 async def test_sync_profile_returns_202_shape_and_enqueues_stale_slugs(db_session):
-    """The new contract: sync_profile is enqueue-only + score-cached, returns
-    {status:'queued', queued_slugs:[...], matched_now:int}, never blocks on fetch."""
+    """sync_profile enqueues work and never performs synchronous scoring."""
     from app.models.company import Company
     from app.models.user import User
     from app.services.profile_service import get_or_create_profile
@@ -98,11 +98,16 @@ async def test_sync_profile_returns_202_shape_and_enqueues_stale_slugs(db_sessio
     await db_session.commit()
     await db_session.refresh(profile)
 
-    result = await job_sync_service.sync_profile(profile, db_session)
+    with patch(
+        "app.services.match_service.score_cached",
+        AsyncMock(return_value=[]),
+    ) as mock_score_cached:
+        result = await job_sync_service.sync_profile(profile, db_session)
 
     assert result["status"] == "queued"
     assert sorted(result["queued_slugs"]) == ["airbnb", "stripe"]
-    assert result["matched_now"] == 0  # no cached jobs yet
+    assert result["matched_now"] == 0
+    mock_score_cached.assert_not_called()
 
 
 @pytest.mark.asyncio

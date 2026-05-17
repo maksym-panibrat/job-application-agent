@@ -332,7 +332,8 @@ async def score_cached(
     cap: int | None = None,
 ) -> list[Application]:
     """Variant of score_and_match that scores at most `cap` already-cached jobs.
-    No fetches, no slug-pool growth. Used by the instant-feedback path of POST /api/jobs/sync."""
+    No fetches, no slug-pool growth. Kept for explicit callers; POST /api/jobs/sync
+    relies on background workers instead."""
     from app.config import get_settings
 
     settings = get_settings()

@@ -34,8 +34,8 @@ async def trigger_sync(
     session: AsyncSession = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ):
-    """Manual user-initiated sync: enqueues stale slugs + scores cached jobs.
-    Returns 202 immediately. Background fetch + match catches up via cron."""
+    """Manual user-initiated sync: enqueues stale slugs.
+    Returns 202 immediately. Background fetch + match catches up via workers."""
     if settings.environment == "production":
         await check_daily_quota(profile.user_id, "manual_sync", MANUAL_SYNC_DAILY_LIMIT, session)
     result = await job_sync_service.sync_profile(profile, session)

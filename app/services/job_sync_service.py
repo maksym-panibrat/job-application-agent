@@ -9,10 +9,8 @@ Two contracts here, by design (#80):
 
   sync_profile(profile, session)
     User-triggered HTTP path (POST /api/jobs/sync). Calls prune_and_enqueue
-    then synchronously scores up to `matching_jobs_per_batch` already-cached
-    jobs for instant UI feedback. Cron MUST NOT call this — Cloud Run's 300s
-    wall + N-profile fan-out blew up the synchronous scoring path (#70 /
-    commit 191df6a regression / fixed by #71).
+    only. Matching is handled by the always-on worker so the deterministic
+    pre-LLM filters are applied consistently.
 
 The actual fetch and matching happen in the always-on worker.
 """
@@ -24,11 +22,10 @@ from sqlalchemy import and_, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
-from app.config import get_settings
 from app.models.company import Company
 from app.models.slug_fetch import SlugFetch
 from app.models.user_profile import UserProfile
-from app.services import match_service, slug_registry_service
+from app.services import slug_registry_service
 from app.worker.payloads import FetchSlugPayload
 from app.worker.queue_service import enqueue
 
@@ -118,20 +115,11 @@ async def prune_and_enqueue(profile: UserProfile, session: AsyncSession) -> dict
 
 
 async def sync_profile(profile: UserProfile, session: AsyncSession) -> dict:
-    """User-triggered HTTP path: prune + enqueue, then synchronously LLM-score
-    up to N cached jobs for instant UI feedback. Cron MUST NOT call this — see
-    module docstring."""
-    settings = get_settings()
-    summary = await prune_and_enqueue(profile, session)
-    matched = await match_service.score_cached(
-        profile, session, cap=settings.matching_jobs_per_batch
-    )
-    if matched:
-        summary["matched_now"] = len(matched)
-        profile.last_sync_summary = summary
-        session.add(profile)
-        await session.commit()
+    """User-triggered HTTP path: prune + enqueue only.
 
+    The worker drains fetch and match work after the 202 response.
+    """
+    summary = await prune_and_enqueue(profile, session)
     await log.ainfo(
         "sync.queued",
         profile_id=str(profile.id),
