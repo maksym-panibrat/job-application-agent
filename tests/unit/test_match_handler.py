@@ -5,6 +5,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from app.models.application import Application
+from app.models.job import Job
+from app.models.user_profile import UserProfile
 from app.models.work_queue import WorkQueue, WorkQueueStatus
 from app.worker.handlers import TransientError
 from app.worker.handlers.match import MatchHandler
@@ -37,6 +39,32 @@ def _session_for_app(app: Application) -> AsyncMock:
     execute_result = MagicMock()
     execute_result.scalar_one_or_none.return_value = app
     session.execute.return_value = execute_result
+    job = Job(
+        id=app.job_id,
+        source="test",
+        external_id=str(app.job_id),
+        title="Software Engineer",
+        company_name="Example",
+        location="Remote, United States",
+        workplace_type="remote",
+        description="Remote role open to US candidates.",
+        apply_url="https://example.test/apply",
+    )
+    profile = UserProfile(
+        id=app.profile_id,
+        user_id=uuid.uuid4(),
+        target_locations=["Remote"],
+        remote_ok=True,
+    )
+
+    async def get(model: type, id_: uuid.UUID):
+        if model is Job and id_ == app.job_id:
+            return job
+        if model is UserProfile and id_ == app.profile_id:
+            return profile
+        return None
+
+    session.get.side_effect = get
     session.add = MagicMock()
     return session
 
