@@ -7,6 +7,11 @@ from app.worker import main as worker_main
 from app.worker.queue_service import enqueue
 
 
+def _disable_default_lanes(monkeypatch) -> None:
+    monkeypatch.setenv("WORKER_LLM_JOB_TYPES", "")
+    monkeypatch.setenv("WORKER_SLOW_JOB_TYPES", "")
+
+
 def test_main_imports_register_all_four_handlers():
     from app.worker.handlers import HANDLERS
 
@@ -21,6 +26,8 @@ def test_main_imports_register_all_four_handlers():
 @pytest.mark.asyncio
 async def test_worker_processes_pending(db_session, monkeypatch):
     from app.worker.handlers import HANDLERS
+
+    _disable_default_lanes(monkeypatch)
 
     class Noop:
         max_attempts = 3
@@ -56,6 +63,8 @@ async def test_worker_processes_pending(db_session, monkeypatch):
 @pytest.mark.asyncio
 async def test_worker_short_circuits_when_attempts_over_cap(db_session, monkeypatch):
     from app.worker.handlers import HANDLERS
+
+    _disable_default_lanes(monkeypatch)
 
     class Capped:
         max_attempts = 2
@@ -97,6 +106,8 @@ async def test_worker_short_circuits_when_attempts_over_cap(db_session, monkeypa
 async def test_worker_runs_terminal_hook_on_generic_exception(db_session, monkeypatch):
     from app.worker.handlers import HANDLERS
 
+    _disable_default_lanes(monkeypatch)
+
     class Bomb:
         max_attempts = 3
         terminal_hook_called = False
@@ -128,7 +139,9 @@ async def test_worker_runs_terminal_hook_on_generic_exception(db_session, monkey
 
 
 @pytest.mark.asyncio
-async def test_worker_releases_unknown_job_type_with_backoff(db_session):
+async def test_worker_releases_unknown_job_type_with_backoff(db_session, monkeypatch):
+    _disable_default_lanes(monkeypatch)
+
     await enqueue(db_session, job_type="future-unknown-type", payload={})
     await db_session.commit()
 
@@ -156,6 +169,8 @@ async def test_worker_drains_in_flight_on_shutdown(db_session, monkeypatch):
     started = asyncio.Event()
     finished = asyncio.Event()
     from app.worker.handlers import HANDLERS
+
+    _disable_default_lanes(monkeypatch)
 
     class Slow:
         max_attempts = 3
@@ -189,6 +204,8 @@ async def test_worker_drains_in_flight_on_shutdown(db_session, monkeypatch):
 async def test_mark_done_failure_releases_row_for_replay(db_session, monkeypatch):
     from app.worker import queue_service
     from app.worker.handlers import HANDLERS
+
+    _disable_default_lanes(monkeypatch)
 
     class Succeed:
         max_attempts = 3
@@ -228,7 +245,7 @@ async def test_mark_done_failure_releases_row_for_replay(db_session, monkeypatch
 
 
 @pytest.mark.asyncio
-async def test_worker_lanes_process_allowed_job_types(db_session, monkeypatch):
+async def test_worker_lanes_process_default_job_types(db_session, monkeypatch):
     from app.worker.handlers import HANDLERS
 
     calls: list[str] = []
@@ -244,12 +261,10 @@ async def test_worker_lanes_process_allowed_job_types(db_session, monkeypatch):
         async def __call__(self, session, row):
             calls.append(self.name)
 
-    monkeypatch.setenv("WORKER_LLM_JOB_TYPES", "test-llm")
     monkeypatch.setenv("WORKER_LLM_CONCURRENCY", "1")
-    monkeypatch.setenv("WORKER_SLOW_JOB_TYPES", "test-slow")
     monkeypatch.setenv("WORKER_SLOW_CONCURRENCY", "1")
-    monkeypatch.setitem(HANDLERS, "test-llm", Record("llm"))
-    monkeypatch.setitem(HANDLERS, "test-slow", Record("slow"))
+    monkeypatch.setitem(HANDLERS, "match", Record("llm"))
+    monkeypatch.setitem(HANDLERS, "fetch-slug", Record("slow"))
 
     async def recording_run_lane(lane, *, settings, session_factory, shutdown_task):
         started_lanes.append(lane.name)
@@ -262,8 +277,8 @@ async def test_worker_lanes_process_allowed_job_types(db_session, monkeypatch):
 
     monkeypatch.setattr(worker_main, "_run_lane", recording_run_lane)
 
-    await enqueue(db_session, job_type="test-llm", payload={})
-    await enqueue(db_session, job_type="test-slow", payload={})
+    await enqueue(db_session, job_type="match", payload={})
+    await enqueue(db_session, job_type="fetch-slug", payload={})
     await db_session.commit()
 
     async def stop_soon():

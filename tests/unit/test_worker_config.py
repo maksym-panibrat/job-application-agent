@@ -31,7 +31,11 @@ def _clear_worker_env(monkeypatch):
 
 
 def test_worker_config_defaults():
-    from app.worker.config import WorkerSettings
+    from app.worker.config import (
+        DEFAULT_LLM_JOB_TYPES,
+        DEFAULT_SLOW_JOB_TYPES,
+        WorkerSettings,
+    )
 
     settings = WorkerSettings()
     assert settings.concurrency == 4
@@ -42,18 +46,29 @@ def test_worker_config_defaults():
     assert settings.transient_backoff_max_s == 300
     assert settings.unknown_type_backoff_s == 300
     assert settings.mark_done_retry_backoff_s == 60
+    assert settings.llm_job_types == DEFAULT_LLM_JOB_TYPES
     assert settings.llm_concurrency == 6
+    assert settings.slow_job_types == DEFAULT_SLOW_JOB_TYPES
     assert settings.slow_concurrency == 20
 
 
-def test_worker_settings_default_single_pool():
+def test_worker_settings_default_lanes():
     from app.worker.config import WorkerLane, WorkerSettings
 
     settings = WorkerSettings()
 
-    assert settings.lanes_enabled is False
+    assert settings.lanes_enabled is True
     assert settings.lane_configs() == [
-        WorkerLane(name="default", job_types=None, concurrency=settings.concurrency)
+        WorkerLane(
+            name="llm",
+            job_types=("match", "generate-cover-letter"),
+            concurrency=settings.llm_concurrency,
+        ),
+        WorkerLane(
+            name="slow",
+            job_types=("fetch-slug", "maintenance"),
+            concurrency=settings.slow_concurrency,
+        ),
     ]
 
 
@@ -82,7 +97,7 @@ def test_worker_settings_parses_lane_job_types(monkeypatch):
     ]
 
 
-def test_worker_settings_blank_lane_envs_fall_back_to_default(monkeypatch):
+def test_worker_settings_blank_lane_envs_disable_lanes(monkeypatch):
     monkeypatch.setenv("WORKER_LLM_JOB_TYPES", " , ")
     monkeypatch.setenv("WORKER_SLOW_JOB_TYPES", "")
 
@@ -90,7 +105,7 @@ def test_worker_settings_blank_lane_envs_fall_back_to_default(monkeypatch):
 
     settings = WorkerSettings()
 
-    assert settings.lanes_enabled is True
+    assert settings.lanes_enabled is False
     assert settings.lane_configs() == [
         WorkerLane(name="default", job_types=None, concurrency=settings.concurrency)
     ]

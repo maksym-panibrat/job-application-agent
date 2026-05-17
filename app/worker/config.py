@@ -3,6 +3,9 @@ from dataclasses import dataclass
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+DEFAULT_LLM_JOB_TYPES = "match,generate-cover-letter"
+DEFAULT_SLOW_JOB_TYPES = "fetch-slug,maintenance"
+
 
 @dataclass(frozen=True)
 class WorkerLane:
@@ -15,9 +18,9 @@ class WorkerSettings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="WORKER_")
 
     concurrency: int = 4
-    llm_job_types: str | None = None
+    llm_job_types: str | None = DEFAULT_LLM_JOB_TYPES
     llm_concurrency: int = 6
-    slow_job_types: str | None = None
+    slow_job_types: str | None = DEFAULT_SLOW_JOB_TYPES
     slow_concurrency: int = 20
     poll_interval_s: int = 3
     visibility_timeout_s: int = 600
@@ -29,7 +32,10 @@ class WorkerSettings(BaseSettings):
 
     @property
     def lanes_enabled(self) -> bool:
-        return self.llm_job_types is not None or self.slow_job_types is not None
+        return bool(
+            self._parse_job_types(self.llm_job_types)
+            or self._parse_job_types(self.slow_job_types)
+        )
 
     def lane_configs(self) -> list[WorkerLane]:
         lanes: list[WorkerLane] = []
