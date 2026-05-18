@@ -92,6 +92,40 @@ async def test_fetch_jobs_happy_path(src):
 
 @respx.mock
 @pytest.mark.asyncio
+async def test_fetch_jobs_includes_ashby_compensation_salary_summary(src):
+    posting = _posting(1)
+    posting["compensation"] = {
+        "compensationTierSummary": "$81K - $87K • 0.5% - 1.75%",
+        "scrapeableCompensationSalarySummary": "$81K - $87K",
+        "summaryComponents": [
+            {
+                "compensationType": "Salary",
+                "interval": "1 YEAR",
+                "currencyCode": "USD",
+                "minValue": 81000,
+                "maxValue": 87000,
+            }
+        ],
+    }
+    respx.get(f"{ASHBY_POSTINGS_BASE}/acme").respond(200, json=_payload(posting))
+    async with httpx.AsyncClient() as client:
+        jobs = await src.fetch_jobs("acme", client=client)
+    assert jobs[0].salary == "$81K - $87K"
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_fetch_jobs_extracts_salary_range_from_description(src):
+    posting = _posting(1)
+    posting["descriptionHtml"] = "<p>The salary range for this role is $150,000 - $190,000.</p>"
+    respx.get(f"{ASHBY_POSTINGS_BASE}/acme").respond(200, json=_payload(posting))
+    async with httpx.AsyncClient() as client:
+        jobs = await src.fetch_jobs("acme", client=client)
+    assert jobs[0].salary == "$150,000 - $190,000"
+
+
+@respx.mock
+@pytest.mark.asyncio
 async def test_fetch_jobs_skips_postings_without_apply_url(src):
     bad = _posting(1)
     bad["applyUrl"] = ""

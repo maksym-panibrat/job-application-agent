@@ -12,6 +12,11 @@ from app.sources.base import (
     JobSource,
     TransientFetchError,
 )
+from app.sources.salary import (
+    extract_salary_range_from_text,
+    salary_from_greenhouse_metadata,
+    salary_from_greenhouse_pay_ranges,
+)
 
 GREENHOUSE_BOARDS_BASE = "https://boards-api.greenhouse.io/v1/boards"
 DEFAULT_TIMEOUT = httpx.Timeout(connect=5.0, read=15.0, write=5.0, pool=5.0)
@@ -40,6 +45,11 @@ class GreenhouseBoardSource(JobSource):
                 posted_at = datetime.fromisoformat(ts.replace("Z", "+00:00"))
             except (ValueError, AttributeError):
                 pass
+        salary = (
+            salary_from_greenhouse_pay_ranges(item.get("pay_input_ranges"))
+            or salary_from_greenhouse_metadata(item.get("metadata"))
+            or extract_salary_range_from_text(item.get("content"))
+        )
         return JobData(
             external_id=str(job_id),
             title=title,
@@ -48,7 +58,7 @@ class GreenhouseBoardSource(JobSource):
             workplace_type=workplace_type,
             # raw HTML; clean_html_to_markdown runs in job_service
             description_raw=item.get("content"),
-            salary=None,
+            salary=salary,
             contract_type=None,
             apply_url=apply_url,
             posted_at=posted_at,
