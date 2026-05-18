@@ -96,6 +96,21 @@ def test_remote_only_profile_allows_explicit_remote_location():
     assert verdict.hard_mismatch is False
 
 
+def test_remote_only_profile_rejects_onsite_description_despite_remote_metadata():
+    profile = _profile(target_locations=[], remote_ok=True)
+    job = SimpleNamespace(
+        location="Remote - US",
+        workplace_type="remote",
+        description="This is an onsite role for engineers embedded with customers.",
+        description_raw=None,
+    )
+
+    verdict = evaluate_remote_policy(profile, job)
+
+    assert verdict.hard_mismatch is True
+    assert "office attendance" in verdict.gap
+
+
 def test_remote_pseudo_location_is_not_office_target_location():
     profile = _profile(target_locations=["Remote"], remote_ok=True)
     job = SimpleNamespace(

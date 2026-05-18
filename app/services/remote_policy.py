@@ -34,6 +34,8 @@ OFFICE_ATTENDANCE_PATTERNS = (
     r"\bhybrid\s+schedule\b.{0,40}\b(?:requires?|required|must)\b",
     r"\b(?:requires?|required|must)\b.{0,40}\bhybrid\s+schedule\b",
     r"\bmust(?:\s+be)?\s+located\s+near\b",
+    r"\b(?:onsite|on site|in person)\s+(?:role|position|job|work)\b",
+    r"\b(?:role|position|job|work)\s+(?:is\s+)?(?:onsite|on site|in person)\b",
 )
 OFFICE_ATTENDANCE_GAP = "Requires recurring office attendance outside target locations"
 NON_US_POSITION_GAP = "Position is not US-based"
