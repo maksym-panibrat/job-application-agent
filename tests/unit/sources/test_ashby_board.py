@@ -115,6 +115,27 @@ async def test_fetch_jobs_includes_ashby_compensation_salary_summary(src):
 
 @respx.mock
 @pytest.mark.asyncio
+async def test_fetch_jobs_ignores_non_salary_compensation_summary(src):
+    posting = _posting(1)
+    posting["compensation"] = {
+        "scrapeableCompensationSalarySummary": "Salary",
+        "summaryComponents": [
+            {
+                "compensationType": "Salary",
+                "interval": "1 YEAR",
+                "minValue": 0,
+                "maxValue": 0,
+            }
+        ],
+    }
+    respx.get(f"{ASHBY_POSTINGS_BASE}/acme").respond(200, json=_payload(posting))
+    async with httpx.AsyncClient() as client:
+        jobs = await src.fetch_jobs("acme", client=client)
+    assert jobs[0].salary is None
+
+
+@respx.mock
+@pytest.mark.asyncio
 async def test_fetch_jobs_extracts_salary_range_from_description(src):
     posting = _posting(1)
     posting["descriptionHtml"] = "<p>The salary range for this role is $150,000 - $190,000.</p>"
