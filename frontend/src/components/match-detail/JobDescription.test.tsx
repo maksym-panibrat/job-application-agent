@@ -19,9 +19,12 @@ describe('JobDescription', () => {
     expect(container.firstChild).toBeNull()
   })
 
-  it('preserves whitespace via whitespace-pre-wrap (no expander)', () => {
-    render(<JobDescription content={'line one\n\nline two'} />)
-    const pre = screen.getByText(/line one/, { exact: false })
-    expect(pre.className).toMatch(/whitespace-pre-wrap/)
+  it('formats markdown instead of printing raw markdown syntax', () => {
+    render(<JobDescription content={'## Requirements\n\n- **Python**\n- React'} />)
+
+    expect(screen.getByRole('heading', { level: 2, name: 'Requirements' })).toBeInTheDocument()
+    expect(screen.getByText('Python')).toHaveClass('font-semibold')
+    expect(screen.getAllByRole('listitem')).toHaveLength(2)
+    expect(screen.queryByText('## Requirements')).not.toBeInTheDocument()
   })
 })
