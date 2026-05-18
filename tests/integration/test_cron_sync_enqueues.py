@@ -59,8 +59,9 @@ async def test_cron_sync_enqueues_fetch_slug_work_rows(db_session):
     assert response.status_code == 202
     body = response.json()
     assert body["active_profiles"] == 1
+    assert body["profiles_enqueued"] == 1
     assert body["pruned"] == 0
-    assert len(body["enqueued"]) == 1
+    assert body["enqueued"] == ["co"]
 
     rows = (
         (

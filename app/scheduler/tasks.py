@@ -11,27 +11,15 @@ log = structlog.get_logger()
 async def run_job_sync() -> dict:
     """Bulk sweep: prune invalid slugs + enqueue stale slugs for active profiles."""
     from app.database import get_session_factory
-    from app.models.user_profile import UserProfile
-    from app.services.job_sync_service import prune_and_enqueue
+    from app.services.job_sync_service import sync_active_profiles
 
     factory = get_session_factory()
-    profiles_enqueued = 0
-    slugs_enqueued = 0
-    slugs_pruned = 0
     async with factory() as session:
-        result = await session.execute(
-            select(UserProfile).where(UserProfile.search_active.is_(True))
-        )
-        for profile in result.scalars().all():
-            summary = await prune_and_enqueue(profile, session)
-            if summary["queued_slugs"]:
-                profiles_enqueued += 1
-                slugs_enqueued += len(summary["queued_slugs"])
-            slugs_pruned += len(summary["pruned_slugs"])
+        summary = await sync_active_profiles(session)
     return {
-        "profiles_enqueued": profiles_enqueued,
-        "slugs_enqueued": slugs_enqueued,
-        "slugs_pruned": slugs_pruned,
+        "profiles_enqueued": summary["profiles_enqueued"],
+        "slugs_enqueued": len(summary["enqueued"]),
+        "slugs_pruned": summary["pruned"],
     }
 
 

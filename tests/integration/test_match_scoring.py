@@ -16,7 +16,6 @@ from app.models.company import Company
 from app.models.job import Job
 from app.models.user import User
 from app.models.user_profile import UserProfile
-from app.models.work_queue import WorkQueue, WorkQueueStatus
 from app.services import match_service
 from app.services.match_service import list_applications, score_and_match
 from tests.conftest import patch_llm
@@ -374,39 +373,6 @@ async def test_score_and_match_filters_by_profile_slugs(db_session):
 
 
 @pytest.mark.asyncio
-async def test_score_cached_only_uses_existing_jobs(db_session):
-    """score_cached must NOT enqueue any fetches and must respect the company filter
-    and matching_jobs_per_batch cap."""
-    airbnb_co = await _ensure_company(db_session, "airbnb")
-    user = User(id=uuid.uuid4(), email=f"cached-{uuid.uuid4()}@test.com")
-    db_session.add(user)
-    await db_session.commit()
-    profile = UserProfile(
-        user_id=user.id,
-        target_company_ids=[airbnb_co.id],
-    )
-    db_session.add(profile)
-    db_session.add(
-        Job(
-            source="greenhouse",
-            external_id="a-2",
-            title="Z",
-            company_name="Airbnb",
-            company_id=airbnb_co.id,
-            apply_url="https://z",
-            is_active=True,
-        )
-    )
-    await db_session.commit()
-
-    fake_graph = MagicMock()
-    fake_graph.ainvoke = AsyncMock(return_value={"scores": []})
-    with patch("app.agents.matching_agent.build_graph", return_value=fake_graph):
-        result = await match_service.score_cached(profile, db_session, cap=20)
-    assert isinstance(result, list)
-
-
-@pytest.mark.asyncio
 async def test_score_and_match_persists_match_score(db_session):
     """After score_and_match persists a score, match_score becomes the scored
     predicate used to avoid duplicate scoring."""
@@ -476,73 +442,6 @@ async def test_score_and_match_persists_match_score(db_session):
         await db_session.execute(sa.select(Application).where(Application.id == app.id))
     ).scalar_one()
     assert refreshed.match_score == 0.85
-
-
-@pytest.mark.asyncio
-async def test_score_cached_skips_jobs_with_active_match_work(db_session):
-    """If an Application has active match work, score_cached must not pick its
-    job again — otherwise we'd double-score and waste an LLM call."""
-    from app.models.user import User
-    from app.services.profile_service import get_or_create_profile
-
-    user = User(
-        id=uuid.uuid4(),
-        email="t@t.com",
-        is_active=True,
-        is_verified=True,
-        is_superuser=False,
-        hashed_password="",
-    )
-    db_session.add(user)
-    await db_session.commit()
-    airbnb_co = await _ensure_company(db_session, "airbnb")
-    profile = await get_or_create_profile(user.id, db_session)
-    profile.target_company_ids = [airbnb_co.id]
-    db_session.add(profile)
-    await db_session.commit()
-    await db_session.refresh(profile)
-
-    job = Job(
-        source="greenhouse",
-        external_id="r-1",
-        title="Eng",
-        company_name="Airbnb",
-        company_id=airbnb_co.id,
-        apply_url="https://x",
-        is_active=True,
-    )
-    db_session.add(job)
-    await db_session.commit()
-    await db_session.refresh(job)
-
-    app = Application(
-        job_id=job.id,
-        profile_id=profile.id,
-    )
-    db_session.add(app)
-    await db_session.commit()
-    await db_session.refresh(app)
-    db_session.add(
-        WorkQueue(
-            job_type="match",
-            payload={"application_id": str(app.id)},
-            status=WorkQueueStatus.IN_PROGRESS,
-            claimed_at=datetime.now(UTC),
-            claimed_by="worker-1",
-            attempts=1,
-            dedupe_key=f"match:{app.id}",
-        )
-    )
-    await db_session.commit()
-
-    # score_cached must skip this job (no LangGraph invocation)
-    fake_graph = MagicMock()
-    fake_graph.ainvoke = AsyncMock(return_value={"scores": []})
-    with patch("app.agents.matching_agent.build_graph", return_value=fake_graph):
-        result = await match_service.score_cached(profile, db_session, cap=20)
-
-    assert result == []
-    fake_graph.ainvoke.assert_not_called()
 
 
 @pytest.mark.asyncio

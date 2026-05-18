@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 import structlog
-from sqlalchemy import text, update
+from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
@@ -323,62 +323,6 @@ async def score_and_match(
         duration_ms=int((time.perf_counter() - t0) * 1000),
     )
     return scored_apps
-
-
-async def score_cached(
-    profile: UserProfile,
-    session: AsyncSession,
-    *,
-    cap: int | None = None,
-) -> list[Application]:
-    """Variant of score_and_match that scores at most `cap` already-cached jobs.
-    No fetches, no slug-pool growth. Kept for explicit callers; POST /api/jobs/sync
-    relies on background workers instead."""
-    from app.config import get_settings
-
-    settings = get_settings()
-    cap = cap if cap is not None else settings.matching_jobs_per_batch
-
-    company_ids = list(profile.target_company_ids or [])
-    if not company_ids:
-        return []
-
-    excluded_result = await session.execute(
-        text("""
-            SELECT a.job_id
-            FROM applications a
-            WHERE a.profile_id = :profile_id
-              AND (
-                a.match_score IS NOT NULL
-                OR EXISTS (
-                  SELECT 1
-                  FROM work_queue w
-                  WHERE w.job_type = 'match'
-                    AND w.status IN ('pending', 'in_progress')
-                    AND w.payload->>'application_id' = a.id::text
-                )
-              )
-        """),
-        {"profile_id": profile.id},
-    )
-    excluded_ids = {row[0] for row in excluded_result.all()}
-
-    q = (
-        select(Job)
-        .where(
-            Job.is_active.is_(True),
-            Job.company_id.in_(company_ids),
-        )
-        .order_by(Job.posted_at.desc().nullslast(), Job.fetched_at.desc())
-    )
-    if excluded_ids:
-        q = q.where(Job.id.notin_(excluded_ids))
-    q = q.limit(cap)
-    jobs_result = await session.execute(q)
-    jobs = list(jobs_result.scalars().all())
-    if not jobs:
-        return []
-    return await score_and_match(profile, session, jobs=jobs)
 
 
 async def list_applications(

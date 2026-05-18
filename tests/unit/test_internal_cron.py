@@ -76,7 +76,35 @@ def test_sync_correct_secret_calls_task():
     with patch("app.api.internal_cron.get_session_factory", return_value=lambda: _FakeSession()):
         resp = client.post("/internal/cron/sync", headers={"X-Cron-Secret": "real-secret"})
     assert resp.status_code == 202
-    assert resp.json() == {"enqueued": [], "pruned": 0, "active_profiles": 0}
+    assert resp.json() == {
+        "enqueued": [],
+        "pruned": 0,
+        "active_profiles": 0,
+        "profiles_enqueued": 0,
+    }
+
+
+def test_sync_correct_secret_delegates_to_shared_sync_service():
+    client = make_app(secret="real-secret")
+    summary = {
+        "enqueued": ["co"],
+        "pruned": 1,
+        "active_profiles": 2,
+        "profiles_enqueued": 1,
+    }
+    with (
+        patch("app.api.internal_cron.get_session_factory", return_value=lambda: _FakeSession()),
+        patch(
+            "app.services.job_sync_service.sync_active_profiles",
+            new=AsyncMock(return_value=summary),
+            create=True,
+        ) as mock_sync,
+    ):
+        resp = client.post("/internal/cron/sync", headers={"X-Cron-Secret": "real-secret"})
+
+    assert resp.status_code == 202
+    assert resp.json() == summary
+    mock_sync.assert_awaited_once()
 
 
 @pytest.mark.parametrize(

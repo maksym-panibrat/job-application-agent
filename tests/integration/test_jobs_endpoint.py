@@ -1,7 +1,7 @@
 """Integration tests for POST /api/jobs/sync.
 
 The new contract returns 202 Accepted with {status: 'queued', queued_slugs, matched_now}
-instead of 200 with synchronous results. Background fetch + match catches up via cron.
+instead of 200 with synchronous results. Background fetch + match catches up via workers.
 """
 
 import pytest

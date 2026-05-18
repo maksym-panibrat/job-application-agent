@@ -2,7 +2,6 @@
 
 import uuid
 from datetime import UTC, datetime
-from unittest.mock import AsyncMock, patch
 
 import pytest
 from sqlmodel import select
@@ -98,16 +97,90 @@ async def test_sync_profile_returns_202_shape_and_enqueues_stale_slugs(db_sessio
     await db_session.commit()
     await db_session.refresh(profile)
 
-    with patch(
-        "app.services.match_service.score_cached",
-        AsyncMock(return_value=[]),
-    ) as mock_score_cached:
-        result = await job_sync_service.sync_profile(profile, db_session)
+    result = await job_sync_service.sync_profile(profile, db_session)
 
     assert result["status"] == "queued"
     assert sorted(result["queued_slugs"]) == ["airbnb", "stripe"]
     assert result["matched_now"] == 0
-    mock_score_cached.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_sync_active_profiles_uses_shared_enqueue_contract(db_session):
+    """Cron and scheduler sweeps use the same enqueue-only behavior as manual sync."""
+    from app.models.company import Company
+    from app.models.slug_fetch import SlugFetch
+    from app.models.user import User
+    from app.models.user_profile import UserProfile
+    from app.models.work_queue import WorkQueue
+
+    active_company = Company(
+        canonical_name="Active Co",
+        normalized_key=f"active-{uuid.uuid4()}",
+        provider_slugs={"greenhouse": "active-co"},
+        resolved_at=datetime.now(UTC),
+    )
+    inactive_company = Company(
+        canonical_name="Inactive Co",
+        normalized_key=f"inactive-{uuid.uuid4()}",
+        provider_slugs={"greenhouse": "inactive-co"},
+        resolved_at=datetime.now(UTC),
+    )
+    db_session.add_all([active_company, inactive_company])
+    await db_session.commit()
+    await db_session.refresh(active_company)
+    await db_session.refresh(inactive_company)
+
+    active_user = User(id=uuid.uuid4(), email=f"active-{uuid.uuid4()}@test.com")
+    inactive_user = User(id=uuid.uuid4(), email=f"inactive-{uuid.uuid4()}@test.com")
+    db_session.add_all([active_user, inactive_user])
+    await db_session.commit()
+
+    db_session.add_all(
+        [
+            UserProfile(
+                user_id=active_user.id,
+                email=active_user.email,
+                search_active=True,
+                target_company_ids=[active_company.id],
+            ),
+            UserProfile(
+                user_id=inactive_user.id,
+                email=inactive_user.email,
+                search_active=False,
+                target_company_ids=[inactive_company.id],
+            ),
+            SlugFetch(
+                source="greenhouse",
+                slug="active-co",
+                last_fetched_at=datetime(2026, 1, 1, tzinfo=UTC),
+            ),
+            SlugFetch(
+                source="greenhouse",
+                slug="inactive-co",
+                last_fetched_at=datetime(2026, 1, 1, tzinfo=UTC),
+            ),
+        ]
+    )
+    await db_session.commit()
+
+    result = await job_sync_service.sync_active_profiles(db_session)
+
+    assert result == {
+        "enqueued": ["active-co"],
+        "pruned": 0,
+        "active_profiles": 1,
+        "profiles_enqueued": 1,
+    }
+    queue_rows = (
+        (
+            await db_session.execute(
+                select(WorkQueue).where(WorkQueue.job_type == "fetch-slug")
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert [row.dedupe_key for row in queue_rows] == ["fetch-slug:greenhouse:active-co"]
 
 
 @pytest.mark.asyncio

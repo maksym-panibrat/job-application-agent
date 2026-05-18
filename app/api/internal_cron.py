@@ -6,13 +6,10 @@ from datetime import UTC, datetime
 import structlog
 from fastapi import APIRouter, Depends, Header, HTTPException, status
 from sqlalchemy import text
-from sqlmodel import select
 
 from app.agents.llm_safe import BudgetExhausted
 from app.config import Settings, get_settings
 from app.database import get_session_factory
-from app.models.user_profile import UserProfile
-from app.worker.payloads import FetchSlugPayload
 from app.worker.queue_service import enqueue
 
 log = structlog.get_logger()
@@ -83,61 +80,19 @@ async def _run_cron(name: str, task: Callable[[], Awaitable[dict]]) -> dict:
     status_code=status.HTTP_202_ACCEPTED,
 )
 async def cron_sync():
-    from app.services import slug_registry_service
+    from app.services import job_sync_service
 
     factory = get_session_factory()
-    enqueued: list[int] = []
-    pruned_total = 0
-    active_count = 0
     async with factory() as session:
-        active_profiles = (
-            (
-                await session.execute(
-                    select(UserProfile).where(UserProfile.search_active.is_(True))
-                )
-            )
-            .scalars()
-            .all()
-        )
-        active_count = len(active_profiles)
-        for profile in active_profiles:
-            pruned_total += await slug_registry_service.prune_invalid_for_profile(
-                profile,
-                session,
-            )
-            stale = await slug_registry_service.list_stale_for_profile(
-                profile,
-                session,
-                ttl_hours=6,
-            )
-            for provider, slug in stale:
-                row_id = await enqueue(
-                    session,
-                    job_type="fetch-slug",
-                    payload=FetchSlugPayload(provider=provider, slug=slug).model_dump(),
-                    dedupe_key=f"fetch-slug:{provider}:{slug}",
-                )
-                if row_id is not None:
-                    enqueued.append(row_id)
-            profile.last_sync_requested_at = datetime.now(UTC)
-            profile.last_sync_summary = {
-                "queued_slugs": [slug for _, slug in stale],
-                "matched_now": 0,
-                "pruned_slugs": pruned_total,
-            }
-            session.add(profile)
-        await session.commit()
+        summary = await job_sync_service.sync_active_profiles(session)
     await log.ainfo(
         "cron.sync.completed",
-        enqueued=len(enqueued),
-        pruned=pruned_total,
-        active_profiles=active_count,
+        enqueued=len(summary["enqueued"]),
+        pruned=summary["pruned"],
+        active_profiles=summary["active_profiles"],
+        profiles_enqueued=summary["profiles_enqueued"],
     )
-    return {
-        "enqueued": enqueued,
-        "pruned": pruned_total,
-        "active_profiles": active_count,
-    }
+    return summary
 
 
 @router.post(
