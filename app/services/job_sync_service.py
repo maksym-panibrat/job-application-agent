@@ -20,7 +20,7 @@ from datetime import UTC, datetime
 import structlog
 from sqlalchemy import and_, or_
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlmodel import select
+from sqlmodel import col, select
 
 from app.models.company import Company
 from app.models.slug_fetch import SlugFetch
@@ -112,6 +112,37 @@ async def prune_and_enqueue(profile: UserProfile, session: AsyncSession) -> dict
     session.add(profile)
     await session.commit()
     return summary
+
+
+async def sync_active_profiles(session: AsyncSession) -> dict:
+    """Cron/scheduler sweep: apply the enqueue-only sync contract to active profiles."""
+    active_profiles = (
+        (
+            await session.execute(
+                select(UserProfile).where(col(UserProfile.search_active).is_(True))
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+    enqueued: list[str] = []
+    pruned = 0
+    profiles_enqueued = 0
+    for profile in active_profiles:
+        summary = await prune_and_enqueue(profile, session)
+        queued_slugs = list(summary["queued_slugs"])
+        if queued_slugs:
+            profiles_enqueued += 1
+            enqueued.extend(queued_slugs)
+        pruned += len(summary["pruned_slugs"])
+
+    return {
+        "enqueued": enqueued,
+        "pruned": pruned,
+        "active_profiles": len(active_profiles),
+        "profiles_enqueued": profiles_enqueued,
+    }
 
 
 async def sync_profile(profile: UserProfile, session: AsyncSession) -> dict:
