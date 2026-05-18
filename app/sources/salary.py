@@ -23,6 +23,22 @@ _RANGE_RE = re.compile(
     rf"{_MONEY_RE}\s*(?:-|–|—|to)\s*{_MONEY_RE}(?:\s*(?:{'|'.join(CURRENCY_CODES)}))?",
     re.IGNORECASE,
 )
+_CURRENCY_RE = re.compile(
+    rf"(?:[$€£]|\b(?:{'|'.join(CURRENCY_CODES)})\b)",
+    re.IGNORECASE,
+)
+
+
+def has_currency_marker(value: str | None) -> bool:
+    return bool(value and _CURRENCY_RE.search(value))
+
+
+def is_plausible_salary(value: str | None) -> bool:
+    if not value or not value.strip():
+        return False
+    if not has_currency_marker(value):
+        return False
+    return bool(re.search(r"\d", value))
 
 
 def _as_decimal(value: Any) -> Decimal | None:
@@ -62,6 +78,8 @@ def format_salary_range(
     *,
     cents: bool = False,
 ) -> str | None:
+    if not currency_code:
+        return None
     low = _format_amount(min_value, currency_code, cents=cents)
     high = _format_amount(max_value, currency_code, cents=cents)
     if low is None or high is None:
@@ -83,10 +101,7 @@ def extract_salary_range_from_text(text: str | None) -> str | None:
         window_start = max(match.start() - 80, 0)
         window_end = min(match.end() + 40, len(plain))
         window = plain[window_start:window_end].lower()
-        has_currency = any(symbol in candidate for symbol in ("$", "€", "£")) or any(
-            code.lower() in candidate.lower() for code in CURRENCY_CODES
-        )
-        if has_currency or any(keyword in window for keyword in SALARY_KEYWORDS):
+        if has_currency_marker(candidate) and any(keyword in window for keyword in SALARY_KEYWORDS):
             return candidate
     return None
 
@@ -96,7 +111,7 @@ def salary_from_ashby_compensation(compensation: Any) -> str | None:
         return None
 
     summary = compensation.get("scrapeableCompensationSalarySummary")
-    if isinstance(summary, str) and summary.strip():
+    if isinstance(summary, str) and is_plausible_salary(summary):
         return summary.strip()
 
     components = list(compensation.get("summaryComponents") or [])
@@ -154,7 +169,7 @@ def salary_from_greenhouse_metadata(metadata: Any) -> str | None:
         if not any(keyword in name for keyword in SALARY_KEYWORDS):
             continue
         value = field.get("value")
-        if isinstance(value, str) and value.strip():
+        if isinstance(value, str) and is_plausible_salary(value):
             return value.strip()
         if isinstance(value, dict):
             salary = format_salary_range(

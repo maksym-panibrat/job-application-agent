@@ -7,7 +7,7 @@ from sqlmodel import select
 from app.models.application import Application
 from app.models.company import Company
 from app.models.job import Job
-from app.services.job_salary_backfill import backfill_job_salaries
+from app.services.job_salary_backfill import backfill_job_salaries, cleanup_invalid_salaries
 from app.sources.base import JobData
 
 
@@ -76,6 +76,61 @@ async def test_backfill_job_salaries_updates_existing_matches_from_description(
     assert already_has_salary.salary == "$1"
     assert no_salary.salary is None
     assert unmatched.salary is None
+
+
+@pytest.mark.asyncio
+async def test_backfill_job_salaries_ignores_ambiguous_non_currency_ranges(
+    db_session, seeded_user
+):
+    equity = _job(
+        external_id="job-1",
+        description_raw="<p>Compensation includes equity: 10-20 bps.</p>",
+    )
+    zero = _job(external_id="job-2", description_raw="<p>Salary range: 0–0.</p>")
+    bare_range = _job(
+        external_id="job-3",
+        description_raw="<p>The salary range is 64,800–95,300.</p>",
+    )
+    await _matched_job(db_session, seeded_user, equity)
+    await _matched_job(db_session, seeded_user, zero)
+    await _matched_job(db_session, seeded_user, bare_range)
+
+    result = await backfill_job_salaries(db_session, apply=True, fetch_structured=False)
+
+    assert result.updated == 0
+    await db_session.refresh(equity)
+    await db_session.refresh(zero)
+    await db_session.refresh(bare_range)
+    assert equity.salary is None
+    assert zero.salary is None
+    assert bare_range.salary is None
+
+
+@pytest.mark.asyncio
+async def test_cleanup_invalid_salaries_nulls_ambiguous_backfill_values(
+    db_session, seeded_user
+):
+    ambiguous = _job(salary="10-20")
+    label = _job(external_id="job-2", salary="Salary")
+    valid_usd = _job(external_id="job-3", salary="$105,400 — $155,000 USD")
+    valid_eur = _job(external_id="job-4", salary="€300,000 - €330,000")
+    await _matched_job(db_session, seeded_user, ambiguous)
+    await _matched_job(db_session, seeded_user, label)
+    await _matched_job(db_session, seeded_user, valid_usd)
+    await _matched_job(db_session, seeded_user, valid_eur)
+
+    result = await cleanup_invalid_salaries(db_session, apply=True)
+
+    assert result.scanned == 4
+    assert result.updated == 2
+    await db_session.refresh(ambiguous)
+    await db_session.refresh(label)
+    await db_session.refresh(valid_usd)
+    await db_session.refresh(valid_eur)
+    assert ambiguous.salary is None
+    assert label.salary is None
+    assert valid_usd.salary == "$105,400 — $155,000 USD"
+    assert valid_eur.salary == "€300,000 - €330,000"
 
 
 @pytest.mark.asyncio

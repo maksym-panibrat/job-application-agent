@@ -14,7 +14,7 @@ from app.models.company import Company
 from app.models.job import Job
 from app.sources import SOURCES
 from app.sources.greenhouse_board import DEFAULT_TIMEOUT
-from app.sources.salary import extract_salary_range_from_text
+from app.sources.salary import extract_salary_range_from_text, is_plausible_salary
 
 
 @dataclass
@@ -41,8 +41,27 @@ def _candidate_query(limit: int | None = None):
     return query
 
 
+def _cleanup_candidate_query(limit: int | None = None):
+    query = (
+        select(Job)
+        .where(
+            col(Job.salary).isnot(None),
+            exists().where(Application.job_id == Job.id),
+        )
+        .order_by(Job.fetched_at.desc(), Job.id)
+    )
+    if limit is not None:
+        query = query.limit(limit)
+    return query
+
+
 async def _load_candidate_jobs(session, *, limit: int | None) -> list[Job]:
     rows = await session.execute(_candidate_query(limit))
+    return list(rows.scalars().all())
+
+
+async def _load_cleanup_candidate_jobs(session, *, limit: int | None) -> list[Job]:
+    rows = await session.execute(_cleanup_candidate_query(limit))
     return list(rows.scalars().all())
 
 
@@ -131,6 +150,32 @@ async def backfill_job_salaries(
             if apply:
                 job.salary = salary
                 session.add(job)
+
+    result.unchanged = result.scanned - result.updated
+    if apply and result.updated:
+        await session.commit()
+    else:
+        await session.rollback()
+    return result
+
+
+async def cleanup_invalid_salaries(
+    session,
+    *,
+    apply: bool = False,
+    limit: int | None = None,
+) -> SalaryBackfillResult:
+    """Null salary values that are too ambiguous to display as compensation."""
+    jobs = await _load_cleanup_candidate_jobs(session, limit=limit)
+    result = SalaryBackfillResult(scanned=len(jobs))
+
+    for job in jobs:
+        if is_plausible_salary(job.salary):
+            continue
+        result.updated += 1
+        if apply:
+            job.salary = None
+            session.add(job)
 
     result.unchanged = result.scanned - result.updated
     if apply and result.updated:
