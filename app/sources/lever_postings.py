@@ -20,6 +20,7 @@ from app.sources.base import (
     JobSource,
     TransientFetchError,
 )
+from app.sources.salary import extract_salary_range_from_text, format_salary_range
 
 LEVER_POSTINGS_BASE = "https://api.lever.co/v0/postings"
 DEFAULT_TIMEOUT = httpx.Timeout(connect=5.0, read=15.0, write=5.0, pool=5.0)
@@ -46,10 +47,18 @@ class LeverPostingsSource(JobSource):
         workplace_type = item.get("workplaceType") or None
         contract_type = categories.get("commitment") or None
         salary_obj = item.get("salaryRange") or {}
-        salary = None
-        if salary_obj.get("min") is not None and salary_obj.get("max") is not None:
-            currency = salary_obj.get("currency") or ""
-            salary = f"{currency}{salary_obj['min']}–{salary_obj['max']}"
+        salary = format_salary_range(
+            salary_obj.get("min"),
+            salary_obj.get("max"),
+            salary_obj.get("currency"),
+        )
+        if salary is None:
+            salary = extract_salary_range_from_text(
+                item.get("salaryDescriptionPlain")
+                or item.get("salaryDescription")
+                or item.get("descriptionHtml")
+                or item.get("description")
+            )
         posted_at = None
         if ts := item.get("createdAt"):
             try:

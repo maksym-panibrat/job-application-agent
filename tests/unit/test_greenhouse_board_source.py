@@ -162,6 +162,66 @@ async def test_greenhouse_board_passes_through_raw_html_content():
 
 
 @pytest.mark.asyncio
+async def test_greenhouse_board_includes_pay_input_ranges():
+    source = GreenhouseBoardSource()
+
+    fixture = {
+        "jobs": [
+            {
+                "id": 4000011,
+                "title": "Backend Engineer",
+                "location": {"name": "Remote"},
+                "content": "<div>Work from anywhere</div>",
+                "absolute_url": "https://boards.greenhouse.io/stripe/jobs/4000011",
+                "updated_at": "2026-04-01T10:00:00Z",
+                "pay_input_ranges": [
+                    {
+                        "min_cents": 15000000,
+                        "max_cents": 19000000,
+                        "currency_type": "USD",
+                        "title": "US Salary Range",
+                    }
+                ],
+            }
+        ]
+    }
+
+    with respx.mock:
+        respx.get(f"{GREENHOUSE_BOARDS_BASE}/stripe/jobs").mock(
+            return_value=httpx.Response(200, json=fixture)
+        )
+        jobs = await source.fetch_jobs("stripe")
+
+    assert jobs[0].salary == "US Salary Range: $150,000–$190,000"
+
+
+@pytest.mark.asyncio
+async def test_greenhouse_board_extracts_salary_range_from_description():
+    source = GreenhouseBoardSource()
+
+    fixture = {
+        "jobs": [
+            {
+                "id": 4000012,
+                "title": "Backend Engineer",
+                "location": {"name": "Remote"},
+                "content": "<p>Base salary range: $160,000 to $210,000 USD.</p>",
+                "absolute_url": "https://boards.greenhouse.io/stripe/jobs/4000012",
+                "updated_at": "2026-04-01T10:00:00Z",
+            }
+        ]
+    }
+
+    with respx.mock:
+        respx.get(f"{GREENHOUSE_BOARDS_BASE}/stripe/jobs").mock(
+            return_value=httpx.Response(200, json=fixture)
+        )
+        jobs = await source.fetch_jobs("stripe")
+
+    assert jobs[0].salary == "$160,000 to $210,000 USD"
+
+
+@pytest.mark.asyncio
 async def test_greenhouse_board_5xx_raises_transient():
     """5xx from Greenhouse is transient — distinguish from 404 (#47)."""
     from app.sources.base import TransientFetchError

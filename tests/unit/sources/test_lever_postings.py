@@ -97,6 +97,27 @@ async def test_fetch_jobs_single_page(src):
 
 @respx.mock
 @pytest.mark.asyncio
+async def test_fetch_jobs_includes_salary_range(src):
+    posting = _posting(1)
+    posting["salaryRange"] = {
+        "currency": "USD",
+        "interval": "year",
+        "min": 150000,
+        "max": 190000,
+    }
+    respx.get(f"{LEVER_POSTINGS_BASE}/acme").mock(
+        side_effect=[
+            httpx.Response(200, json=[posting]),
+            httpx.Response(200, json=[]),
+        ]
+    )
+    async with httpx.AsyncClient() as client:
+        jobs = await src.fetch_jobs("acme", client=client)
+    assert jobs[0].salary == "$150,000–$190,000"
+
+
+@respx.mock
+@pytest.mark.asyncio
 async def test_fetch_jobs_paginates_until_empty(src):
     page1 = [_posting(i) for i in range(100)]
     page2 = [_posting(i) for i in range(100, 150)]

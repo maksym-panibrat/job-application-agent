@@ -21,6 +21,7 @@ from app.sources.base import (
     JobSource,
     TransientFetchError,
 )
+from app.sources.salary import extract_salary_range_from_text, salary_from_ashby_compensation
 
 ASHBY_POSTINGS_BASE = "https://api.ashbyhq.com/posting-api/job-board"
 DEFAULT_TIMEOUT = httpx.Timeout(connect=5.0, read=15.0, write=5.0, pool=5.0)
@@ -67,6 +68,11 @@ class AshbyBoardSource(JobSource):
         # field; the slug itself is canonical for the Company row, and
         # Track B will replace this lazy derivation with Company.canonical_name.
         company_name = slug.replace("-", " ").title()
+        salary = salary_from_ashby_compensation(item.get("compensation"))
+        if salary is None:
+            salary = extract_salary_range_from_text(
+                item.get("descriptionHtml") or item.get("descriptionPlain")
+            )
         return JobData(
             external_id=external_id,
             title=title,
@@ -74,7 +80,7 @@ class AshbyBoardSource(JobSource):
             location=location,
             workplace_type=workplace_type,
             description_raw=item.get("descriptionHtml") or None,
-            salary=None,
+            salary=salary,
             contract_type=contract_type,
             apply_url=apply_url,
             posted_at=posted_at,
