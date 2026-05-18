@@ -36,7 +36,6 @@ test.describe('FollowedCompaniesSection screenshots', () => {
             target_locations: ['Remote — US'],
             remote_ok: true,
             seniority: 'senior',
-            search_keywords: ['typescript', 'react'],
             search_active: true,
             search_expires_at: null,
             target_companies: [],
@@ -73,7 +72,6 @@ test.describe('FollowedCompaniesSection screenshots', () => {
             target_locations: ['Remote — US'],
             remote_ok: true,
             seniority: 'senior',
-            search_keywords: ['typescript', 'react'],
             search_active: true,
             search_expires_at: null,
             target_companies: [
@@ -116,7 +114,6 @@ test.describe('FollowedCompaniesSection screenshots', () => {
             target_locations: [],
             remote_ok: true,
             seniority: null,
-            search_keywords: [],
             search_active: true,
             search_expires_at: null,
             target_companies: [],

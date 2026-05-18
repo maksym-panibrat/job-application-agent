@@ -19,9 +19,6 @@ export function ProfileSummary({ profile }: { profile: Profile }) {
         {profile.seniority && (
           <p><span className="text-muted">Seniority: </span>{profile.seniority}</p>
         )}
-        {profile.search_keywords.length > 0 && (
-          <p><span className="text-muted">Keywords: </span>{profile.search_keywords.join(', ')}</p>
-        )}
         <p>
           <span className="text-muted">{profile.skills.length} skill{profile.skills.length === 1 ? '' : 's'}</span>
           {' · '}

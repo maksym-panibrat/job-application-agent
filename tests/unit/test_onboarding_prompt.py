@@ -104,10 +104,23 @@ def test_prompt_mandates_tool_call_before_claiming_save():
     )
 
 
+def test_prompt_deprecates_search_keywords_in_favor_of_target_companies():
+    """Onboarding should no longer ask for or save search keywords. Company
+    following is the search-scope input now."""
+    from app.agents.onboarding import PROFILE_SCALAR_FIELDS, SYSTEM_PROMPT
+
+    lower = SYSTEM_PROMPT.lower()
+    assert "search_keywords" not in SYSTEM_PROMPT
+    assert "search keywords" not in lower
+    assert "keywords" not in lower
+    assert "target_companies" in SYSTEM_PROMPT
+    assert "search_keywords" not in PROFILE_SCALAR_FIELDS
+
+
 def test_format_current_profile_includes_relevant_fields():
     """The helper that injects the current profile snapshot must surface the
     fields the LLM needs as ground truth: roles, seniority, location, remote_ok,
-    search keywords, target companies."""
+    target companies."""
     from app.agents.onboarding import _format_current_profile
 
     snapshot = _format_current_profile(
@@ -116,7 +129,6 @@ def test_format_current_profile_includes_relevant_fields():
             "seniority": "senior",
             "target_locations": ["San Diego, CA"],
             "remote_ok": True,
-            "search_keywords": ["Python", "distributed systems"],
             "target_company_names": ["Stripe", "OpenAI"],
             "full_name": "Maksym P.",
         }
@@ -128,9 +140,10 @@ def test_format_current_profile_includes_relevant_fields():
     assert "senior" in snapshot.lower()
     assert "San Diego" in snapshot
     assert "remote_ok" in snapshot.lower() or "remote" in snapshot.lower()
-    assert "Python" in snapshot
     assert "Stripe" in snapshot
     assert "OpenAI" in snapshot
+    assert "search_keywords" not in snapshot
+    assert "keywords" not in snapshot.lower()
 
 
 def test_format_current_profile_handles_missing_fields():
@@ -143,7 +156,6 @@ def test_format_current_profile_handles_missing_fields():
             "seniority": None,
             "target_locations": [],
             "remote_ok": False,
-            "search_keywords": [],
             "target_company_names": [],
             "full_name": None,
         }

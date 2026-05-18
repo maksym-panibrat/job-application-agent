@@ -23,7 +23,6 @@ function fullProfile(over: Partial<Profile> = {}): Profile {
     target_locations: ['Berlin'],
     remote_ok: true,
     seniority: 'senior',
-    search_keywords: ['python'],
     search_active: true,
     search_expires_at: null,
     target_companies: [{ id: 'co-1', canonical_name: 'Stripe' }],
@@ -49,11 +48,6 @@ function renderCard(profile: Profile) {
 describe('ProfileCompletenessCard', () => {
   it('renders nothing when profile is healthy + search active', () => {
     const { container } = renderCard(fullProfile())
-    expect(container.firstChild).toBeNull()
-  })
-
-  it('does not require optional search keywords for a healthy profile', () => {
-    const { container } = renderCard(fullProfile({ search_keywords: [] }))
     expect(container.firstChild).toBeNull()
   })
 

@@ -20,7 +20,7 @@ function fullProfile(): Profile {
     id: 'p-1', full_name: 'Maks', email: 'm@x.com', phone: null,
     linkedin_url: null, github_url: null, portfolio_url: null,
     base_resume_md: 'r', target_roles: ['Backend'], target_locations: ['Berlin'],
-    remote_ok: true, seniority: 'senior', search_keywords: ['python'],
+    remote_ok: true, seniority: 'senior',
     search_active: true, search_expires_at: null,
     target_companies: [{ id: 'co-1', canonical_name: 'Stripe' }],
     skills: [], work_experiences: [],

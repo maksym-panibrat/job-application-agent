@@ -47,6 +47,8 @@ class UserProfile(SQLModel, table=True):
     target_locations: list[str] = Field(default_factory=list, sa_column=Column(ARRAY(sa.String)))
     remote_ok: bool = True
     seniority: str | None = None
+    # Deprecated search-scoping field. Kept for legacy rows; new product flows
+    # use target_company_ids instead.
     search_keywords: list[str] = Field(default_factory=list, sa_column=Column(ARRAY(sa.String)))
     source_cursors: dict = Field(default_factory=dict, sa_column=Column(JSONB))
     # DEPRECATED: replaced by target_company_ids. Kept one release for rollback;

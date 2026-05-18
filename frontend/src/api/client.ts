@@ -15,7 +15,6 @@ export interface Profile {
   target_locations: string[]
   remote_ok: boolean
   seniority: string | null
-  search_keywords: string[]
   search_active: boolean
   search_expires_at: string | null
   target_companies?: { id: string; canonical_name: string }[]

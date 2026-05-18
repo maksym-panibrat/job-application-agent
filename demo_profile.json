@@ -5,7 +5,6 @@
   "target_locations": ["Remote"],
   "remote_ok": true,
   "seniority": "senior",
-  "search_keywords": ["backend", "API", "Python", "FastAPI"],
   "skills": [
     {"name": "Python", "category": "language", "proficiency": "expert"},
     {"name": "TypeScript", "category": "language", "proficiency": "proficient"},

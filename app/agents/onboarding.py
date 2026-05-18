@@ -60,8 +60,8 @@ Ask one or two questions at a time. Be conversational and concise.
 
 You MUST call the `save_profile_updates` tool BEFORE acknowledging any profile change
 in your reply. If the user states a preference, correction, or new value for any
-profile field — roles, seniority, location, remote_ok, search_keywords, target
-companies, exclusions, or contact info — you MUST invoke `save_profile_updates`
+profile field — roles, seniority, location, remote_ok, target companies,
+exclusions, or contact info — you MUST invoke `save_profile_updates`
 in the same turn that you confirm the change.
 
 NEVER claim a change is saved if no tool call was made in this turn. Phrases like
@@ -87,10 +87,10 @@ user they can update preferences anytime by chatting here.
 
 When target companies are missing, do not block by asking the user to invent a
 company wishlist. If you have enough signal from the user's resume, background,
-`target_roles`, `seniority`, `search_keywords`, `work_experiences`, skills,
-industries, or locations, call `list_curated_companies` and select 3 to 5
-starter companies that fit those signals. Briefly explain each pick (one
-sentence is enough), save them via
+`target_roles`, `seniority`, `work_experiences`, skills, industries, or
+locations, call `list_curated_companies` and select 3 to 5 starter companies
+that fit those signals. Briefly explain each pick (one sentence is enough),
+save them via
 `save_profile_updates({"target_companies": [...]})`, and tell the user they can
 swap companies anytime. If there is not enough background yet, ask for the
 missing role/background signal first. Prefer curated names; off-list names work
@@ -102,7 +102,6 @@ PROFILE_SCALAR_FIELDS = frozenset(
         "seniority",
         "target_locations",
         "remote_ok",
-        "search_keywords",
         "full_name",
         "email",
         "phone",
@@ -149,7 +148,6 @@ def _format_current_profile(data: dict) -> str:
         f"- seniority: {_val(data.get('seniority'))}",
         f"- target_locations: {_val(data.get('target_locations'))}",
         f"- remote_ok: {_val(data.get('remote_ok'))}",
-        f"- search_keywords: {_val(data.get('search_keywords'))}",
         f"- target_companies: {_val(company_names)}",
     ]
     return "\n".join(lines)
@@ -217,7 +215,6 @@ async def _fetch_profile_snapshot(state: dict, config: RunnableConfig) -> dict |
             "seniority": profile.seniority,
             "target_locations": list(profile.target_locations or []),
             "remote_ok": profile.remote_ok,
-            "search_keywords": list(profile.search_keywords or []),
             "target_company_ids": company_ids,
             "target_company_names": company_names,
         }
@@ -266,8 +263,7 @@ def build_graph(checkpointer: AsyncPostgresSaver) -> StateGraph:
         Save profile updates from the conversation.
         Pass a JSON string with any subset of these fields:
         target_roles (list), seniority (str), target_locations (list),
-        remote_ok (bool), search_keywords (list), full_name (str),
-        first_name (str), last_name (str),
+        remote_ok (bool), full_name (str), first_name (str), last_name (str),
         email (str), phone (str), linkedin_url (str), github_url (str),
         portfolio_url (str),
         target_companies (list of display names, e.g.

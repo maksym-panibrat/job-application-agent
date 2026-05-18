@@ -10,7 +10,7 @@ function fullProfile(over: Partial<Profile> = {}): Profile {
     linkedin_url: null, github_url: null, portfolio_url: null,
     base_resume_md: 'r', target_roles: ['Backend', 'Platform'],
     target_locations: ['Berlin', 'Remote-EU'], remote_ok: true,
-    seniority: 'senior', search_keywords: ['python'], search_active: true,
+    seniority: 'senior', search_active: true,
     search_expires_at: null, target_companies: [{ id: 'co-1', canonical_name: 'Stripe' }],
     skills: [
       { id: 's1', name: 'Go', category: null, proficiency: null, years: 5 },
@@ -35,6 +35,17 @@ describe('ProfileSummary', () => {
     expect(screen.getByText(/berlin/i)).toBeInTheDocument()
     expect(screen.getByText(/2 skills/i)).toBeInTheDocument()
     expect(screen.getByText(/1 experience/i)).toBeInTheDocument()
+  })
+
+  it('does not surface deprecated search keywords', () => {
+    render(
+      <MemoryRouter>
+        <ProfileSummary profile={fullProfile()} />
+      </MemoryRouter>
+    )
+
+    expect(screen.queryByText(/keywords/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/python/i)).not.toBeInTheDocument()
   })
 
   it('Open Chat CTA links to ?chat=1&prompt=change_profile', () => {

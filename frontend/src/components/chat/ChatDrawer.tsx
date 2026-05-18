@@ -9,7 +9,6 @@ const PROMPT_BY_SLUG: Record<string, string> = {
   set_roles:     'What roles am I targeting?',
   set_locations: 'Where am I open to working? Any locations or remote-only?',
   set_companies: 'Which companies should I follow for new jobs?',
-  set_keywords:  'What technologies / keywords matter most for my search?',
   change_profile: 'I want to change something in my profile.',
 }
 

@@ -25,7 +25,6 @@ const PROFILE_BASE = {
   target_locations: [],
   remote_ok: true,
   seniority: null,
-  search_keywords: [],
   search_active: true,
   search_expires_at: null,
   target_companies: [],
