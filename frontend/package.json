@@ -32,7 +32,7 @@
     "@vitest/coverage-v8": "^4.1.4",
     "autoprefixer": "^10.4.20",
     "jsdom": "^29.1.1",
-    "msw": "^2.13.4",
+    "msw": "^2.14.6",
     "postcss": "^8.4.45",
     "tailwindcss": "^4.3.0",
     "typescript": "^5.5.0",
