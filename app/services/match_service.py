@@ -346,8 +346,8 @@ async def list_applications(
         q = q.where(Application.match_score >= min_score)
     q = q.order_by(
         Application.match_score.desc().nullslast(),
-        Job.salary.isnot(None).desc(),
         Job.posted_at.desc().nullslast(),
+        Job.salary.isnot(None).desc(),
         Application.created_at.desc(),
     )
     q = q.limit(limit).offset(offset)

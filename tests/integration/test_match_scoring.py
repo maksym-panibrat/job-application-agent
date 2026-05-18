@@ -148,19 +148,38 @@ async def test_list_applications_excludes_auto_rejected(db_session):
 
 @pytest.mark.asyncio
 async def test_list_applications_ordering(db_session):
-    """Matches ordered: match_score DESC, salary non-null first, posted_at DESC."""
+    """Matches ordered: match_score DESC, posted_at DESC, then salary present."""
     profile = await _seed_profile(db_session)
 
     now = datetime.now(UTC)
-    job_a = await _seed_job(db_session, "Job A", salary="$100k", posted_at=now - timedelta(days=1))
-    job_b = await _seed_job(db_session, "Job B", salary=None, posted_at=now - timedelta(days=2))
-    job_c = await _seed_job(db_session, "Job C", salary="$90k", posted_at=now)
-    job_d = await _seed_job(db_session, "Job D", salary=None, posted_at=now - timedelta(days=3))
+    job_a = await _seed_job(
+        db_session,
+        "High Score Older Salary",
+        salary="$100k",
+        posted_at=now - timedelta(days=3),
+    )
+    job_b = await _seed_job(db_session, "High Score Recent No Salary", salary=None, posted_at=now)
+    job_c = await _seed_job(
+        db_session,
+        "Lower Score Newest Salary",
+        salary="$90k",
+        posted_at=now + timedelta(days=1),
+    )
+    job_d = await _seed_job(db_session, "High Score Recent Salary", salary="$120k", posted_at=now)
 
-    score = 0.8
-    for job in [job_a, job_b, job_c, job_d]:
+    apps = [
+        (job_a, 0.9, now),
+        (job_b, 0.9, now + timedelta(seconds=2)),
+        (job_c, 0.8, now + timedelta(seconds=3)),
+        (job_d, 0.9, now - timedelta(seconds=1)),
+    ]
+    for job, score, created_at in apps:
         app = Application(
-            job_id=job.id, profile_id=profile.id, match_score=score, match_rationale="Good"
+            job_id=job.id,
+            profile_id=profile.id,
+            match_score=score,
+            match_rationale="Good",
+            created_at=created_at,
         )
         db_session.add(app)
     await db_session.commit()
@@ -168,14 +187,12 @@ async def test_list_applications_ordering(db_session):
     rows = await list_applications(profile.id, db_session)
     titles = [job.title for _, job in rows]
 
-    null_salary_positions = [i for i, (_, j) in enumerate(rows) if j.salary is None]
-    non_null_positions = [i for i, (_, j) in enumerate(rows) if j.salary is not None]
-    assert max(non_null_positions) < min(null_salary_positions), (
-        f"Non-null salary jobs should all precede null-salary jobs, got order: {titles}"
-    )
-
-    assert titles.index("Job C") < titles.index("Job A")
-    assert titles.index("Job B") < titles.index("Job D")
+    assert titles == [
+        "High Score Recent Salary",
+        "High Score Recent No Salary",
+        "High Score Older Salary",
+        "Lower Score Newest Salary",
+    ]
 
 
 @pytest.mark.asyncio
