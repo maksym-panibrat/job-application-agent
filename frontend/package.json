@@ -35,7 +35,7 @@
     "msw": "^2.13.4",
     "postcss": "^8.4.45",
     "tailwindcss": "^4.3.0",
-    "typescript": "^5.5.0",
+    "typescript": "^6.0.3",
     "vite": "^8.0.12",
     "vitest": "^4.1.4"
   },
