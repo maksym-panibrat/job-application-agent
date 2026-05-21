@@ -198,7 +198,7 @@ companies:
     tags: [ai, dev-tools, b2b, early-stage]
   - canonical_name: Mistral AI
     providers:
-      ashby: mistral
+      lever: mistral
     tags: [ai, b2b, late-stage]
   - canonical_name: Perplexity
     providers:
