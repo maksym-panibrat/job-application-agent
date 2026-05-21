@@ -205,7 +205,8 @@ async def test_fetch_jobs_falls_back_to_description_when_html_missing(src):
 @respx.mock
 @pytest.mark.asyncio
 async def test_fetch_jobs_filters_by_since(src):
-    recent = _posting(1, "2026-05-05T12:00:00Z")
+    recent_iso = (datetime.now(UTC) - timedelta(days=1)).isoformat().replace("+00:00", "Z")
+    recent = _posting(1, recent_iso)
     old = _posting(2, "2025-01-01T00:00:00Z")
     respx.get(f"{LEVER_POSTINGS_BASE}/acme").mock(
         side_effect=[
