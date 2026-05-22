@@ -108,7 +108,10 @@ async def lifespan(app: FastAPI):
         from app.observability.queue_depth import _emit_queue_depth_forever
 
         depth_task = asyncio.create_task(
-            _emit_queue_depth_forever(get_session_factory()),
+            _emit_queue_depth_forever(
+                get_session_factory(),
+                interval_s=settings.queue_depth_emit_interval_s,
+            ),
             name="queue-depth-emitter",
         )
         try:

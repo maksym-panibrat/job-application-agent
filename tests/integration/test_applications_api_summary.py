@@ -58,9 +58,10 @@ async def test_list_endpoint_includes_match_summary(db_session, auth_headers, se
 
 
 @pytest.mark.asyncio
-async def test_detail_endpoint_exposes_description(db_session, auth_headers, seeded_user):
-    """GET /api/applications/{id} surfaces description (markdownified) alongside
-    the raw description_raw so the SPA can render readable text instead of HTML."""
+async def test_application_detail_omits_raw_description_by_default(
+    db_session, auth_headers, seeded_user
+):
+    """GET /api/applications/{id} surfaces cleaned description and omits raw HTML."""
     from app.main import app as fastapi_app
 
     _user, profile = seeded_user
@@ -93,5 +94,4 @@ async def test_detail_endpoint_exposes_description(db_session, auth_headers, see
     assert resp.status_code == 200
     payload = resp.json()
     assert payload["job"]["description"] == "## Who we are\n\nCool company."
-    # description_raw kept alongside for backward compat / null-fallback.
-    assert payload["job"]["description_raw"] == "<h2>Who we are</h2><p>Cool company.</p>"
+    assert "description_raw" not in payload["job"]
