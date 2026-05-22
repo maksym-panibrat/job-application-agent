@@ -177,7 +177,11 @@ async def test_fetch_jobs_5xx_raises_transient(src):
 @respx.mock
 @pytest.mark.asyncio
 async def test_fetch_jobs_filters_by_since(src):
-    recent = _posting(1, "2026-05-05T12:00:00Z")
+    recent_posted_at = (datetime.now(UTC) - timedelta(days=1)).isoformat().replace(
+        "+00:00",
+        "Z",
+    )
+    recent = _posting(1, recent_posted_at)
     old = _posting(2, "2025-01-01T00:00:00Z")
     respx.get(f"{ASHBY_POSTINGS_BASE}/acme").respond(200, json=_payload(recent, old))
     cutoff = datetime.now(UTC) - timedelta(days=14)
