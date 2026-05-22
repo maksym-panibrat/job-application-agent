@@ -50,6 +50,68 @@ async def test_upsert_job_updates_existing(db_session):
 
 
 @pytest.mark.asyncio
+async def test_upsert_job_unchanged_payload_avoids_wide_select_and_update(db_session):
+    from sqlalchemy import event
+
+    job_data = make_job_data(external_id="stable-1", title="Stable Engineer")
+    first, created = await upsert_job(job_data, "greenhouse", db_session)
+    assert created is True
+
+    statements: list[str] = []
+    engine = db_session.bind.sync_engine
+
+    def capture_statement(conn, cursor, statement, parameters, context, executemany):
+        statements.append(statement.lower())
+
+    event.listen(engine, "before_cursor_execute", capture_statement)
+    try:
+        second, created = await upsert_job(job_data, "greenhouse", db_session)
+    finally:
+        event.remove(engine, "before_cursor_execute", capture_statement)
+
+    selects = "\n".join(stmt for stmt in statements if stmt.lstrip().startswith("select"))
+    updates = "\n".join(stmt for stmt in statements if stmt.lstrip().startswith("update"))
+
+    assert created is False
+    assert second.id == first.id
+    assert "description_raw" not in selects
+    assert "jobs.description," not in selects
+    assert "description_raw" not in updates
+    assert "description =" not in updates
+
+    refreshed = await db_session.get(Job, first.id)
+    assert refreshed.description_raw == job_data.description_raw
+    assert refreshed.description and "Python engineer" in refreshed.description
+
+
+@pytest.mark.asyncio
+async def test_upsert_job_populates_content_hash(db_session):
+    job_data = make_job_data(external_id="stable-hash-1", title="Stable Engineer")
+    job, created = await upsert_job(job_data, "greenhouse", db_session)
+
+    assert created is True
+    assert job.content_hash is not None
+    assert len(job.content_hash) == 64
+
+
+@pytest.mark.asyncio
+async def test_upsert_job_changes_content_hash_when_description_changes(db_session):
+    job_data = make_job_data(external_id="stable-2", title="Stable Engineer")
+    first, _ = await upsert_job(job_data, "greenhouse", db_session)
+    first_hash = first.content_hash
+
+    changed = make_job_data(external_id="stable-2", title="Stable Engineer")
+    changed.description_raw = "A different role description."
+    second, created = await upsert_job(changed, "greenhouse", db_session)
+
+    assert created is False
+    assert second.id == first.id
+    assert second.content_hash != first_hash
+    assert second.description_raw == "A different role description."
+    assert "different role" in (second.description or "")
+
+
+@pytest.mark.asyncio
 async def test_mark_stale_jobs(db_session):
     from datetime import timedelta
 

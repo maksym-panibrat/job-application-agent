@@ -1,8 +1,11 @@
 """Job CRUD and staleness logic."""
 
+import hashlib
+import json
 import uuid
 from datetime import UTC, datetime, timedelta
 
+from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
@@ -24,6 +27,22 @@ async def _resolve_company_id(
     return result.scalar_one_or_none()
 
 
+def compute_job_content_hash(job_data: JobData) -> str:
+    payload = {
+        "title": job_data.title,
+        "company_name": job_data.company_name,
+        "location": job_data.location,
+        "workplace_type": job_data.workplace_type,
+        "description_raw": job_data.description_raw,
+        "salary": job_data.salary,
+        "contract_type": job_data.contract_type,
+        "apply_url": job_data.apply_url,
+        "posted_at": job_data.posted_at.isoformat() if job_data.posted_at else None,
+    }
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
 async def upsert_job(
     job_data: JobData,
     source: str,
@@ -43,38 +62,81 @@ async def upsert_job(
     read-side gap from D4/D5. Without `slug`, company_id stays NULL on insert
     (legacy callers / tests not exercising the matcher).
     """
-    result = await session.execute(
-        select(Job).where(
-            Job.source == source,
-            Job.external_id == job_data.external_id,
+    content_hash = compute_job_content_hash(job_data)
+    existing_row = (
+        await session.execute(
+            select(
+                Job.id,
+                Job.content_hash,
+                Job.company_id,
+                Job.company_name,
+                Job.source,
+            ).where(
+                Job.source == source,
+                Job.external_id == job_data.external_id,
+            )
         )
-    )
-    existing = result.scalar_one_or_none()
+    ).one_or_none()
 
-    cleaned = clean_html_to_markdown(job_data.description_raw)
     company_id = await _resolve_company_id(source, slug, session)
 
-    if existing:
-        existing.title = job_data.title
-        existing.company_name = job_data.company_name
-        existing.description_raw = job_data.description_raw
-        existing.description = cleaned
-        existing.salary = job_data.salary
-        existing.contract_type = job_data.contract_type
-        existing.apply_url = job_data.apply_url
-        existing.location = job_data.location
-        existing.workplace_type = job_data.workplace_type
-        existing.is_active = True
-        existing.fetched_at = datetime.now(UTC)
-        # Backfill company_id on legacy rows whose canonical_name didn't match
-        # company_name at migration time. Only set, never clear — a slug-less
-        # caller must not unlink a previously-resolved Company.
-        if company_id is not None and existing.company_id != company_id:
-            existing.company_id = company_id
-        session.add(existing)
+    if existing_row is not None:
+        job_id, existing_hash, existing_company_id, existing_company_name, existing_source = (
+            existing_row
+        )
+        now = datetime.now(UTC)
+        values = {
+            "is_active": True,
+            "fetched_at": now,
+        }
+        resolved_company_id = existing_company_id
+        if company_id is not None and existing_company_id != company_id:
+            values["company_id"] = company_id
+            resolved_company_id = company_id
+
+        content_changed = existing_hash != content_hash
+        cleaned = None
+        if content_changed:
+            cleaned = clean_html_to_markdown(job_data.description_raw)
+            values.update(
+                {
+                    "title": job_data.title,
+                    "company_name": job_data.company_name,
+                    "description_raw": job_data.description_raw,
+                    "description": cleaned,
+                    "salary": job_data.salary,
+                    "contract_type": job_data.contract_type,
+                    "apply_url": job_data.apply_url,
+                    "location": job_data.location,
+                    "workplace_type": job_data.workplace_type,
+                    "posted_at": job_data.posted_at,
+                    "content_hash": content_hash,
+                }
+            )
+        await session.execute(update(Job).where(Job.id == job_id).values(**values))
         await session.commit()
-        await session.refresh(existing)
-        return existing, False
+        return (
+            Job(
+                id=job_id,
+                source=existing_source,
+                external_id=job_data.external_id,
+                title=job_data.title,
+                company_name=job_data.company_name if content_changed else existing_company_name,
+                company_id=resolved_company_id,
+                location=job_data.location,
+                workplace_type=job_data.workplace_type,
+                description_raw=job_data.description_raw if content_changed else None,
+                description=cleaned,
+                salary=job_data.salary,
+                contract_type=job_data.contract_type,
+                apply_url=job_data.apply_url,
+                posted_at=job_data.posted_at,
+                content_hash=content_hash,
+            ),
+            False,
+        )
+
+    cleaned = clean_html_to_markdown(job_data.description_raw)
 
     job = Job(
         source=source,
@@ -86,6 +148,7 @@ async def upsert_job(
         workplace_type=job_data.workplace_type,
         description_raw=job_data.description_raw,
         description=cleaned,
+        content_hash=content_hash,
         salary=job_data.salary,
         contract_type=job_data.contract_type,
         apply_url=job_data.apply_url,

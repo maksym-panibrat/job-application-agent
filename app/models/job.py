@@ -18,6 +18,7 @@ class Job(SQLModel, table=True):
     workplace_type: str | None = None  # remote, hybrid, onsite
     description_raw: str | None = None  # untouched source payload (HTML for greenhouse/lever/ashby)
     description: str | None = None  # canonical markdown, populated by html_cleaner at ingestion
+    content_hash: str | None = Field(default=None, index=True)
     salary: str | None = None
     contract_type: str | None = None
     apply_url: str
