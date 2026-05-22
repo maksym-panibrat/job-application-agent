@@ -4,7 +4,7 @@ import uuid
 from datetime import UTC, datetime
 
 import pytest
-from sqlmodel import select
+from sqlmodel import col, select
 
 from app.models.job import Job
 from app.services import job_sync_service
@@ -181,6 +181,171 @@ async def test_sync_active_profiles_uses_shared_enqueue_contract(db_session):
         .all()
     )
     assert [row.dedupe_key for row in queue_rows] == ["fetch-slug:greenhouse:active-co"]
+
+
+@pytest.mark.asyncio
+async def test_sync_active_profiles_deduplicates_shared_provider_slugs(db_session):
+    from datetime import timedelta
+
+    from app.models.company import Company
+    from app.models.slug_fetch import SlugFetch
+    from app.models.user import User
+    from app.models.user_profile import UserProfile
+    from app.models.work_queue import WorkQueue
+
+    company = Company(
+        canonical_name="Shared Co",
+        normalized_key=f"shared-{uuid.uuid4()}",
+        provider_slugs={"greenhouse": "shared-co"},
+        resolved_at=datetime.now(UTC),
+    )
+    db_session.add(company)
+    await db_session.commit()
+    await db_session.refresh(company)
+
+    users = [
+        User(id=uuid.uuid4(), email=f"shared-{i}-{uuid.uuid4()}@test.com")
+        for i in range(2)
+    ]
+    db_session.add_all(users)
+    await db_session.commit()
+    db_session.add_all(
+        [
+            UserProfile(
+                user_id=users[0].id,
+                email=users[0].email,
+                search_active=True,
+                target_company_ids=[company.id],
+            ),
+            UserProfile(
+                user_id=users[1].id,
+                email=users[1].email,
+                search_active=True,
+                target_company_ids=[company.id],
+            ),
+            SlugFetch(
+                source="greenhouse",
+                slug="shared-co",
+                last_fetched_at=datetime.now(UTC) - timedelta(hours=7),
+            ),
+        ]
+    )
+    await db_session.commit()
+
+    result = await job_sync_service.sync_active_profiles(db_session)
+
+    assert result["active_profiles"] == 2
+    assert result["profiles_enqueued"] == 2
+    assert result["enqueued"] == ["shared-co"]
+    rows = (
+        (
+            await db_session.execute(
+                select(WorkQueue).where(WorkQueue.job_type == "fetch-slug")
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert [row.dedupe_key for row in rows] == ["fetch-slug:greenhouse:shared-co"]
+    profiles = (
+        (
+            await db_session.execute(
+                select(UserProfile).where(col(UserProfile.search_active).is_(True))
+            )
+        )
+        .scalars()
+        .all()
+    )
+    summaries = {profile.email: profile.last_sync_summary for profile in profiles}
+    assert summaries[users[0].email]["queued_slugs"] == ["shared-co"]
+    assert summaries[users[1].email]["queued_slugs"] == ["shared-co"]
+
+
+@pytest.mark.asyncio
+async def test_sync_active_profiles_keeps_profile_specific_summaries_and_pruning(db_session):
+    from datetime import timedelta
+
+    from app.models.company import Company
+    from app.models.slug_fetch import SlugFetch
+    from app.models.user import User
+    from app.models.user_profile import UserProfile
+
+    stale_company = Company(
+        canonical_name="Stale Co",
+        normalized_key=f"stale-{uuid.uuid4()}",
+        provider_slugs={"greenhouse": "stale-co"},
+        resolved_at=datetime.now(UTC),
+    )
+    fresh_company = Company(
+        canonical_name="Fresh Co",
+        normalized_key=f"fresh-{uuid.uuid4()}",
+        provider_slugs={"greenhouse": "fresh-co"},
+        resolved_at=datetime.now(UTC),
+    )
+    invalid_company = Company(
+        canonical_name="Invalid Co",
+        normalized_key=f"invalid-{uuid.uuid4()}",
+        provider_slugs={"greenhouse": "invalid-co"},
+        resolved_at=datetime.now(UTC),
+    )
+    db_session.add_all([stale_company, fresh_company, invalid_company])
+    await db_session.commit()
+    await db_session.refresh(stale_company)
+    await db_session.refresh(fresh_company)
+    await db_session.refresh(invalid_company)
+
+    stale_user = User(id=uuid.uuid4(), email=f"stale-{uuid.uuid4()}@test.com")
+    fresh_user = User(id=uuid.uuid4(), email=f"fresh-{uuid.uuid4()}@test.com")
+    db_session.add_all([stale_user, fresh_user])
+    await db_session.commit()
+
+    db_session.add_all(
+        [
+            UserProfile(
+                user_id=stale_user.id,
+                email=stale_user.email,
+                search_active=True,
+                target_company_ids=[stale_company.id],
+            ),
+            UserProfile(
+                user_id=fresh_user.id,
+                email=fresh_user.email,
+                search_active=True,
+                target_company_ids=[fresh_company.id, invalid_company.id],
+            ),
+            SlugFetch(
+                source="greenhouse",
+                slug="stale-co",
+                last_fetched_at=datetime.now(UTC) - timedelta(hours=7),
+            ),
+            SlugFetch(
+                source="greenhouse",
+                slug="fresh-co",
+                last_fetched_at=datetime.now(UTC),
+            ),
+            SlugFetch(source="greenhouse", slug="invalid-co", is_invalid=True),
+        ]
+    )
+    await db_session.commit()
+
+    result = await job_sync_service.sync_active_profiles(db_session)
+
+    assert result["enqueued"] == ["stale-co"]
+    assert result["pruned"] == 1
+    refreshed_profiles = (
+        (
+            await db_session.execute(
+                select(UserProfile).where(col(UserProfile.search_active).is_(True))
+            )
+        )
+        .scalars()
+        .all()
+    )
+    summaries = {profile.email: profile.last_sync_summary for profile in refreshed_profiles}
+    assert summaries[stale_user.email]["queued_slugs"] == ["stale-co"]
+    assert summaries[stale_user.email]["pruned_slugs"] == []
+    assert summaries[fresh_user.email]["queued_slugs"] == []
+    assert summaries[fresh_user.email]["pruned_slugs"] == ["greenhouse:invalid-co"]
 
 
 @pytest.mark.asyncio

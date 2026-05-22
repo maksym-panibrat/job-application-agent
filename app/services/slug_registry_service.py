@@ -1,7 +1,9 @@
 """Slug-level fetch state. One row per (source, slug), shared across users."""
 
+import uuid
 from datetime import UTC, datetime, timedelta
 
+import sqlalchemy as sa
 import structlog
 from sqlalchemy import and_, or_
 from sqlalchemy.dialects.postgresql import insert
@@ -119,6 +121,52 @@ async def list_stale_for_profile(
                 pairs.append(key)
                 seen.add(key)
     return pairs
+
+
+async def list_stale_for_active_profiles(
+    session: AsyncSession,
+    *,
+    ttl_hours: int = 6,
+) -> list[tuple[uuid.UUID, str, str]]:
+    """Return stale provider slugs by active profile without per-slug lookups."""
+    result = await session.execute(
+        sa.text(
+            """
+            WITH active_companies AS (
+              SELECT id AS profile_id, unnest(target_company_ids) AS company_id
+              FROM user_profiles
+              WHERE search_active IS TRUE
+                AND target_company_ids IS NOT NULL
+            ),
+            provider_slugs AS (
+              SELECT DISTINCT
+                     ac.profile_id,
+                     kv.key::text AS source,
+                     kv.value::text AS slug
+              FROM active_companies ac
+              JOIN companies c ON c.id = ac.company_id
+              CROSS JOIN LATERAL jsonb_each_text(c.provider_slugs) AS kv(key, value)
+              WHERE c.unfollowable IS FALSE
+                AND kv.value IS NOT NULL
+                AND kv.value <> ''
+            )
+            SELECT ps.profile_id, ps.source, ps.slug
+            FROM provider_slugs ps
+            LEFT JOIN slug_fetches sf
+              ON sf.source = ps.source
+             AND sf.slug = ps.slug
+            WHERE COALESCE(sf.is_invalid, false) IS FALSE
+              AND (
+                sf.source IS NULL
+                OR sf.last_fetched_at IS NULL
+                OR sf.last_fetched_at < now() - make_interval(hours => :ttl_hours)
+              )
+            ORDER BY ps.profile_id, ps.source, ps.slug
+            """
+        ),
+        {"ttl_hours": ttl_hours},
+    )
+    return [(row[0], row[1], row[2]) for row in result.all()]
 
 
 async def prune_invalid_for_profile(profile, session: AsyncSession) -> int:
