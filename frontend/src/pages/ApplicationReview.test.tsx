@@ -19,7 +19,7 @@ function detail(over: Partial<ApplicationDetail> = {}): ApplicationDetail {
     job: {
       id: 'j', title: 'Senior Backend Engineer', company_name: 'Acme',
       location: 'Berlin', workplace_type: 'hybrid', salary: '€100k',
-      contract_type: null, description_raw: null, description: 'Acme is hiring.',
+      contract_type: null, description: 'Acme is hiring.',
       apply_url: 'https://x.com/', posted_at: null,
     },
     documents: [],
@@ -66,19 +66,12 @@ describe('Match detail (ApplicationReview)', () => {
     expect(screen.getByRole('button', { name: /save edits/i })).toBeInTheDocument()
   })
 
-  it('renders only app.job.description and ignores description_raw entirely', async () => {
-    // description_raw is the unprocessed source payload, kept server-side
-    // for re-cleaning if the cleaner changes. The match detail page must
-    // never render it, including via a fallback — the prod bug logged
-    // 2026-05-10 was a buggy cleaner storing decoded HTML in description,
-    // not a fallback firing. Re-cleaning fixes the data; this test locks
-    // in that the page renders only `description`.
+  it('renders only app.job.description', async () => {
     renderAt('/matches/a1', detail({
       job: {
         id: 'j', title: 'Senior Backend Engineer', company_name: 'Acme',
         location: null, workplace_type: null, salary: null,
         contract_type: null,
-        description_raw: '<p>Raw HTML must not surface here.</p>',
         description: 'Clean markdown body.',
         apply_url: 'https://x.com/', posted_at: null,
       },
@@ -91,16 +84,13 @@ describe('Match detail (ApplicationReview)', () => {
   })
 
   it('hides the description section entirely when description is null', async () => {
-    // No fallback to description_raw — description_raw is by name and
-    // intent the source payload, not for display. JobDescription returns
-    // null when content is empty, so the whole "Job description" heading
-    // is gone.
+    // JobDescription returns null when content is empty, so the whole
+    // "Job description" heading is gone.
     renderAt('/matches/a1', detail({
       job: {
         id: 'j', title: 'Senior Backend Engineer', company_name: 'Acme',
         location: null, workplace_type: null, salary: null,
         contract_type: null,
-        description_raw: '<p>Should not appear</p>',
         description: null,
         apply_url: 'https://x.com/', posted_at: null,
       },

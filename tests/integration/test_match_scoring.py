@@ -139,7 +139,7 @@ async def test_list_applications_excludes_auto_rejected(db_session):
     await db_session.commit()
 
     rows = await list_applications(profile.id, db_session, status="pending_review")
-    ids = [str(app.id) for app, _ in rows]
+    ids = [str(row[0]) for row in rows]
 
     assert str(app1.id) in ids
     assert str(app2.id) not in ids
@@ -185,7 +185,7 @@ async def test_list_applications_ordering(db_session):
     await db_session.commit()
 
     rows = await list_applications(profile.id, db_session)
-    titles = [job.title for _, job in rows]
+    titles = [row[10] for row in rows]
 
     assert titles == [
         "High Score Recent Salary",
@@ -312,8 +312,8 @@ async def test_score_and_match_picks_unscored_jobs_when_pool_is_largely_scored(d
 
 
 @pytest.mark.asyncio
-async def test_list_applications_returns_job_data(db_session):
-    """list_applications returns (Application, Job) tuples — no N+1 queries needed."""
+async def test_list_applications_returns_projected_job_data(db_session):
+    """list_applications returns projected application/job tuples without ORM-wide job rows."""
     profile = await _seed_profile(db_session)
     job = await _seed_job(db_session, title="Python Engineer", salary="$120k")
 
@@ -326,11 +326,11 @@ async def test_list_applications_returns_job_data(db_session):
     rows = await list_applications(profile.id, db_session)
     assert len(rows) == 1
 
-    returned_app, returned_job = rows[0]
-    assert returned_app.id == app.id
-    assert returned_job.id == job.id
-    assert returned_job.title == "Python Engineer"
-    assert returned_job.salary == "$120k"
+    row = rows[0]
+    assert row[0] == app.id
+    assert row[9] == job.id
+    assert row[10] == "Python Engineer"
+    assert row[14] == "$120k"
 
 
 @pytest.mark.asyncio

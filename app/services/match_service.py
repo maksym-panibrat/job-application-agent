@@ -24,6 +24,27 @@ if TYPE_CHECKING:
 
 log = structlog.get_logger()
 
+ApplicationListRow = tuple[
+    uuid.UUID,
+    str,
+    str,
+    float | None,
+    str | None,
+    str | None,
+    list[str],
+    list[str],
+    datetime,
+    uuid.UUID,
+    str,
+    str,
+    str | None,
+    str | None,
+    str | None,
+    str | None,
+    str,
+    datetime | None,
+]
+
 
 async def mark_for_rescore(profile_id: uuid.UUID, session: AsyncSession) -> int:
     """Clear eligible scored applications and enqueue match work for re-scoring.
@@ -332,18 +353,12 @@ async def list_applications(
     min_score: float | None = None,
     limit: int = 20,
     offset: int = 0,
-) -> list[tuple[Application, Job]]:
-    q = (
-        select(Application, Job)
-        .join(Job, Application.job_id == Job.id)
-        .where(Application.profile_id == profile_id)
+) -> list[ApplicationListRow]:
+    q = build_application_list_query(
+        profile_id,
+        status=status,
+        min_score=min_score,
     )
-    if status:
-        q = q.where(Application.status == status)
-        if status == "pending_review":
-            q = q.where(col(Application.match_score).is_not(None))
-    if min_score is not None:
-        q = q.where(Application.match_score >= min_score)
     q = q.order_by(
         Application.match_score.desc().nullslast(),
         Job.posted_at.desc().nullslast(),
@@ -353,3 +368,42 @@ async def list_applications(
     q = q.limit(limit).offset(offset)
     result = await session.execute(q)
     return list(result.tuples().all())
+
+
+def build_application_list_query(
+    profile_id: uuid.UUID,
+    *,
+    status: str | None,
+    min_score: float | None,
+):
+    q = (
+        select(
+            Application.id,
+            Application.status,
+            Application.generation_status,
+            Application.match_score,
+            Application.match_summary,
+            Application.match_rationale,
+            Application.match_strengths,
+            Application.match_gaps,
+            Application.created_at,
+            Job.id,
+            Job.title,
+            Job.company_name,
+            Job.location,
+            Job.workplace_type,
+            Job.salary,
+            Job.contract_type,
+            Job.apply_url,
+            Job.posted_at,
+        )
+        .join(Job, Application.job_id == Job.id)
+        .where(Application.profile_id == profile_id)
+    )
+    if status:
+        q = q.where(Application.status == status)
+        if status == "pending_review":
+            q = q.where(col(Application.match_score).is_not(None))
+    if min_score is not None:
+        q = q.where(Application.match_score >= min_score)
+    return q

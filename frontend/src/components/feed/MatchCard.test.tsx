@@ -29,8 +29,6 @@ function makeApp(over: Partial<Application> = {}): Application {
       workplace_type: 'hybrid',
       salary: '€90k–110k',
       contract_type: 'full-time',
-      description_raw: '',
-      description: null,
       apply_url: 'https://example.com/apply',
       posted_at: null,
     },
