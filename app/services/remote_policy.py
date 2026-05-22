@@ -410,6 +410,8 @@ def _is_explicitly_remote(job: JobLike) -> bool:
     workplace_type = _normalize_text(str(getattr(job, "workplace_type", None) or ""))
     description = _normalize_text(_job_description_text(job))
 
+    if _description_rejects_remote_work(description):
+        return False
     if _contains_token_phrase(workplace_type, "remote"):
         return True
     if _contains_token_phrase(location, "remote"):
@@ -417,15 +419,19 @@ def _is_explicitly_remote(job: JobLike) -> bool:
     return _description_has_remote_work_evidence(description)
 
 
-def _description_has_remote_work_evidence(normalized_text: str) -> bool:
-    if not normalized_text:
-        return False
+def _description_rejects_remote_work(normalized_text: str) -> bool:
     negative_patterns = (
-        r"\b(?:not|non|no)\s+remote\b",
+        r"\b(?:not|non|no)\s+(?:a\s+)?remote\b",
         r"\bremote\s+(?:work\s+)?(?:not|unavailable|unsupported)\b",
         r"\bdoes\s+not\s+(?:allow|support|offer)\s+remote\b",
     )
-    if any(re.search(pattern, normalized_text) is not None for pattern in negative_patterns):
+    return any(re.search(pattern, normalized_text) is not None for pattern in negative_patterns)
+
+
+def _description_has_remote_work_evidence(normalized_text: str) -> bool:
+    if not normalized_text:
+        return False
+    if _description_rejects_remote_work(normalized_text):
         return False
     positive_patterns = (
         r"\bremote\s+(?:role|position|job|work|employee|employees|team)\b",
