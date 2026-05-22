@@ -27,6 +27,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
+    const onExpired = () => {
+      setToken(null)
+      setUser(null)
+    }
+    window.addEventListener('auth:token-expired', onExpired)
+    return () => window.removeEventListener('auth:token-expired', onExpired)
+  }, [])
+
+  useEffect(() => {
     const stored = sessionStorage.getItem('access_token')
     if (stored) {
       setToken(stored)

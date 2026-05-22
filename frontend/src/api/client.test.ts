@@ -28,6 +28,24 @@ describe('api client', () => {
       await expect(api.getMe()).rejects.toThrow()
     })
 
+    it('clears the access token on 401', async () => {
+      sessionStorage.setItem('access_token', 'expired-token')
+      mockFetch(401, { detail: 'Invalid token' })
+
+      await expect(api.getMe()).rejects.toThrow()
+
+      expect(sessionStorage.getItem('access_token')).toBeNull()
+    })
+
+    it('clears the access token on 401 from direct fetch wrappers', async () => {
+      sessionStorage.setItem('access_token', 'expired-token')
+      mockFetch(401, { detail: 'Invalid token' })
+
+      await expect(api.resolveCompany('Acme')).rejects.toThrow()
+
+      expect(sessionStorage.getItem('access_token')).toBeNull()
+    })
+
     it('throws on 500', async () => {
       mockFetch(500, { detail: 'Internal server error' })
       await expect(api.listApplications()).rejects.toThrow()

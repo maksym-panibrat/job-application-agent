@@ -1,14 +1,13 @@
-import { useEffect, useState } from 'react'
-import { api, AppStatus } from '../api/client'
+import { useQuery } from '@tanstack/react-query'
+import { api } from '../api/client'
 
 export default function BudgetBanner() {
-  const [status, setStatus] = useState<AppStatus | null>(null)
-
-  useEffect(() => {
-    api.getStatus().then(setStatus).catch(() => {})
-    const id = setInterval(() => api.getStatus().then(setStatus).catch(() => {}), 60_000)
-    return () => clearInterval(id)
-  }, [])
+  const { data: status } = useQuery({
+    queryKey: ['app-status'],
+    queryFn: api.getStatus,
+    staleTime: 10 * 60_000,
+    refetchInterval: false,
+  })
 
   if (!status?.budget_exhausted) return null
 
@@ -18,7 +17,7 @@ export default function BudgetBanner() {
 
   return (
     <div className="bg-amber-50 border-b border-amber-200 px-4 py-2 text-center text-sm text-amber-800">
-      AI features paused until {resumes} — job collection continues.
+      AI features paused until {resumes} - job collection continues.
     </div>
   )
 }
