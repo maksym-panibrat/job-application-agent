@@ -4,7 +4,7 @@ Match service — scores jobs against a profile and creates Application rows.
 
 import time
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
 import structlog
@@ -23,6 +23,7 @@ if TYPE_CHECKING:
     from app.agents.matching_agent import ScoreResult
 
 log = structlog.get_logger()
+DISPLAY_JOB_MAX_AGE_DAYS = 10
 
 
 async def mark_for_rescore(profile_id: uuid.UUID, session: AsyncSession) -> int:
@@ -333,10 +334,12 @@ async def list_applications(
     limit: int = 20,
     offset: int = 0,
 ) -> list[tuple[Application, Job]]:
+    posted_cutoff = datetime.now(UTC) - timedelta(days=DISPLAY_JOB_MAX_AGE_DAYS)
     q = (
         select(Application, Job)
         .join(Job, Application.job_id == Job.id)
         .where(Application.profile_id == profile_id)
+        .where((col(Job.posted_at).is_(None)) | (Job.posted_at >= posted_cutoff))
     )
     if status:
         q = q.where(Application.status == status)

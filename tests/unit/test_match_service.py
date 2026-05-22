@@ -7,6 +7,7 @@ the session and build_graph so no real DB or LLM is needed.
 
 import os
 import uuid
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -131,6 +132,30 @@ def test_remote_policy_does_not_cap_matching_target_location():
 
     assert adjusted.score == 0.92
     assert adjusted.gaps == original_gaps
+
+
+@pytest.mark.asyncio
+async def test_list_applications_filters_out_jobs_older_than_10_days():
+    from app.services.match_service import list_applications
+
+    profile_id = uuid.uuid4()
+    session = AsyncMock()
+    execute_result = MagicMock()
+    execute_result.tuples.return_value.all.return_value = []
+    session.execute.return_value = execute_result
+
+    before = datetime.now(UTC)
+    await list_applications(profile_id, session)
+    after = datetime.now(UTC)
+
+    stmt = session.execute.call_args.args[0]
+    compiled = stmt.compile(compile_kwargs={"literal_binds": False})
+    sql = str(compiled)
+    cutoff = compiled.params["posted_at_1"]
+
+    assert "jobs.posted_at IS NULL" in sql
+    assert "jobs.posted_at >= " in sql
+    assert before - timedelta(days=10) <= cutoff <= after - timedelta(days=10)
 
 
 @pytest.mark.asyncio
