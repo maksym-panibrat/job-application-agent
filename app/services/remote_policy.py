@@ -31,6 +31,8 @@ OFFICE_ATTENDANCE_PATTERNS = (
     r"\bwork\s+from\b.{0,80}\b(?:office|onsite|on site)\b",
     r"\b(?:office|onsite|on site)\b.{0,80}\btwice\s+a\s+week\b",
     r"\btwice\s+a\s+week\b.{0,80}\b(?:office|onsite|on site)\b",
+    r"\bhybrid\s+(?:workplace|role|position|job|work)\b",
+    r"\b(?:workplace|role|position|job|work)\s+(?:is\s+)?hybrid\b",
     r"\bhybrid\s+schedule\b.{0,40}\b(?:requires?|required|must)\b",
     r"\b(?:requires?|required|must)\b.{0,40}\bhybrid\s+schedule\b",
     r"\bmust(?:\s+be)?\s+located\s+near\b",
@@ -402,7 +404,11 @@ def _real_target_locations(profile: ProfileLike) -> list[str]:
 
 def _is_remote_pseudo_location(location: str) -> bool:
     normalized = _normalize_text(location).strip()
-    return normalized == "remote" or normalized.startswith("remote ")
+    return (
+        normalized == "remote"
+        or normalized.startswith("remote ")
+        or normalized in {"united states", "usa", "us", "u s", "u s a"}
+    )
 
 
 def _is_explicitly_remote(job: JobLike) -> bool:
