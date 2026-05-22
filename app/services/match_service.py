@@ -45,6 +45,19 @@ ApplicationListRow = tuple[
     datetime | None,
 ]
 
+JobScoreRow = tuple[
+    uuid.UUID,
+    str,
+    str,
+    str,
+    str,
+    str | None,
+    str | None,
+    str | None,
+    str | None,
+    str | None,
+]
+
 
 async def mark_for_rescore(profile_id: uuid.UUID, session: AsyncSession) -> int:
     """Clear eligible scored applications and enqueue match work for re-scoring.
@@ -218,20 +231,40 @@ async def score_and_match(
         )
         matched_ids = {row[0] for row in matched_result.all()}
 
-        candidates_q = (
-            select(Job)
-            .where(
-                Job.is_active.is_(True),
-                Job.company_id.in_(company_ids),
-            )
-            .order_by(Job.posted_at.desc().nullslast(), Job.fetched_at.desc())
+        candidates_q = build_score_candidate_query(
+            company_ids=company_ids,
+            matched_ids=matched_ids,
+            limit=settings.matching_jobs_per_batch,
         )
-        if matched_ids:
-            candidates_q = candidates_q.where(Job.id.notin_(matched_ids))
-        candidates_q = candidates_q.limit(settings.matching_jobs_per_batch)
-
-        all_jobs_result = await session.execute(candidates_q)
-        jobs = list(all_jobs_result.scalars().all())
+        candidate_rows: list[JobScoreRow] = list(
+            (await session.execute(candidates_q)).tuples().all()
+        )
+        jobs = [
+            Job(
+                id=job_id,
+                source=source,
+                external_id=external_id,
+                title=title,
+                company_name=company_name,
+                location=location,
+                workplace_type=workplace_type,
+                description=description,
+                description_raw=description_raw,
+                apply_url=apply_url,
+            )
+            for (
+                job_id,
+                source,
+                external_id,
+                title,
+                company_name,
+                location,
+                workplace_type,
+                description,
+                description_raw,
+                apply_url,
+            ) in candidate_rows
+        ]
 
     if not jobs:
         return []
@@ -406,4 +439,35 @@ def build_application_list_query(
             q = q.where(col(Application.match_score).is_not(None))
     if min_score is not None:
         q = q.where(Application.match_score >= min_score)
+    return q
+
+
+def build_score_candidate_query(
+    *,
+    company_ids: list[uuid.UUID],
+    matched_ids: set[uuid.UUID],
+    limit: int,
+):
+    q = (
+        select(
+            Job.id,
+            Job.source,
+            Job.external_id,
+            Job.title,
+            Job.company_name,
+            Job.location,
+            Job.workplace_type,
+            Job.description,
+            Job.description_raw,
+            Job.apply_url,
+        )
+        .where(
+            Job.is_active.is_(True),
+            col(Job.company_id).in_(company_ids),
+        )
+        .order_by(Job.posted_at.desc().nullslast(), Job.fetched_at.desc())
+        .limit(limit)
+    )
+    if matched_ids:
+        q = q.where(col(Job.id).notin_(matched_ids))
     return q
