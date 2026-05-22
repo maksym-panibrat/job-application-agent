@@ -111,6 +111,59 @@ def test_remote_only_profile_rejects_onsite_description_despite_remote_metadata(
     assert "office attendance" in verdict.gap
 
 
+def test_remote_only_profile_rejects_hybrid_workplace_city_job_with_country_target():
+    profile = _profile(target_locations=["United States"], remote_ok=True)
+    job = SimpleNamespace(
+        location="Boston, Massachusetts, USA; New York, New York, USA",
+        workplace_type=None,
+        description=(
+            "At Datadog, we place value in our office culture - the relationships "
+            "and collaboration it builds and the creativity it brings to the table. "
+            "We operate as a hybrid workplace to ensure our Datadogs can create a "
+            "work-life harmony that best fits them."
+        ),
+        description_raw=None,
+    )
+
+    verdict = evaluate_remote_policy(profile, job)
+
+    assert verdict.hard_mismatch is True
+    assert "office attendance" in verdict.gap
+
+
+def test_country_target_does_not_allow_non_matching_office_location():
+    profile = _profile(target_locations=["United States"], remote_ok=True)
+    job = SimpleNamespace(
+        location="Remote - US",
+        workplace_type="remote",
+        description=(
+            "This United States role requires a minimum 3 days/week in the "
+            "Boston office."
+        ),
+        description_raw=None,
+    )
+
+    verdict = evaluate_remote_policy(profile, job)
+
+    assert verdict.hard_mismatch is True
+    assert "office attendance" in verdict.gap
+
+
+def test_remote_only_country_target_rejects_city_location_without_remote_evidence():
+    profile = _profile(target_locations=["United States"], remote_ok=True)
+    job = SimpleNamespace(
+        location="Boston, Massachusetts, USA; New York, New York, USA",
+        workplace_type=None,
+        description="Build enterprise systems and internal tools for sales engineers.",
+        description_raw=None,
+    )
+
+    verdict = evaluate_remote_policy(profile, job)
+
+    assert verdict.hard_mismatch is True
+    assert "remote-only" in verdict.gap
+
+
 def test_remote_pseudo_location_is_not_office_target_location():
     profile = _profile(target_locations=["Remote"], remote_ok=True)
     job = SimpleNamespace(
