@@ -23,6 +23,12 @@ vi.mock('../../lib/track', () => ({
   track: vi.fn(),
 }))
 
+const defaultCatalog = [
+  { id: 'cat-1', canonical_name: 'Anthropic' },
+  { id: 'cat-2', canonical_name: 'Linear' },
+  { id: 'cat-3', canonical_name: 'Stripe' },
+]
+
 function withCtx(ui: React.ReactNode) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return (
@@ -34,14 +40,25 @@ function withCtx(ui: React.ReactNode) {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  ;(api.getCompanyCatalog as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(defaultCatalog)
+  ;(api.resolveCompany as unknown as ReturnType<typeof vi.fn>).mockReset()
+  ;(api.updateProfile as unknown as ReturnType<typeof vi.fn>).mockReset()
 })
 
 describe('FollowedCompaniesSection', () => {
   it('shows existing companies as chips', () => {
     render(withCtx(
-      <FollowedCompaniesSection companies={[{ id: 'a', canonical_name: 'Linear' }]} />
+      <FollowedCompaniesSection companies={[{ id: 'a', canonical_name: 'Linear' }]} limit={5} />
     ))
     expect(screen.getByText('Linear')).toBeInTheDocument()
+  })
+
+  it('shows the current followed company count against the limit', () => {
+    render(withCtx(
+      <FollowedCompaniesSection companies={[{ id: 'a', canonical_name: 'Linear' }]} limit={5} />
+    ))
+
+    expect(screen.getByText('1 / 5 followed')).toBeInTheDocument()
   })
 
   it('resolves a typed company on Enter and adds a chip', async () => {
@@ -55,7 +72,7 @@ describe('FollowedCompaniesSection', () => {
       updated: true,
     })
 
-    render(withCtx(<FollowedCompaniesSection companies={[]} />))
+    render(withCtx(<FollowedCompaniesSection companies={[]} limit={5} />))
 
     const input = screen.getByPlaceholderText(/Add a company/i)
     await userEvent.type(input, 'Stripe{Enter}')
@@ -70,7 +87,7 @@ describe('FollowedCompaniesSection', () => {
       new Error("Couldn't find that company on any of our supported boards.")
     )
 
-    render(withCtx(<FollowedCompaniesSection companies={[]} />))
+    render(withCtx(<FollowedCompaniesSection companies={[]} limit={5} />))
     await userEvent.type(
       screen.getByPlaceholderText(/Add a company/i),
       'nope-co{Enter}',
@@ -84,7 +101,7 @@ describe('FollowedCompaniesSection', () => {
       new Error("Couldn't reach our boards right now, try again.")
     )
 
-    render(withCtx(<FollowedCompaniesSection companies={[]} />))
+    render(withCtx(<FollowedCompaniesSection companies={[]} limit={5} />))
     await userEvent.type(
       screen.getByPlaceholderText(/Add a company/i),
       'Stripe{Enter}',
@@ -103,7 +120,7 @@ describe('FollowedCompaniesSection', () => {
       new Error('boom')
     )
 
-    render(withCtx(<FollowedCompaniesSection companies={[]} />))
+    render(withCtx(<FollowedCompaniesSection companies={[]} limit={5} />))
     await userEvent.type(
       screen.getByPlaceholderText(/Add a company/i),
       'Linear{Enter}',
@@ -123,7 +140,7 @@ describe('FollowedCompaniesSection', () => {
       <FollowedCompaniesSection companies={[
         { id: 'a', canonical_name: 'Linear' },
         { id: 'b', canonical_name: 'Stripe' },
-      ]} />
+      ]} limit={5} />
     ))
 
     fireEvent.click(screen.getByLabelText(/Remove Linear/i))
@@ -133,7 +150,7 @@ describe('FollowedCompaniesSection', () => {
   })
 
   it('opens the typeahead dropdown when the user types', async () => {
-    render(withCtx(<FollowedCompaniesSection companies={[]} />))
+    render(withCtx(<FollowedCompaniesSection companies={[]} limit={5} />))
     const input = screen.getByPlaceholderText(/Add a company/i)
 
     await userEvent.type(input, 'lin')
@@ -152,7 +169,7 @@ describe('FollowedCompaniesSection', () => {
     })
     ;(api.updateProfile as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({ id: 'p', updated: true })
 
-    render(withCtx(<FollowedCompaniesSection companies={[]} />))
+    render(withCtx(<FollowedCompaniesSection companies={[]} limit={5} />))
     const input = screen.getByPlaceholderText(/Add a company/i)
     await userEvent.type(input, 'str')
 
@@ -173,7 +190,7 @@ describe('FollowedCompaniesSection', () => {
     })
     ;(api.updateProfile as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({ id: 'p', updated: true })
 
-    render(withCtx(<FollowedCompaniesSection companies={[]} />))
+    render(withCtx(<FollowedCompaniesSection companies={[]} limit={5} />))
     const input = screen.getByPlaceholderText(/Add a company/i)
     await userEvent.type(input, 'lin')
 
@@ -188,7 +205,7 @@ describe('FollowedCompaniesSection', () => {
       new Error("Couldn't find that company on any of our supported boards.")
     )
 
-    render(withCtx(<FollowedCompaniesSection companies={[]} />))
+    render(withCtx(<FollowedCompaniesSection companies={[]} limit={5} />))
     const input = screen.getByPlaceholderText(/Add a company/i)
     await userEvent.type(input, 'totally-fake-co{Enter}')
 
@@ -202,7 +219,7 @@ describe('FollowedCompaniesSection', () => {
     render(withCtx(
       <FollowedCompaniesSection companies={[
         { id: 'cat-1', canonical_name: 'Anthropic' },
-      ]} />
+      ]} limit={5} />
     ))
     const input = screen.getByPlaceholderText(/Add a company/i)
     await userEvent.type(input, 'a')
@@ -213,7 +230,7 @@ describe('FollowedCompaniesSection', () => {
   })
 
   it('Esc closes the dropdown without selecting', async () => {
-    render(withCtx(<FollowedCompaniesSection companies={[]} />))
+    render(withCtx(<FollowedCompaniesSection companies={[]} limit={5} />))
     const input = screen.getByPlaceholderText(/Add a company/i)
     await userEvent.type(input, 'lin')
 
@@ -232,7 +249,7 @@ describe('FollowedCompaniesSection', () => {
       () => new Promise(() => {})
     )
 
-    render(withCtx(<FollowedCompaniesSection companies={[]} />))
+    render(withCtx(<FollowedCompaniesSection companies={[]} limit={5} />))
     const input = screen.getByPlaceholderText(/Add a company/i)
     await userEvent.type(input, 'lin')
 
@@ -255,7 +272,7 @@ describe('FollowedCompaniesSection', () => {
       updated: true,
     })
 
-    render(withCtx(<FollowedCompaniesSection companies={[]} />))
+    render(withCtx(<FollowedCompaniesSection companies={[]} limit={5} />))
 
     // Wait for the catalog query to settle into the error state, which
     // is when the once-per-mount telemetry fires.
@@ -269,5 +286,40 @@ describe('FollowedCompaniesSection', () => {
     await waitFor(() =>
       expect(api.resolveCompany).toHaveBeenCalledWith('typed-name')
     )
+  })
+
+  it('does not resolve or save when adding at the followed-company limit', async () => {
+    render(withCtx(
+      <FollowedCompaniesSection companies={[
+        { id: 'a', canonical_name: 'Linear' },
+      ]} limit={1} />
+    ))
+
+    const input = screen.getByPlaceholderText(/Add a company/i)
+    await userEvent.type(input, 'Stripe{Enter}')
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/limit/i)
+    expect(api.resolveCompany).not.toHaveBeenCalled()
+    expect(api.updateProfile).not.toHaveBeenCalled()
+  })
+
+  it('still removes companies while at the followed-company limit', async () => {
+    ;(api.updateProfile as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({
+      id: 'p',
+      updated: true,
+    })
+
+    render(withCtx(
+      <FollowedCompaniesSection companies={[
+        { id: 'a', canonical_name: 'Linear' },
+      ]} limit={1} />
+    ))
+
+    fireEvent.click(screen.getByLabelText(/Remove Linear/i))
+
+    await waitFor(() =>
+      expect(api.updateProfile).toHaveBeenCalledWith({ target_company_ids: [] })
+    )
+    expect(api.resolveCompany).not.toHaveBeenCalled()
   })
 })

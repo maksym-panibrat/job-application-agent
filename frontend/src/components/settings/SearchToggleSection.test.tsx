@@ -35,6 +35,13 @@ describe('SearchToggleSection', () => {
     expect(screen.getByText(/3 days/i)).toBeInTheDocument()
   })
 
+  it('hides expiry countdown for paid active users', () => {
+    const inThreeDays = new Date(Date.now() + 3 * 86_400_000).toISOString()
+    render(withCtx(<SearchToggleSection active expiresAt={inThreeDays} paidActive />))
+    expect(screen.getByText(/search active/i)).toBeInTheDocument()
+    expect(screen.queryByText(/auto-pause/i)).not.toBeInTheDocument()
+  })
+
   it('clicking Pause calls toggleSearch(false)', async () => {
     let body: unknown = null
     server.use(
