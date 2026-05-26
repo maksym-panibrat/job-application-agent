@@ -161,7 +161,7 @@ Create `alembic/versions/e4f5a6b7c8d9_add_feedback_reports.py`:
 """add feedback reports
 
 Revision ID: e4f5a6b7c8d9
-Revises: 5a6b7c8d9e0f
+Revises: d8f2c4a9b1e7
 Create Date: 2026-05-25 20:30:00.000000
 
 """
@@ -175,7 +175,7 @@ from sqlalchemy.dialects import postgresql
 from alembic import op
 
 revision: str = "e4f5a6b7c8d9"
-down_revision: str | None = "5a6b7c8d9e0f"
+down_revision: str | None = "d8f2c4a9b1e7"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
@@ -226,7 +226,7 @@ def downgrade() -> None:
     op.drop_table("feedback_reports")
 ```
 
-This repository's current Alembic head before the feedback migration is `5a6b7c8d9e0f`.
+After merging current `origin/main`, this repository's Alembic head before the feedback migration is `d8f2c4a9b1e7`.
 
 Run `uv run alembic heads` before committing. Expected output includes only `e4f5a6b7c8d9 (head)` after this migration is present.
 
