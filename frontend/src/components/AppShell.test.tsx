@@ -77,7 +77,12 @@ const idleStatus = {
 describe('AppShell (desktop)', () => {
   beforeEach(() => {
     mockAuth.current.user = { id: 'u-1', email: 'maks@example.com' }
-    server.use(http.get('/api/sync/status', () => HttpResponse.json(idleStatus)))
+    server.use(
+      http.get('/api/sync/status', () => HttpResponse.json(idleStatus)),
+      http.post('/api/feedback', () =>
+        HttpResponse.json({ id: 'f-1', created: true, notification_status: 'not_configured' }),
+      ),
+    )
   })
 
   it('renders children inside <main>', () => {
@@ -111,6 +116,15 @@ describe('AppShell (desktop)', () => {
     await user.click(screen.getByRole('button', { name: /chat/i }))
 
     expect(screen.getByRole('dialog', { name: 'Chat' })).toBeInTheDocument()
+  })
+
+  it('opens the feedback modal from the desktop header', async () => {
+    const user = userEvent.setup()
+    renderShell('/matches/app-123')
+
+    await user.click(screen.getByRole('button', { name: /send feedback/i }))
+
+    expect(screen.getByRole('dialog', { name: /send feedback/i })).toBeInTheDocument()
   })
 })
 
@@ -203,7 +217,12 @@ describe('AppShell sync (header button)', () => {
 describe('AppShell sync (mobile menu)', () => {
   beforeEach(() => {
     mockAuth.current.user = { id: 'u-1', email: 'maks@example.com' }
-    server.use(http.get('/api/sync/status', () => HttpResponse.json(idleStatus)))
+    server.use(
+      http.get('/api/sync/status', () => HttpResponse.json(idleStatus)),
+      http.post('/api/feedback', () =>
+        HttpResponse.json({ id: 'f-1', created: true, notification_status: 'not_configured' }),
+      ),
+    )
   })
 
   it('opening the hamburger reveals a Sync entry that triggers /api/jobs/sync', async () => {
@@ -225,6 +244,16 @@ describe('AppShell sync (mobile menu)', () => {
     expect(sheetSync).toBeDefined()
     await user.click(sheetSync!)
     await waitFor(() => expect(posted).toBe(true))
+  })
+
+  it('opens feedback from the mobile menu', async () => {
+    const user = userEvent.setup()
+    renderShell()
+
+    await user.click(screen.getByRole('button', { name: /open menu/i }))
+    await user.click(screen.getByRole('button', { name: /send feedback/i }))
+
+    expect(screen.getByRole('dialog', { name: /send feedback/i })).toBeInTheDocument()
   })
 })
 
