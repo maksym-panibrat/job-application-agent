@@ -125,6 +125,29 @@ async def test_post_resolve_multi_provider_match_persists_all(
 
 
 @pytest.mark.asyncio
+async def test_get_profile_includes_subscription_and_limits(db_session, auth_headers, seeded_user):
+    from app.main import app as fastapi_app
+
+    user, _ = seeded_user
+    user.subscription_plan = "paid"
+    user.subscription_status = "active"
+    db_session.add(user)
+    await db_session.commit()
+
+    async with AsyncClient(
+        transport=ASGITransport(app=fastapi_app), base_url="http://test"
+    ) as client:
+        resp = await client.get("/api/profile", headers=auth_headers)
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["subscription"]["plan"] == "paid"
+    assert body["subscription"]["status"] == "active"
+    assert body["subscription"]["paid_active"] is True
+    assert body["limits"]["followed_companies"] == 100
+
+
+@pytest.mark.asyncio
 async def test_patch_profile_rejects_six_free_companies(db_session, auth_headers, seeded_user):
     from app.main import app as fastapi_app
 

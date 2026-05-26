@@ -27,8 +27,10 @@ from typing_extensions import TypedDict
 from app.agents.llm_safe import safe_ainvoke
 from app.config import get_settings
 from app.models.company import Company
+from app.models.user import User
 from app.models.user_profile import UserProfile
 from app.services import company_resolver, profile_service
+from app.services.entitlements import CompanyFollowLimitError, validate_company_follow_change
 
 log = structlog.get_logger()
 
@@ -177,6 +179,14 @@ async def persist_inferred_companies(profile, names: list[str], session) -> list
         if company.id not in resolved_ids:
             resolved_ids.append(company.id)
             resolved_names.append(company.canonical_name)
+    user = await session.get(User, profile.user_id)
+    if user is None:
+        raise ValueError(f"User not found for onboarding company update: {profile.user_id}")
+    resolved_ids = validate_company_follow_change(
+        user,
+        profile.target_company_ids or [],
+        resolved_ids,
+    )
     profile.target_company_ids = resolved_ids
     session.add(profile)
     await session.commit()
@@ -296,6 +306,14 @@ def build_graph(checkpointer: AsyncPostgresSaver) -> StateGraph:
         if profile_data is not None:
             system_content += "\n\n" + _format_current_profile(profile_data)
 
+        persistence_errors = state.get("profile_updates", {}).get("errors", [])
+        if persistence_errors:
+            system_content += "\n\n## Persistence Errors\n"
+            system_content += "\n".join(f"- {err}" for err in persistence_errors)
+            system_content += (
+                "\nTell the user these changes were not saved and ask them to adjust."
+            )
+
         if resume_md:
             system_content += f"\n\n## User's Current Resume\n{resume_md}"
 
@@ -328,6 +346,7 @@ def build_graph(checkpointer: AsyncPostgresSaver) -> StateGraph:
             return {}
 
         profile_uuid = uuid.UUID(profile_id_str)
+        persistence_errors: list[str] = []
 
         async with db_factory() as session:
             for tc in ai_msg.tool_calls:
@@ -385,6 +404,12 @@ def build_graph(checkpointer: AsyncPostgresSaver) -> StateGraph:
                             if profile is not None:
                                 try:
                                     await persist_inferred_companies(profile, names, session)
+                                except CompanyFollowLimitError as exc:
+                                    persistence_errors.append(str(exc))
+                                    await log.awarning(
+                                        "onboarding.process_tool_results.company_limit_failed",
+                                        error=str(exc),
+                                    )
                                 except Exception as exc:
                                     await log.awarning(
                                         "onboarding.process_tool_results.company_resolve_failed",
@@ -431,7 +456,9 @@ def build_graph(checkpointer: AsyncPostgresSaver) -> StateGraph:
                             error=str(exc),
                         )
 
-        return {}
+        if persistence_errors:
+            return {"profile_updates": {"errors": persistence_errors}}
+        return {"profile_updates": {}}
 
     def should_continue(state: OnboardingState) -> str:
         last = state["messages"][-1]

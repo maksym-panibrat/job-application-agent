@@ -15,7 +15,12 @@ from app.models.company import Company
 from app.models.user import User
 from app.models.user_profile import UserProfile
 from app.services import match_service, profile_service
-from app.services.entitlements import CompanyFollowLimitError, next_search_expiry
+from app.services.entitlements import (
+    CompanyFollowLimitError,
+    company_follow_limit,
+    is_paid_active,
+    next_search_expiry,
+)
 from app.services.rate_limit_service import check_daily_quota, check_rate_limit
 
 log = structlog.get_logger()
@@ -24,6 +29,7 @@ router = APIRouter(prefix="/api/profile", tags=["profile"])
 
 @router.get("")
 async def get_profile(
+    user: User = Depends(get_current_user),
     profile: UserProfile = Depends(get_current_profile),
     session: AsyncSession = Depends(get_db),
 ):
@@ -63,6 +69,14 @@ async def get_profile(
         "search_active": profile.search_active,
         "search_expires_at": profile.search_expires_at,
         "target_companies": target_companies,
+        "subscription": {
+            "plan": user.subscription_plan,
+            "status": user.subscription_status,
+            "paid_active": is_paid_active(user),
+        },
+        "limits": {
+            "followed_companies": company_follow_limit(user),
+        },
         "first_name": profile.first_name,
         "last_name": profile.last_name,
         "skills": [

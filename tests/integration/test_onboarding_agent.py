@@ -222,6 +222,142 @@ async def test_persist_inferred_companies_resolves_and_appends_ids(db_session, m
 
 
 @pytest.mark.asyncio
+async def test_persist_inferred_companies_respects_free_limit(db_session, monkeypatch):
+    from app.agents.onboarding import persist_inferred_companies
+    from app.models.company import Company
+    from app.models.user import User
+    from app.models.user_profile import UserProfile
+    from app.services import company_resolver
+    from app.services.entitlements import CompanyFollowLimitError
+
+    existing = [
+        Company(
+            canonical_name=f"Existing {i}",
+            normalized_key=f"existing-{uuid.uuid4()}",
+            provider_slugs={"greenhouse": f"existing-{uuid.uuid4()}"},
+            resolved_at=datetime.now(UTC),
+        )
+        for i in range(5)
+    ]
+    overflow = Company(
+        canonical_name="Overflow",
+        normalized_key=f"overflow-{uuid.uuid4()}",
+        provider_slugs={"greenhouse": f"overflow-{uuid.uuid4()}"},
+        resolved_at=datetime.now(UTC),
+    )
+    db_session.add_all([*existing, overflow])
+    await db_session.commit()
+    for company in [*existing, overflow]:
+        await db_session.refresh(company)
+
+    user_id = uuid.uuid4()
+    user = User(
+        id=user_id,
+        email=f"free-limit-{user_id}@local",
+        subscription_plan="free",
+        subscription_status="inactive",
+    )
+    profile = UserProfile(
+        user_id=user_id,
+        target_company_ids=[company.id for company in existing],
+    )
+    db_session.add(user)
+    db_session.add(profile)
+    await db_session.commit()
+    await db_session.refresh(profile)
+
+    async def fake_resolve(name, session):
+        if name == "Overflow":
+            return overflow
+        return None
+
+    monkeypatch.setattr(company_resolver, "resolve", fake_resolve)
+
+    with pytest.raises(CompanyFollowLimitError):
+        await persist_inferred_companies(profile, ["Overflow"], db_session)
+
+    db_session.expire_all()
+    await db_session.refresh(profile)
+    assert profile.target_company_ids == [company.id for company in existing]
+
+
+@pytest.mark.asyncio
+async def test_company_limit_error_is_visible_to_onboarding_agent(
+    checkpointer, db_session, asyncpg_url, monkeypatch
+):
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+    from app.agents.onboarding import build_graph
+    from app.models.company import Company
+    from app.models.user import User
+    from app.models.user_profile import UserProfile
+    from app.services import company_resolver
+
+    existing = [
+        Company(
+            canonical_name=f"Existing {i}",
+            normalized_key=f"existing-visible-{uuid.uuid4()}",
+            provider_slugs={"greenhouse": f"existing-visible-{uuid.uuid4()}"},
+            resolved_at=datetime.now(UTC),
+        )
+        for i in range(5)
+    ]
+    overflow = Company(
+        canonical_name="Overflow",
+        normalized_key=f"overflow-visible-{uuid.uuid4()}",
+        provider_slugs={"greenhouse": f"overflow-visible-{uuid.uuid4()}"},
+        resolved_at=datetime.now(UTC),
+    )
+    db_session.add_all([*existing, overflow])
+    await db_session.commit()
+    for company in [*existing, overflow]:
+        await db_session.refresh(company)
+
+    user_id = uuid.uuid4()
+    user = User(id=user_id, email=f"visible-limit-{user_id}@local")
+    profile = UserProfile(
+        user_id=user_id,
+        target_company_ids=[company.id for company in existing],
+    )
+    db_session.add(user)
+    db_session.add(profile)
+    await db_session.commit()
+    await db_session.refresh(profile)
+
+    async def fake_resolve(name, session):
+        if name == "Overflow":
+            return overflow
+        return None
+
+    monkeypatch.setattr(company_resolver, "resolve", fake_resolve)
+
+    engine = create_async_engine(asyncpg_url, echo=False)
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    spy = _SpyLLM(
+        responses=[
+            '{"updates": "{\\"target_companies\\": [\\"Overflow\\"]}"}',
+            "I could not save that company.",
+        ]
+    )
+    _SpyLLM.captured_system = []
+    with patch("app.agents.onboarding.get_llm", return_value=spy):
+        graph = build_graph(checkpointer)
+        await graph.ainvoke(
+            {
+                "messages": [{"role": "user", "content": "Add Overflow"}],
+                "profile_id": str(profile.id),
+                "profile_updates": {},
+            },
+            {"configurable": {"thread_id": str(profile.id), "db_factory": factory}},
+        )
+    await engine.dispose()
+
+    system_blob = "\n".join(_SpyLLM.captured_system)
+    assert "Persistence Errors" in system_blob
+    assert "Free accounts can follow up to 5 companies." in system_blob
+
+
+@pytest.mark.asyncio
 async def test_persist_inferred_companies_handles_fanout_timeout(db_session, monkeypatch):
     """A FanoutTimeoutError on one name must not abort the whole batch — the
     name is logged and skipped, the rest still resolve."""
