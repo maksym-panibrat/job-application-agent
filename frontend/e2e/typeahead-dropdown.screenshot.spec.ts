@@ -28,6 +28,8 @@ const PROFILE_BASE = {
   search_keywords: [],
   search_active: true,
   search_expires_at: null,
+  subscription: { plan: 'free', status: 'active', paid_active: false },
+  limits: { followed_companies: 5 },
   target_companies: [],
   skills: [],
   work_experiences: [],
