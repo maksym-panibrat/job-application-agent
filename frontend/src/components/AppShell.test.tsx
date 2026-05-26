@@ -168,6 +168,21 @@ describe('AppShell sync (header button)', () => {
     expect(statusCalls).toBe(1)
   }, 6_000)
 
+  it('stops sync-status polling after a 401', async () => {
+    let statusCalls = 0
+    server.use(
+      http.get('/api/sync/status', () => {
+        statusCalls += 1
+        return HttpResponse.json({ detail: 'Invalid token' }, { status: 401 })
+      }),
+    )
+    renderShell()
+
+    await waitFor(() => expect(statusCalls).toBe(1))
+    await new Promise((r) => setTimeout(r, 3_500))
+    expect(statusCalls).toBe(1)
+  }, 6_000)
+
   it('reflects live sync state in the button aria-label and disables it', async () => {
     server.use(
       http.get('/api/sync/status', () => HttpResponse.json({

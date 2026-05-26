@@ -73,7 +73,20 @@ def test_sync_wrong_secret_returns_403():
 
 def test_sync_correct_secret_calls_task():
     client = make_app(secret="real-secret")
-    with patch("app.api.internal_cron.get_session_factory", return_value=lambda: _FakeSession()):
+    with (
+        patch("app.api.internal_cron.get_session_factory", return_value=lambda: _FakeSession()),
+        patch(
+            "app.services.job_sync_service.sync_active_profiles",
+            new=AsyncMock(
+                return_value={
+                    "enqueued": [],
+                    "pruned": 0,
+                    "active_profiles": 0,
+                    "profiles_enqueued": 0,
+                }
+            ),
+        ),
+    ):
         resp = client.post("/internal/cron/sync", headers={"X-Cron-Secret": "real-secret"})
     assert resp.status_code == 202
     assert resp.json() == {
@@ -144,10 +157,11 @@ def test_sync_unexpected_exception_returns_500():
     # plus the @type marker in _add_cloud_run_severity are what surface it to GCP
     # Error Reporting — that path is covered separately in test_logging.py.
     client = make_app(secret="real-secret", raise_server_exceptions=False)
-    with patch(
-        "app.api.internal_cron.get_session_factory",
-        return_value=lambda: _FakeSession(
-            execute_error=RuntimeError("db connection refused")
+    with (
+        patch("app.api.internal_cron.get_session_factory", return_value=lambda: _FakeSession()),
+        patch(
+            "app.services.job_sync_service.sync_active_profiles",
+            new=AsyncMock(side_effect=RuntimeError("db connection refused")),
         ),
     ):
         resp = client.post(

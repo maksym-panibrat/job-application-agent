@@ -51,8 +51,7 @@ export interface Job {
   workplace_type: string | null
   salary: string | null
   contract_type: string | null
-  description_raw: string | null
-  description: string | null
+  description?: string | null
   apply_url: string
   posted_at: string | null
 }
@@ -126,6 +125,12 @@ export interface FeedbackResponse {
   notification_status: 'pending' | 'not_configured' | 'sent' | 'failed'
 }
 
+function clearAuthOnUnauthorized(status: number) {
+  if (status !== 401) return
+  sessionStorage.removeItem('access_token')
+  window.dispatchEvent(new CustomEvent('auth:token-expired'))
+}
+
 export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const token = sessionStorage.getItem('access_token')
   const headers: Record<string, string> = { 'Content-Type': 'application/json' }
@@ -134,6 +139,7 @@ export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> 
     headers: { ...headers, ...init?.headers },
     ...init,
   })
+  clearAuthOnUnauthorized(res.status)
   if (!res.ok) {
     const text = await res.text()
     let detail: string | null = null
@@ -145,7 +151,7 @@ export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> 
     } catch {
       // body wasn't JSON; fall through to raw text
     }
-    throw new Error(detail ?? `${res.status}: ${text}`)
+    throw new Error(detail ? `${res.status}: ${detail}` : `${res.status}: ${text}`)
   }
   return res.json()
 }
@@ -165,6 +171,7 @@ export const api = {
     const form = new FormData()
     form.append('file', file)
     const r = await fetch('/api/profile/upload', { method: 'POST', body: form, headers })
+    clearAuthOnUnauthorized(r.status)
     if (!r.ok) {
       const text = await r.text()
       throw new Error(`${r.status}: ${text}`)
@@ -189,6 +196,7 @@ export const api = {
       headers,
       body: JSON.stringify({ name }),
     })
+    clearAuthOnUnauthorized(resp.status)
     if (resp.status === 404) {
       throw new Error("Couldn't find that company on any of our supported boards.")
     }
@@ -272,6 +280,7 @@ export const api = {
     const headers: Record<string, string> = {}
     if (token) headers['Authorization'] = `Bearer ${token}`
     const res = await fetch(`/api/documents/${docId}/pdf`, { headers })
+    clearAuthOnUnauthorized(res.status)
     if (!res.ok) {
       const text = await res.text()
       let detail: string | null = null
@@ -305,6 +314,7 @@ export const api = {
       headers,
       body: JSON.stringify({ message }),
     }).then(async (res) => {
+      clearAuthOnUnauthorized(res.status)
       if (!res.ok) {
         const text = await res.text()
         const err = new Error(`${res.status}: ${text}`)

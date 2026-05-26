@@ -34,28 +34,47 @@ async def list_applications(
     )
 
     result = []
-    for app, job in rows:
+    for (
+        app_id,
+        app_status,
+        generation_status,
+        match_score,
+        match_summary,
+        match_rationale,
+        match_strengths,
+        match_gaps,
+        created_at,
+        job_id,
+        title,
+        company_name,
+        location,
+        workplace_type,
+        salary,
+        contract_type,
+        apply_url,
+        posted_at,
+    ) in rows:
         result.append(
             {
-                "id": str(app.id),
-                "status": app.status,
-                "generation_status": app.generation_status,
-                "match_score": app.match_score,
-                "match_summary": app.match_summary,
-                "match_rationale": app.match_rationale,
-                "match_strengths": app.match_strengths,
-                "match_gaps": app.match_gaps,
-                "created_at": app.created_at,
+                "id": str(app_id),
+                "status": app_status,
+                "generation_status": generation_status,
+                "match_score": match_score,
+                "match_summary": match_summary,
+                "match_rationale": match_rationale,
+                "match_strengths": match_strengths,
+                "match_gaps": match_gaps,
+                "created_at": created_at,
                 "job": {
-                    "id": str(job.id),
-                    "title": job.title,
-                    "company_name": job.company_name,
-                    "location": job.location,
-                    "workplace_type": job.workplace_type,
-                    "salary": job.salary,
-                    "contract_type": job.contract_type,
-                    "apply_url": job.apply_url,
-                    "posted_at": job.posted_at,
+                    "id": str(job_id),
+                    "title": title,
+                    "company_name": company_name,
+                    "location": location,
+                    "workplace_type": workplace_type,
+                    "salary": salary,
+                    "contract_type": contract_type,
+                    "apply_url": apply_url,
+                    "posted_at": posted_at,
                 },
             }
         )
@@ -72,7 +91,22 @@ async def get_application(
     if not app or app.profile_id != profile.id:
         raise HTTPException(status_code=404, detail="Application not found")
 
-    job = await session.get(Job, app.job_id)
+    job = (
+        await session.execute(
+            select(
+                Job.id,
+                Job.title,
+                Job.company_name,
+                Job.location,
+                Job.workplace_type,
+                Job.salary,
+                Job.contract_type,
+                Job.description,
+                Job.apply_url,
+                Job.posted_at,
+            ).where(Job.id == app.job_id)
+        )
+    ).one_or_none()
     docs_result = await session.execute(
         select(GeneratedDocument).where(GeneratedDocument.application_id == app.id)
     )
@@ -91,17 +125,16 @@ async def get_application(
         "applied_at": app.applied_at,
         "created_at": app.created_at,
         "job": {
-            "id": str(job.id),
-            "title": job.title,
-            "company_name": job.company_name,
-            "location": job.location,
-            "workplace_type": job.workplace_type,
-            "salary": job.salary,
-            "contract_type": job.contract_type,
-            "description_raw": job.description_raw,
-            "description": job.description,
-            "apply_url": job.apply_url,
-            "posted_at": job.posted_at,
+            "id": str(job[0]),
+            "title": job[1],
+            "company_name": job[2],
+            "location": job[3],
+            "workplace_type": job[4],
+            "salary": job[5],
+            "contract_type": job[6],
+            "description": job[7],
+            "apply_url": job[8],
+            "posted_at": job[9],
         }
         if job
         else None,

@@ -5,7 +5,7 @@ import { MatchHero } from './MatchHero'
 const job = {
   id: 'j', title: 'Senior Backend Engineer', company_name: 'Acme', location: 'Berlin',
   workplace_type: 'hybrid', salary: '€100k', contract_type: null,
-  description_raw: null, description: null, apply_url: '#', posted_at: '2026-05-01',
+  description: null, apply_url: '#', posted_at: '2026-05-01',
 }
 
 describe('MatchHero', () => {

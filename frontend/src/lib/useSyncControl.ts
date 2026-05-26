@@ -44,6 +44,7 @@ export function useSyncControl({ enabled = true }: UseSyncControlOptions = {}): 
     if (!enabled) return
     let cancelled = false
     let timeoutId: ReturnType<typeof setTimeout> | null = null
+    let livePolls = 0
     async function poll() {
       try {
         const body = await api.getSyncStatus()
@@ -54,9 +55,16 @@ export function useSyncControl({ enabled = true }: UseSyncControlOptions = {}): 
         }
         prevState.current = body.state
         if (body.state !== 'idle') {
-          timeoutId = setTimeout(poll, POLL_MS)
+          livePolls += 1
+          const interval = Math.min(POLL_MS * Math.max(1, livePolls), 30_000)
+          timeoutId = setTimeout(poll, interval)
+        } else {
+          livePolls = 0
         }
-      } catch {
+      } catch (err) {
+        if ((err as Error)?.message?.includes('401')) {
+          return
+        }
         // Silent — control just stays "Sync now" without live state.
       }
     }

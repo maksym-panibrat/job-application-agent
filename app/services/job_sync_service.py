@@ -15,6 +15,7 @@ Two contracts here, by design (#80):
 The actual fetch and matching happen in the always-on worker.
 """
 
+import uuid
 from datetime import UTC, datetime
 
 import structlog
@@ -115,7 +116,7 @@ async def prune_and_enqueue(profile: UserProfile, session: AsyncSession) -> dict
 
 
 async def sync_active_profiles(session: AsyncSession) -> dict:
-    """Cron/scheduler sweep: apply the enqueue-only sync contract to active profiles."""
+    """Cron/scheduler sweep: enqueue distinct stale provider slugs for active profiles."""
     active_profiles = (
         (
             await session.execute(
@@ -126,20 +127,59 @@ async def sync_active_profiles(session: AsyncSession) -> dict:
         .all()
     )
 
+    pruned_by_profile: dict[uuid.UUID, list[str]] = {}
+    for profile in active_profiles:
+        pruned_by_profile[profile.id] = await _prune_invalid_provider_slugs(profile, session)
+
+    stale_by_profile = await slug_registry_service.list_stale_for_active_profiles(
+        session,
+        ttl_hours=6,
+    )
+
+    pairs_by_profile: dict[uuid.UUID, list[tuple[str, str]]] = {}
+    distinct_pairs: dict[tuple[str, str], str] = {}
+    for profile_id, provider, slug in stale_by_profile:
+        pairs_by_profile.setdefault(profile_id, []).append((provider, slug))
+        distinct_pairs.setdefault((provider, slug), slug)
+
     enqueued: list[str] = []
-    pruned = 0
+    enqueued_pairs: set[tuple[str, str]] = set()
+    for (provider, slug), display_slug in distinct_pairs.items():
+        row_id = await enqueue(
+            session,
+            job_type="fetch-slug",
+            payload=FetchSlugPayload(provider=provider, slug=slug).model_dump(),
+            dedupe_key=f"fetch-slug:{provider}:{slug}",
+        )
+        if row_id is not None:
+            enqueued.append(display_slug)
+            enqueued_pairs.add((provider, slug))
+
+    now = datetime.now(UTC)
     profiles_enqueued = 0
     for profile in active_profiles:
-        summary = await prune_and_enqueue(profile, session)
-        queued_slugs = list(summary["queued_slugs"])
-        if queued_slugs:
+        profile_slugs = [
+            slug
+            for provider, slug in pairs_by_profile.get(profile.id, [])
+            if (provider, slug) in enqueued_pairs
+        ]
+        profile.last_sync_requested_at = now
+        profile.last_sync_summary = {
+            "queued_slugs": profile_slugs,
+            "matched_now": 0,
+            "pruned_slugs": pruned_by_profile.get(profile.id, []),
+        }
+        if profile_slugs:
             profiles_enqueued += 1
-            enqueued.extend(queued_slugs)
-        pruned += len(summary["pruned_slugs"])
+        else:
+            profile.last_sync_completed_at = now
+        session.add(profile)
+
+    await session.commit()
 
     return {
         "enqueued": enqueued,
-        "pruned": pruned,
+        "pruned": sum(len(values) for values in pruned_by_profile.values()),
         "active_profiles": len(active_profiles),
         "profiles_enqueued": profiles_enqueued,
     }

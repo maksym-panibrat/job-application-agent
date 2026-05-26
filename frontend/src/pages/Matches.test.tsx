@@ -17,7 +17,7 @@ function makeApp(id: string, status: string, score = 0.8): Application {
     applied_at: null,
     job: { id: `job-${id}`, title: `Job ${id}`, company_name: 'Co', location: null,
            workplace_type: null, salary: null, contract_type: null,
-           description_raw: null, description: null, apply_url: 'https://x.com', posted_at: null },
+           apply_url: 'https://x.com', posted_at: null },
   }
 }
 

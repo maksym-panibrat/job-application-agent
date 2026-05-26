@@ -36,6 +36,7 @@ class Settings(BaseSettings):
     # `tick_deadline_seconds` bounds total wall time per tick.
     matching_max_per_profile_per_tick: int = 30
     matching_tick_deadline_seconds: int = 240
+    queue_depth_emit_interval_s: int = 60
 
     cors_allowed_origins: list[str] = ["http://localhost:5173", "http://localhost:3000"]
     # Absolute base URL Google sees as redirect_uri host. Cloud Run forwards HTTP to
