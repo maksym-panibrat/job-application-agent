@@ -101,6 +101,30 @@ export interface SyncStatus {
   invalid_slugs: string[]
 }
 
+export type FeedbackCategory = 'feature_request' | 'bug' | 'other'
+
+export interface FeedbackDiagnostics {
+  reported_at_client?: string
+  path?: string
+  page_title?: string
+  user_agent?: string
+  viewport?: { width: number; height: number }
+  timezone?: string
+  route_context?: Record<string, string>
+}
+
+export interface FeedbackRequest {
+  category: FeedbackCategory
+  message: string
+  diagnostics: FeedbackDiagnostics
+}
+
+export interface FeedbackResponse {
+  id: string
+  created: boolean
+  notification_status: 'pending' | 'not_configured' | 'sent' | 'failed'
+}
+
 function clearAuthOnUnauthorized(status: number) {
   if (status !== 401) return
   sessionStorage.removeItem('access_token')
@@ -207,6 +231,13 @@ export const api = {
   // Sync status (Task 19)
   getSyncStatus: () =>
     apiFetch<SyncStatus>('/api/sync/status'),
+
+  // Feedback
+  submitFeedback: (data: FeedbackRequest) =>
+    apiFetch<FeedbackResponse>('/api/feedback', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
 
   // Applications
   listApplications: (params?: { status?: string; min_score?: number; limit?: number }) => {

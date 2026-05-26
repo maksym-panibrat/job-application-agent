@@ -3,8 +3,9 @@ import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { IconButton } from './ui/IconButton'
 import { ActionSheet, ActionSheetItem } from './ui/ActionSheet'
-import { Settings, Chat, Hamburger, Sync } from './ui/icons'
+import { Settings, Chat, Hamburger, Sync, Feedback as FeedbackIcon } from './ui/icons'
 import { useSyncControl } from '../lib/useSyncControl'
+import { FeedbackModal } from './FeedbackModal'
 
 export interface AppShellProps {
   children: ReactNode
@@ -15,6 +16,7 @@ export function AppShell({ children }: AppShellProps) {
   const location = useLocation()
   const navigate = useNavigate()
   const [menuOpen, setMenuOpen] = useState(false)
+  const [feedbackOpen, setFeedbackOpen] = useState(false)
   const sync = useSyncControl({ enabled: !!user })
   const syncBusy = sync.isLive || sync.isPending
   const syncLabel = sync.isLive ? sync.label : 'Sync now'
@@ -34,7 +36,7 @@ export function AppShell({ children }: AppShellProps) {
           <nav className="flex items-center gap-1">
             {user && (
               <>
-                <div className="hidden md:flex items-center gap-1">
+                <div className="hidden md:flex items-center gap-1" aria-hidden={menuOpen ? true : undefined}>
                   <IconButton
                     aria-label={syncLabel}
                     title={syncLabel}
@@ -59,6 +61,9 @@ export function AppShell({ children }: AppShellProps) {
                   >
                     <Settings className="w-5 h-5" />
                   </Link>
+                  <IconButton aria-label="Send feedback" onClick={() => setFeedbackOpen(true)}>
+                    <FeedbackIcon className="w-5 h-5" />
+                  </IconButton>
                   <IconButton aria-label="Chat" onClick={openChat}>
                     <Chat className="w-5 h-5" />
                   </IconButton>
@@ -99,6 +104,11 @@ export function AppShell({ children }: AppShellProps) {
           {syncLabel}
         </ActionSheetItem>
         <ActionSheetItem
+          onClick={() => { setMenuOpen(false); setFeedbackOpen(true) }}
+        >
+          Send feedback
+        </ActionSheetItem>
+        <ActionSheetItem
           onClick={() => { setMenuOpen(false); navigate('/settings') }}
         >
           Settings
@@ -112,6 +122,7 @@ export function AppShell({ children }: AppShellProps) {
           Sign out
         </ActionSheetItem>
       </ActionSheet>
+      <FeedbackModal open={feedbackOpen} onClose={() => setFeedbackOpen(false)} />
     </div>
   )
 }

@@ -4,6 +4,7 @@
 from app.models.application import Application, GeneratedDocument  # noqa: F401
 from app.models.company import Company  # noqa: F401
 from app.models.event import Event  # noqa: F401
+from app.models.feedback_report import FeedbackReport  # noqa: F401
 from app.models.job import Job  # noqa: F401
 from app.models.llm_status import LLMStatus  # noqa: F401
 from app.models.oauth_account import OAuthAccount  # noqa: F401
@@ -17,6 +18,7 @@ from app.models.work_queue import WorkQueue, WorkQueueStatus  # noqa: F401
 __all__ = [
     "User",
     "Event",
+    "FeedbackReport",
     "UserProfile",
     "Skill",
     "WorkExperience",

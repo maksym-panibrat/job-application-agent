@@ -31,6 +31,7 @@ async def _seed_reset_rows(db_session) -> None:
     job_id = uuid.uuid4()
     app_id = uuid.uuid4()
     doc_id = uuid.uuid4()
+    feedback_id = uuid.uuid4()
     oauth_id = uuid.uuid4()
     skill_id = uuid.uuid4()
     work_experience_id = uuid.uuid4()
@@ -125,6 +126,15 @@ async def _seed_reset_rows(db_session) -> None:
         {"event_id": uuid.uuid4(), "profile_id": profile_id},
     )
     await db_session.execute(
+        text("""
+            INSERT INTO feedback_reports (id, user_id, user_email, category, message,
+                diagnostics, notification_status, created_at)
+            VALUES (:feedback_id, :user_id, 'wipe@example.com', 'bug', 'broken',
+                '{}'::jsonb, 'not_configured', now())
+        """),
+        {"feedback_id": feedback_id, "user_id": user_id},
+    )
+    await db_session.execute(
         text("INSERT INTO llm_status (id, exhausted_until) VALUES (1, now())")
     )
     await db_session.execute(
@@ -168,6 +178,7 @@ async def test_wipe_removes_user_owned_and_job_search_rows_but_preserves_compani
         "jobs",
         "work_queue",
         "events",
+        "feedback_reports",
         "oauth_accounts",
         "skills",
         "work_experiences",
