@@ -3,6 +3,7 @@ from httpx import ASGITransport, AsyncClient
 
 
 @pytest.mark.asyncio
+@pytest.mark.xfail(reason="POST /api/feedback is implemented in Task 2", strict=True)
 async def test_feedback_submit_creates_row(db_session, auth_headers, seeded_user):
     from app.main import app as fastapi_app
 

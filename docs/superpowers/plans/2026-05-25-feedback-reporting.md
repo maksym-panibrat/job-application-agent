@@ -161,7 +161,7 @@ Create `alembic/versions/e4f5a6b7c8d9_add_feedback_reports.py`:
 """add feedback reports
 
 Revision ID: e4f5a6b7c8d9
-Revises: 05b608a37f60, 5a6b7c8d9e0f
+Revises: 5a6b7c8d9e0f
 Create Date: 2026-05-25 20:30:00.000000
 
 """
@@ -175,7 +175,7 @@ from sqlalchemy.dialects import postgresql
 from alembic import op
 
 revision: str = "e4f5a6b7c8d9"
-down_revision: tuple[str, str] = ("05b608a37f60", "5a6b7c8d9e0f")
+down_revision: str | None = "5a6b7c8d9e0f"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
@@ -226,7 +226,7 @@ def downgrade() -> None:
     op.drop_table("feedback_reports")
 ```
 
-This repository currently has two Alembic heads, `05b608a37f60` and `5a6b7c8d9e0f`. This migration intentionally depends on both heads so it does not create a third head.
+This repository's current Alembic head before the feedback migration is `5a6b7c8d9e0f`.
 
 Run `uv run alembic heads` before committing. Expected output includes only `e4f5a6b7c8d9 (head)` after this migration is present.
 
@@ -239,6 +239,14 @@ pytest tests/integration/test_feedback_api.py::test_feedback_submit_creates_row 
 ```
 
 Expected: still FAIL because the API route/service is not implemented. The model import error should be gone.
+
+Before committing Task 1, mark `test_feedback_submit_creates_row` as an explicit temporary xfail because the route is implemented in Task 2:
+
+```python
+@pytest.mark.xfail(reason="POST /api/feedback is implemented in Task 2", strict=True)
+```
+
+Task 2 must remove this xfail before making the route test pass.
 
 - [ ] **Step 7: Commit model and migration**
 
@@ -357,6 +365,16 @@ async def test_feedback_sanitizes_diagnostics(db_session, auth_headers, seeded_u
     assert row.diagnostics["route_context"]["application_id"] == "abc"
     assert len(row.diagnostics["route_context"]["too_long"]) == 128
 ```
+
+- [ ] **Step 1a: Remove the temporary xfail from the persistence test**
+
+In `tests/integration/test_feedback_api.py`, remove this marker from `test_feedback_submit_creates_row`:
+
+```python
+@pytest.mark.xfail(reason="POST /api/feedback is implemented in Task 2", strict=True)
+```
+
+The persistence test should become an active passing test in this task.
 
 - [ ] **Step 2: Run tests to verify they fail**
 

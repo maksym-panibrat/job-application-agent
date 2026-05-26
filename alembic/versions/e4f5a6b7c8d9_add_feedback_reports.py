@@ -1,7 +1,7 @@
 """add feedback reports
 
 Revision ID: e4f5a6b7c8d9
-Revises: 05b608a37f60, 5a6b7c8d9e0f
+Revises: 5a6b7c8d9e0f
 Create Date: 2026-05-25 20:30:00.000000
 
 """
@@ -15,7 +15,7 @@ from sqlalchemy.dialects import postgresql
 from alembic import op
 
 revision: str = "e4f5a6b7c8d9"
-down_revision: tuple[str, str] = ("05b608a37f60", "5a6b7c8d9e0f")
+down_revision: str | None = "5a6b7c8d9e0f"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
