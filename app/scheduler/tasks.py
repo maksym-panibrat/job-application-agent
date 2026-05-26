@@ -29,7 +29,9 @@ async def run_daily_maintenance() -> dict:
 
     from app.config import get_settings
     from app.database import get_session_factory
+    from app.models.user import User
     from app.models.user_profile import UserProfile
+    from app.services.entitlements import is_paid_active, next_search_expiry
     from app.services.job_service import mark_stale_jobs
 
     settings = get_settings()
@@ -39,23 +41,57 @@ async def run_daily_maintenance() -> dict:
         stale = await mark_stale_jobs(settings.job_stale_after_days, session)
         await log.ainfo("maintenance.stale_jobs", count=stale)
 
-        # Auto-pause searches that have expired
+        # Reconcile active search expiry windows.
+        now = datetime.now(UTC)
         result = await session.execute(
-            select(UserProfile).where(
+            select(UserProfile, User).join(User, User.id == UserProfile.user_id).where(
                 UserProfile.search_active.is_(True),
-                UserProfile.search_expires_at.is_not(None),
-                UserProfile.search_expires_at < datetime.now(UTC),
             )
         )
-        expired_profiles = result.scalars().all()
-        for profile in expired_profiles:
-            profile.search_active = False
-            profile.updated_at = datetime.now(UTC)
-            session.add(profile)
-            await log.awarning("maintenance.search_paused", profile_id=str(profile.id))
-        if expired_profiles:
+        searches_paused = 0
+        searches_extended = 0
+        for profile, user in result.all():
+            if is_paid_active(user):
+                profile.search_expires_at = next_search_expiry(now, settings)
+                profile.updated_at = now
+                session.add(profile)
+                searches_extended += 1
+                await log.ainfo(
+                    "maintenance.search_extended",
+                    profile_id=str(profile.id),
+                    user_id=str(user.id),
+                )
+                continue
+
+            if profile.search_expires_at is None:
+                profile.search_expires_at = next_search_expiry(now, settings)
+                profile.updated_at = now
+                session.add(profile)
+                searches_extended += 1
+                await log.ainfo(
+                    "maintenance.search_expiry_seeded",
+                    profile_id=str(profile.id),
+                    user_id=str(user.id),
+                )
+                continue
+
+            if profile.search_expires_at < now:
+                profile.search_active = False
+                profile.updated_at = now
+                session.add(profile)
+                searches_paused += 1
+                await log.awarning(
+                    "maintenance.search_paused",
+                    profile_id=str(profile.id),
+                    user_id=str(user.id),
+                )
+        if searches_paused or searches_extended:
             await session.commit()
-            await log.ainfo("maintenance.searches_paused", count=len(expired_profiles))
+            await log.ainfo(
+                "maintenance.searches_reconciled",
+                paused=searches_paused,
+                extended=searches_extended,
+            )
 
         # Trim matched applications to 500 most recent per user
         trim_result = await session.execute(
@@ -113,7 +149,7 @@ async def run_daily_maintenance() -> dict:
 
     return {
         "stale_jobs": stale,
-        "searches_paused": len(expired_profiles),
+        "searches_paused": searches_paused,
         "applications_trimmed": trimmed,
         "events_deleted": events_deleted,
         "work_queue_done_pruned": done_pruned,

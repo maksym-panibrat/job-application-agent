@@ -21,8 +21,15 @@ async def _create_user_and_profile(
     db_session,
     search_active: bool = True,
     expires_delta: timedelta | None = None,
+    subscription_plan: str = "free",
+    subscription_status: str = "inactive",
 ) -> UserProfile:
-    user = User(id=uuid.uuid4(), email=f"test-{uuid.uuid4()}@test.com")
+    user = User(
+        id=uuid.uuid4(),
+        email=f"test-{uuid.uuid4()}@test.com",
+        subscription_plan=subscription_plan,
+        subscription_status=subscription_status,
+    )
     db_session.add(user)
     await db_session.commit()
 
@@ -60,6 +67,26 @@ async def test_expired_search_paused_by_maintenance(db_session, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_paid_active_expired_search_extended_by_maintenance(db_session):
+    """Paid active users receive a fresh search expiry instead of being paused."""
+    now = datetime.now(UTC)
+    profile = await _create_user_and_profile(
+        db_session,
+        search_active=True,
+        expires_delta=timedelta(hours=-2),
+        subscription_plan="paid",
+        subscription_status="active",
+    )
+
+    await run_daily_maintenance()
+
+    await db_session.refresh(profile)
+    assert profile.search_active is True
+    assert profile.search_expires_at is not None
+    assert profile.search_expires_at > now + timedelta(days=6)
+
+
+@pytest.mark.asyncio
 async def test_future_expiry_not_paused(db_session, monkeypatch):
     """
     User whose search_expires_at is in the future should NOT be paused.
@@ -75,16 +102,33 @@ async def test_future_expiry_not_paused(db_session, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_no_expiry_not_paused(db_session):
+async def test_active_no_expiry_receives_new_expiry(db_session):
     """
-    User with search_active=True but no search_expires_at is not paused.
+    User with search_active=True but no search_expires_at receives a fresh expiry.
     """
+    now = datetime.now(UTC)
     profile = await _create_user_and_profile(db_session, search_active=True, expires_delta=None)
 
     await run_daily_maintenance()
 
     await db_session.refresh(profile)
     assert profile.search_active is True
+    assert profile.search_expires_at is not None
+    assert profile.search_expires_at > now + timedelta(days=6)
+
+
+@pytest.mark.asyncio
+async def test_inactive_null_expiry_stays_paused(db_session):
+    """Inactive users with no expiry are left paused."""
+    profile = await _create_user_and_profile(
+        db_session, search_active=False, expires_delta=None
+    )
+
+    await run_daily_maintenance()
+
+    await db_session.refresh(profile)
+    assert profile.search_active is False
+    assert profile.search_expires_at is None
 
 
 @pytest.mark.asyncio
@@ -122,3 +166,4 @@ async def test_multiple_users_only_expired_paused(db_session):
     assert expired.search_active is False
     assert active.search_active is True
     assert no_expiry.search_active is True
+    assert no_expiry.search_expires_at is not None

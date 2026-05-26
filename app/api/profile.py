@@ -1,7 +1,7 @@
 """Profile management endpoints."""
 
 import hashlib
-from datetime import UTC
+from datetime import UTC, datetime
 
 import structlog
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
@@ -15,7 +15,7 @@ from app.models.company import Company
 from app.models.user import User
 from app.models.user_profile import UserProfile
 from app.services import match_service, profile_service
-from app.services.entitlements import CompanyFollowLimitError
+from app.services.entitlements import CompanyFollowLimitError, next_search_expiry
 from app.services.rate_limit_service import check_daily_quota, check_rate_limit
 
 log = structlog.get_logger()
@@ -213,19 +213,15 @@ async def toggle_search(
     data: dict,
     profile: UserProfile = Depends(get_current_profile),
     session: AsyncSession = Depends(get_db),
+    settings: Settings = Depends(get_settings),
 ):
     """Resume or pause job search. POST {search_active: true} to resume."""
-    from datetime import datetime, timedelta
-
     search_active = data.get("search_active", True)
     updates: dict = {"search_active": search_active}
     if search_active:
-        from app.config import get_settings
-
-        settings = get_settings()
-        updates["search_expires_at"] = datetime.now(UTC) + timedelta(
-            days=settings.search_auto_pause_days
-        )
+        updates["search_expires_at"] = next_search_expiry(datetime.now(UTC), settings)
+    else:
+        updates["search_expires_at"] = None
     updated = await profile_service.update_profile(profile.id, updates, session)
     return {
         "search_active": updated.search_active,

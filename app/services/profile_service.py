@@ -74,7 +74,7 @@ async def update_profile(
             raw,
         )
     for key, value in data.items():
-        if hasattr(profile, key) and value is not None:
+        if hasattr(profile, key) and (value is not None or key == "search_expires_at"):
             setattr(profile, key, value)
     profile.updated_at = datetime.now(UTC)
     session.add(profile)
