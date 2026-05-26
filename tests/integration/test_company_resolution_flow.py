@@ -5,9 +5,29 @@ test_company_resolver (which mocks _fan_out). Here only the upstream ATS
 HTTP is mocked; the resolver, the SOURCES adapters, the API endpoint,
 and the Company persistence all run for real."""
 
+import uuid
+
 import pytest
 import respx
 from httpx import ASGITransport, AsyncClient, Response
+
+from app.models.company import Company
+
+
+async def _seed_companies(db_session, count: int) -> list[Company]:
+    companies = [
+        Company(
+            canonical_name=f"Limit Test {uuid.uuid4()}",
+            normalized_key=f"limit-test-{uuid.uuid4()}",
+            provider_slugs={"greenhouse": f"limit-test-{uuid.uuid4()}"},
+        )
+        for _ in range(count)
+    ]
+    db_session.add_all(companies)
+    await db_session.commit()
+    for company in companies:
+        await db_session.refresh(company)
+    return companies
 
 
 @respx.mock
@@ -102,3 +122,103 @@ async def test_post_resolve_multi_provider_match_persists_all(
         )
     assert resp.status_code == 200
     assert set(resp.json()["company"]["providers"]) == {"greenhouse", "ashby"}
+
+
+@pytest.mark.asyncio
+async def test_patch_profile_rejects_six_free_companies(db_session, auth_headers, seeded_user):
+    from app.main import app as fastapi_app
+
+    companies = await _seed_companies(db_session, 6)
+
+    async with AsyncClient(
+        transport=ASGITransport(app=fastapi_app), base_url="http://test"
+    ) as client:
+        resp = await client.patch(
+            "/api/profile",
+            json={"target_company_ids": [str(company.id) for company in companies]},
+            headers=auth_headers,
+        )
+
+    assert resp.status_code == 422
+    assert resp.json()["detail"] == "Free accounts can follow up to 5 companies."
+
+
+@pytest.mark.asyncio
+async def test_patch_profile_paid_active_user_can_save_six_companies(
+    db_session, auth_headers, seeded_user
+):
+    from app.main import app as fastapi_app
+
+    user, profile = seeded_user
+    user.subscription_plan = "paid"
+    user.subscription_status = "active"
+    db_session.add(user)
+    await db_session.commit()
+    companies = await _seed_companies(db_session, 6)
+
+    async with AsyncClient(
+        transport=ASGITransport(app=fastapi_app), base_url="http://test"
+    ) as client:
+        resp = await client.patch(
+            "/api/profile",
+            json={"target_company_ids": [str(company.id) for company in companies]},
+            headers=auth_headers,
+        )
+
+    assert resp.status_code == 200
+    db_session.expire_all()
+    await db_session.refresh(profile)
+    assert profile.target_company_ids == [company.id for company in companies]
+
+
+@pytest.mark.asyncio
+async def test_patch_profile_company_limit_failure_does_not_persist_other_fields(
+    db_session, auth_headers, seeded_user
+):
+    from app.main import app as fastapi_app
+
+    companies = await _seed_companies(db_session, 6)
+
+    async with AsyncClient(
+        transport=ASGITransport(app=fastapi_app), base_url="http://test"
+    ) as client:
+        resp = await client.patch(
+            "/api/profile",
+            json={
+                "full_name": "Should Not Persist",
+                "target_company_ids": [str(company.id) for company in companies],
+            },
+            headers=auth_headers,
+        )
+        profile_resp = await client.get("/api/profile", headers=auth_headers)
+
+    assert resp.status_code == 422
+    assert profile_resp.json()["full_name"] != "Should Not Persist"
+
+
+@pytest.mark.asyncio
+async def test_patch_profile_downgraded_over_limit_user_can_save_removal_only_subset(
+    db_session, auth_headers, seeded_user
+):
+    from app.main import app as fastapi_app
+
+    _, profile = seeded_user
+    companies = await _seed_companies(db_session, 8)
+    profile.target_company_ids = [company.id for company in companies]
+    db_session.add(profile)
+    await db_session.commit()
+
+    subset = companies[:6]
+    async with AsyncClient(
+        transport=ASGITransport(app=fastapi_app), base_url="http://test"
+    ) as client:
+        resp = await client.patch(
+            "/api/profile",
+            json={"target_company_ids": [str(company.id) for company in subset]},
+            headers=auth_headers,
+        )
+
+    assert resp.status_code == 200
+    db_session.expire_all()
+    await db_session.refresh(profile)
+    assert profile.target_company_ids == [company.id for company in subset]

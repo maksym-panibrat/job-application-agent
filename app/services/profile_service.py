@@ -7,7 +7,10 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
+from app.config import get_settings
+from app.models.user import User
 from app.models.user_profile import Skill, UserProfile, WorkExperience
+from app.services.entitlements import next_search_expiry, validate_company_follow_change
 from app.services.resume_extraction import (
     InvalidResumeError,
     LLMUnavailableError,
@@ -27,7 +30,14 @@ async def get_profile_by_user(user_id: uuid.UUID, session: AsyncSession) -> User
 async def get_or_create_profile(user_id: uuid.UUID, session: AsyncSession) -> UserProfile:
     profile = await get_profile_by_user(user_id, session)
     if profile is None:
-        profile = UserProfile(user_id=user_id)
+        user = await session.get(User, user_id)
+        if user is None:
+            raise ValueError(f"User not found for profile creation: {user_id}")
+        profile = UserProfile(
+            user_id=user_id,
+            search_active=True,
+            search_expires_at=next_search_expiry(datetime.now(UTC), get_settings()),
+        )
         session.add(profile)
         try:
             await session.commit()
@@ -40,13 +50,29 @@ async def get_or_create_profile(user_id: uuid.UUID, session: AsyncSession) -> Us
     return profile
 
 
-async def update_profile(profile_id: uuid.UUID, data: dict, session: AsyncSession) -> UserProfile:
+async def update_profile(
+    profile_id: uuid.UUID,
+    data: dict,
+    session: AsyncSession,
+    *,
+    user: User | None = None,
+) -> UserProfile:
     profile = await session.get(UserProfile, profile_id)
+    if profile is None:
+        raise ValueError(f"profile {profile_id} not found")
     if "target_company_ids" in data:
         raw = data["target_company_ids"]
         if not isinstance(raw, list):
             raise ValueError("target_company_ids must be a list")
-        data["target_company_ids"] = [uuid.UUID(x) if isinstance(x, str) else x for x in raw]
+        if user is None:
+            user = await session.get(User, profile.user_id)
+        if user is None:
+            raise ValueError(f"User not found for profile update: {profile.user_id}")
+        data["target_company_ids"] = validate_company_follow_change(
+            user,
+            profile.target_company_ids or [],
+            raw,
+        )
     for key, value in data.items():
         if hasattr(profile, key) and value is not None:
             setattr(profile, key, value)

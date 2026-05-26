@@ -1,8 +1,10 @@
 import uuid
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
+from app.config import get_settings
 from app.models.user import User
 from app.services import profile_service
 
@@ -51,3 +53,27 @@ async def test_get_or_create_profile_recovers_from_concurrent_insert(
     assert first.id == second.id
 
     await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_get_or_create_profile_sets_initial_search_expiry(db_session):
+    user = User(
+        id=uuid.uuid4(),
+        email=f"trial-{uuid.uuid4()}@test.com",
+        is_active=True,
+        is_verified=True,
+        is_superuser=False,
+        hashed_password="",
+    )
+    db_session.add(user)
+    await db_session.commit()
+
+    before = datetime.now(UTC)
+    profile = await profile_service.get_or_create_profile(user.id, db_session)
+    after = datetime.now(UTC)
+
+    assert profile.search_active is True
+    assert profile.search_expires_at is not None
+    settings = get_settings()
+    assert before + timedelta(days=settings.search_auto_pause_days) <= profile.search_expires_at
+    assert profile.search_expires_at <= after + timedelta(days=settings.search_auto_pause_days)

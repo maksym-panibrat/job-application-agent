@@ -8,12 +8,14 @@ from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
-from app.api.deps import get_current_profile
+from app.api.deps import get_current_profile, get_current_user
 from app.config import Settings, get_settings
 from app.database import get_db
 from app.models.company import Company
+from app.models.user import User
 from app.models.user_profile import UserProfile
 from app.services import match_service, profile_service
+from app.services.entitlements import CompanyFollowLimitError
 from app.services.rate_limit_service import check_daily_quota, check_rate_limit
 
 log = structlog.get_logger()
@@ -91,6 +93,7 @@ async def get_profile(
 @router.patch("")
 async def update_profile(
     data: dict,
+    user: User = Depends(get_current_user),
     profile: UserProfile = Depends(get_current_profile),
     session: AsyncSession = Depends(get_db),
     settings: Settings = Depends(get_settings),
@@ -122,7 +125,10 @@ async def update_profile(
         "last_name",
     }
     filtered = {k: v for k, v in data.items() if k in allowed}
-    updated = await profile_service.update_profile(profile.id, filtered, session)
+    try:
+        updated = await profile_service.update_profile(profile.id, filtered, session, user=user)
+    except CompanyFollowLimitError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     return {"id": str(updated.id), "updated": True}
 
 
