@@ -16,6 +16,7 @@ from app.api.chat import router as chat_router
 from app.api.companies import router as companies_router
 from app.api.documents import router as documents_router
 from app.api.events import router as events_router
+from app.api.feedback import router as feedback_router
 from app.api.internal_cron import router as cron_router
 from app.api.jobs import router as jobs_router
 from app.api.jobs import sync_router as jobs_sync_router
@@ -172,6 +173,7 @@ app.include_router(applications_router)
 app.include_router(companies_router)
 app.include_router(documents_router)
 app.include_router(events_router)
+app.include_router(feedback_router)
 app.include_router(cron_router)
 app.include_router(status_router)
 app.include_router(users_router)
