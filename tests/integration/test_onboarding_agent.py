@@ -265,6 +265,7 @@ async def test_persist_inferred_companies_respects_free_limit(db_session, monkey
     db_session.add(profile)
     await db_session.commit()
     await db_session.refresh(profile)
+    existing_ids = [company.id for company in existing]
 
     async def fake_resolve(name, session):
         if name == "Overflow":
@@ -278,7 +279,7 @@ async def test_persist_inferred_companies_respects_free_limit(db_session, monkey
 
     db_session.expire_all()
     await db_session.refresh(profile)
-    assert profile.target_company_ids == [company.id for company in existing]
+    assert profile.target_company_ids == existing_ids
 
 
 @pytest.mark.asyncio

@@ -189,9 +189,10 @@ async def test_patch_profile_paid_active_user_can_save_six_companies(
         )
 
     assert resp.status_code == 200
+    expected_ids = [company.id for company in companies]
     db_session.expire_all()
     await db_session.refresh(profile)
-    assert profile.target_company_ids == [company.id for company in companies]
+    assert profile.target_company_ids == expected_ids
 
 
 @pytest.mark.asyncio
@@ -231,17 +232,17 @@ async def test_patch_profile_downgraded_over_limit_user_can_save_removal_only_su
     db_session.add(profile)
     await db_session.commit()
 
-    subset = companies[:6]
+    subset_ids = [company.id for company in companies[:6]]
     async with AsyncClient(
         transport=ASGITransport(app=fastapi_app), base_url="http://test"
     ) as client:
         resp = await client.patch(
             "/api/profile",
-            json={"target_company_ids": [str(company.id) for company in subset]},
+            json={"target_company_ids": [str(company_id) for company_id in subset_ids]},
             headers=auth_headers,
         )
 
     assert resp.status_code == 200
     db_session.expire_all()
     await db_session.refresh(profile)
-    assert profile.target_company_ids == [company.id for company in subset]
+    assert profile.target_company_ids == subset_ids

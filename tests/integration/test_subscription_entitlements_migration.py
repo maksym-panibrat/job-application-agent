@@ -81,12 +81,26 @@ async def test_subscription_entitlement_backfill_updates_only_active_null_expiry
         text(
             """
             INSERT INTO user_profiles (
-                id, user_id, search_active, search_expires_at, created_at, updated_at
+                id,
+                user_id,
+                remote_ok,
+                search_active,
+                search_expires_at,
+                created_at,
+                updated_at
             )
             VALUES
-                (:active_profile_id, :active_user_id, true, NULL, now(), now()),
-                (:paused_profile_id, :paused_user_id, false, NULL, now(), now()),
-                (:existing_profile_id, :existing_user_id, true, :existing_expiry, now(), now())
+                (:active_profile_id, :active_user_id, true, true, NULL, now(), now()),
+                (:paused_profile_id, :paused_user_id, true, false, NULL, now(), now()),
+                (
+                    :existing_profile_id,
+                    :existing_user_id,
+                    true,
+                    true,
+                    :existing_expiry,
+                    now(),
+                    now()
+                )
             """
         ),
         {

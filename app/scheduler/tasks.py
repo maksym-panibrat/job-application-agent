@@ -50,7 +50,7 @@ async def run_daily_maintenance() -> dict:
         )
         searches_paused = 0
         searches_extended = 0
-        for profile, user in result.all():
+        for profile, user in result.unique().all():
             if is_paid_active(user):
                 profile.search_expires_at = next_search_expiry(now, settings)
                 profile.updated_at = now
