@@ -28,18 +28,16 @@ describe('FeedbackModal', () => {
     document.title = 'Job Search'
   })
 
-  it('renders categories in order with Feature request selected by default', () => {
+  it('renders category dropdown with Feature request selected by default', () => {
     render(withCtx(<FeedbackModal open onClose={() => {}} />))
 
-    const radios = screen.getAllByRole('radio')
-    expect(radios.map((radio) => radio.getAttribute('value'))).toEqual([
-      'feature_request',
-      'bug',
-      'other',
+    const select = screen.getByRole('combobox', { name: 'Category' })
+    expect(select).toHaveValue('feature_request')
+    expect(within(select).getAllByRole('option').map((option) => option.textContent)).toEqual([
+      'Feature request',
+      'Bug',
+      'Other',
     ])
-    expect(screen.getByRole('radio', { name: 'Feature request' })).toBeChecked()
-    expect(screen.getByRole('radio', { name: 'Bug' })).not.toBeChecked()
-    expect(screen.getByRole('radio', { name: 'Other' })).not.toBeChecked()
   })
 
   it('does not allow an empty message to submit', async () => {
@@ -83,7 +81,7 @@ describe('FeedbackModal', () => {
     )
 
     render(withCtx(<StatefulFeedbackModal />))
-    await user.click(screen.getByRole('radio', { name: 'Other' }))
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Category' }), 'other')
     await user.type(screen.getByLabelText('What happened?'), 'The cover letter looks stale.')
     await user.click(screen.getByRole('button', { name: 'Send' }))
 
@@ -113,14 +111,13 @@ describe('FeedbackModal', () => {
     )
 
     render(withCtx(<StatefulFeedbackModal />))
-    const dialog = screen.getByRole('dialog')
-    await user.click(within(dialog).getByRole('radio', { name: 'Bug' }))
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Category' }), 'bug')
     await user.type(screen.getByLabelText('What happened?'), 'This button does nothing.')
     await user.click(screen.getByRole('button', { name: 'Send' }))
 
     expect(await screen.findByRole('status')).toHaveTextContent('Could not send feedback. Try again.')
     expect(screen.getByRole('dialog')).toBeInTheDocument()
     expect(screen.getByLabelText('What happened?')).toHaveValue('This button does nothing.')
-    expect(screen.getByRole('radio', { name: 'Bug' })).toBeChecked()
+    expect(screen.getByRole('combobox', { name: 'Category' })).toHaveValue('bug')
   })
 })

@@ -42,6 +42,7 @@ function collectFeedbackDiagnostics(): FeedbackDiagnostics {
 export function FeedbackModal({ open, onClose }: FeedbackModalProps) {
   const titleId = useId()
   const helperId = useId()
+  const categoryId = useId()
   const [category, setCategory] = useState<FeedbackCategory>('feature_request')
   const [message, setMessage] = useState('')
   const { show } = useToast()
@@ -100,28 +101,26 @@ export function FeedbackModal({ open, onClose }: FeedbackModalProps) {
           <p id={helperId} className="text-sm text-muted">Page details will be included automatically.</p>
         </div>
 
-        <fieldset className="flex flex-col gap-2">
-          <legend className="sr-only">Feedback category</legend>
-          {categories.map((item) => (
-            <label
-              key={item.value}
-              className={cn(
-                'flex items-center gap-3 rounded-md-token border border-border bg-surface px-3 py-2 text-sm text-text',
-                'has-[:checked]:border-accent has-[:checked]:bg-accent/10',
-              )}
-            >
-              <input
-                type="radio"
-                name="feedback-category"
-                value={item.value}
-                checked={category === item.value}
-                onChange={() => setCategory(item.value)}
-                className="h-4 w-4 accent-accent"
-              />
-              <span>{item.label}</span>
-            </label>
-          ))}
-        </fieldset>
+        <div className="flex flex-col gap-2">
+          <label htmlFor={categoryId} className="text-sm text-muted">
+            Category
+          </label>
+          <select
+            id={categoryId}
+            value={category}
+            onChange={(event) => setCategory(event.target.value as FeedbackCategory)}
+            className={cn(
+              'w-full rounded-md-token border border-border bg-surface px-3 py-2.5 text-sm text-text',
+              'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent',
+            )}
+          >
+            {categories.map((item) => (
+              <option key={item.value} value={item.value}>
+                {item.label}
+              </option>
+            ))}
+          </select>
+        </div>
 
         <TextArea
           label="What happened?"
