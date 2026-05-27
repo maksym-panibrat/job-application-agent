@@ -2,6 +2,7 @@ import uuid
 from datetime import UTC, datetime
 
 import sqlalchemy as sa
+from pydantic import ConfigDict
 from sqlalchemy import CheckConstraint, Column, DateTime, ForeignKey, Text, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field, SQLModel
@@ -186,6 +187,8 @@ class SubscriptionEvent(SQLModel, table=True):
 
 class EngagementEvent(SQLModel, table=True):
     __tablename__ = "engagement_events"
+    model_config = ConfigDict(populate_by_name=True)
+
     __table_args__ = (
         sa.Index("ix_engagement_events_event_type", "event_type"),
         sa.Index("ix_engagement_events_subject_id", "subject_id"),
@@ -215,8 +218,9 @@ class EngagementEvent(SQLModel, table=True):
         default_factory=_utc_now,
         sa_column=Column(DateTime(timezone=True), nullable=False, server_default=text("now()")),
     )
-    metadata_: dict = Field(
+    event_metadata: dict = Field(
         default_factory=dict,
+        alias="metadata",
         sa_column=Column("metadata", JSONB, nullable=False, server_default=text("'{}'::jsonb")),
     )
 

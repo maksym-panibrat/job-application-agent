@@ -292,7 +292,7 @@ class EngagementEvent(SQLModel, table=True):
     subject_id: uuid.UUID | None = Field(default=None, index=True)
     source: str = Field(default="api", index=True, max_length=32)
     occurred_at: datetime = Field(default_factory=lambda: datetime.now(UTC), sa_column=Column(DateTime(timezone=True), nullable=False, index=True))
-    metadata: dict = Field(default_factory=dict, sa_column=Column(JSONB, nullable=False, server_default=sa.text("'{}'::jsonb")))
+    event_metadata: dict = Field(default_factory=dict, alias="metadata", sa_column=Column("metadata", JSONB, nullable=False, server_default=sa.text("'{}'::jsonb")))
 
     __table_args__ = (
         sa.CheckConstraint(
@@ -932,7 +932,7 @@ async def record_engagement(
         subject_type=subject_type,
         subject_id=subject_id,
         source=source,
-        metadata=metadata or {},
+        event_metadata=metadata or {},
     )
     session.add(event)
     await session.flush()
