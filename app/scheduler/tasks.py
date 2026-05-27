@@ -29,9 +29,14 @@ async def run_daily_maintenance() -> dict:
 
     from app.config import get_settings
     from app.database import get_session_factory
-    from app.models.user import User
     from app.models.user_profile import UserProfile
-    from app.services.entitlements import is_paid_active, next_search_expiry
+    from app.services.entitlements import (
+        effective_entitlements,
+        get_subscription_snapshot,
+        latest_engagement_since,
+        next_search_expiry,
+        record_entitlement_decision,
+    )
     from app.services.job_service import mark_stale_jobs
 
     settings = get_settings()
@@ -44,34 +49,108 @@ async def run_daily_maintenance() -> dict:
         # Reconcile active search expiry windows.
         now = datetime.now(UTC)
         result = await session.execute(
-            select(UserProfile, User).join(User, User.id == UserProfile.user_id).where(
-                UserProfile.search_active.is_(True),
-            )
+            select(UserProfile).where(UserProfile.search_active.is_(True))
         )
         searches_paused = 0
         searches_extended = 0
-        for profile, user in result.unique().all():
-            if is_paid_active(user):
-                profile.search_expires_at = next_search_expiry(now, settings)
+        for profile in result.scalars().all():
+            subscription = await get_subscription_snapshot(profile.user_id, session)
+            entitlements = effective_entitlements(subscription, now=now)
+            previous_value = {
+                "search_active": profile.search_active,
+                "search_expires_at": (
+                    profile.search_expires_at.isoformat()
+                    if profile.search_expires_at is not None
+                    else None
+                ),
+            }
+
+            if entitlements.paid_access:
+                next_expiry = next_search_expiry(now, settings)
+                profile.search_active = True
+                profile.search_expires_at = next_expiry
                 profile.updated_at = now
                 session.add(profile)
+                await record_entitlement_decision(
+                    session,
+                    user_id=profile.user_id,
+                    profile_id=profile.id,
+                    decision_type="search_expiry_extended",
+                    reason="paid_entitlement",
+                    previous_value=previous_value,
+                    next_value={
+                        "search_active": True,
+                        "search_expires_at": next_expiry.isoformat(),
+                    },
+                )
                 searches_extended += 1
                 await log.ainfo(
                     "maintenance.search_extended",
                     profile_id=str(profile.id),
-                    user_id=str(user.id),
+                    user_id=str(profile.user_id),
+                    reason="paid_entitlement",
                 )
                 continue
 
             if profile.search_expires_at is None:
-                profile.search_expires_at = next_search_expiry(now, settings)
+                next_expiry = next_search_expiry(now, settings)
+                profile.search_expires_at = next_expiry
                 profile.updated_at = now
                 session.add(profile)
+                await record_entitlement_decision(
+                    session,
+                    user_id=profile.user_id,
+                    profile_id=profile.id,
+                    decision_type="search_expiry_seeded",
+                    reason="missing_expiry",
+                    previous_value=previous_value,
+                    next_value={
+                        "search_active": True,
+                        "search_expires_at": next_expiry.isoformat(),
+                    },
+                )
                 searches_extended += 1
                 await log.ainfo(
                     "maintenance.search_expiry_seeded",
                     profile_id=str(profile.id),
-                    user_id=str(user.id),
+                    user_id=str(profile.user_id),
+                )
+                continue
+
+            window_start = profile.search_expires_at - timedelta(
+                days=settings.search_auto_pause_days
+            )
+            engagement = await latest_engagement_since(
+                session,
+                profile_id=profile.id,
+                since=window_start,
+            )
+            if engagement is not None:
+                next_expiry = next_search_expiry(now, settings)
+                profile.search_expires_at = next_expiry
+                profile.updated_at = now
+                session.add(profile)
+                await record_entitlement_decision(
+                    session,
+                    user_id=profile.user_id,
+                    profile_id=profile.id,
+                    decision_type="search_expiry_extended",
+                    reason="active_engagement",
+                    previous_value=previous_value,
+                    next_value={
+                        "search_active": True,
+                        "search_expires_at": next_expiry.isoformat(),
+                    },
+                    source_event_type=engagement.event_type,
+                    source_event_id=engagement.id,
+                )
+                searches_extended += 1
+                await log.ainfo(
+                    "maintenance.search_extended",
+                    profile_id=str(profile.id),
+                    user_id=str(profile.user_id),
+                    reason="active_engagement",
+                    source_event_id=str(engagement.id),
                 )
                 continue
 
@@ -79,11 +158,23 @@ async def run_daily_maintenance() -> dict:
                 profile.search_active = False
                 profile.updated_at = now
                 session.add(profile)
+                await record_entitlement_decision(
+                    session,
+                    user_id=profile.user_id,
+                    profile_id=profile.id,
+                    decision_type="search_paused",
+                    reason="inactivity",
+                    previous_value=previous_value,
+                    next_value={
+                        "search_active": False,
+                        "search_expires_at": profile.search_expires_at.isoformat(),
+                    },
+                )
                 searches_paused += 1
                 await log.awarning(
                     "maintenance.search_paused",
                     profile_id=str(profile.id),
-                    user_id=str(user.id),
+                    user_id=str(profile.user_id),
                 )
         if searches_paused or searches_extended:
             await session.commit()

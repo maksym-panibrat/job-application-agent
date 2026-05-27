@@ -2,12 +2,17 @@ import uuid
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Protocol
+from typing import Any, Protocol
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
-from app.models.subscription import Subscription, SubscriptionPlan
+from app.models.subscription import (
+    EngagementEvent,
+    EntitlementDecision,
+    Subscription,
+    SubscriptionPlan,
+)
 
 FREE_TIER = "free"
 FREE_COMPANY_LIMIT = 5
@@ -106,6 +111,52 @@ async def get_subscription_snapshot(
 
 def next_search_expiry(now: datetime, settings: SearchSettings) -> datetime:
     return now + timedelta(days=settings.search_auto_pause_days)
+
+
+async def record_entitlement_decision(
+    session: AsyncSession,
+    *,
+    user_id: uuid.UUID,
+    profile_id: uuid.UUID,
+    decision_type: str,
+    reason: str,
+    previous_value: dict[str, Any] | None = None,
+    next_value: dict[str, Any] | None = None,
+    source_event_type: str | None = None,
+    source_event_id: uuid.UUID | None = None,
+) -> EntitlementDecision:
+    decision = EntitlementDecision(
+        user_id=user_id,
+        profile_id=profile_id,
+        decision_type=decision_type,
+        previous_value=previous_value,
+        next_value=next_value,
+        reason=reason,
+        source_event_type=source_event_type,
+        source_event_id=source_event_id,
+    )
+    session.add(decision)
+    await session.flush()
+    return decision
+
+
+async def latest_engagement_since(
+    session: AsyncSession,
+    *,
+    profile_id: uuid.UUID,
+    since: datetime,
+) -> EngagementEvent | None:
+    return (
+        await session.execute(
+            select(EngagementEvent)
+            .where(
+                EngagementEvent.profile_id == profile_id,
+                EngagementEvent.occurred_at >= since,
+            )
+            .order_by(EngagementEvent.occurred_at.desc(), EngagementEvent.id.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
 
 
 def dedupe_company_ids(company_ids: Iterable[uuid.UUID | str]) -> list[uuid.UUID]:
