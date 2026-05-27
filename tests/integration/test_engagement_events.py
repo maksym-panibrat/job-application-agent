@@ -57,6 +57,12 @@ async def _seed_application(db_session, profile, *, status: str = "pending_revie
     return application
 
 
+async def _event_count(db_session) -> int:
+    return (
+        await db_session.execute(text("SELECT count(*) FROM engagement_events"))
+    ).scalar_one()
+
+
 @pytest.mark.asyncio
 async def test_profile_patch_records_profile_update_and_company_follow(
     db_session, auth_headers, seeded_user
@@ -126,6 +132,32 @@ async def test_profile_patch_removing_company_records_company_unfollowed(
 
 
 @pytest.mark.asyncio
+async def test_profile_patch_company_limit_failure_records_no_engagement(
+    db_session, auth_headers, seeded_user
+):
+    from app.main import app
+
+    _, profile = seeded_user
+    companies = [
+        await _seed_company(db_session, f"Limit{i}")
+        for i in range(6)
+    ]
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.patch(
+            "/api/profile",
+            json={"target_company_ids": [str(company.id) for company in companies]},
+            headers=auth_headers,
+        )
+
+    assert response.status_code == 422, response.text
+    db_session.expire_all()
+    await db_session.refresh(profile)
+    assert (profile.target_company_ids or []) == []
+    assert await _event_count(db_session) == 0
+
+
+@pytest.mark.asyncio
 async def test_resume_upload_records_resume_uploaded(
     db_session, auth_headers, seeded_user, monkeypatch
 ):
@@ -159,6 +191,45 @@ async def test_resume_upload_records_resume_uploaded(
             "metadata": {"extraction_status": "ok"},
         }
     ]
+
+
+@pytest.mark.asyncio
+async def test_resume_upload_rolls_back_when_engagement_recording_fails(
+    db_session, auth_headers, seeded_user, monkeypatch
+):
+    from app.api import profile as profile_api
+    from app.main import app
+    from app.services import profile_service
+
+    _, profile = seeded_user
+
+    async def fake_extract_profile_from_resume(_resume_md):
+        return {}
+
+    async def fail_record_engagement(*_args, **_kwargs):
+        raise RuntimeError("engagement insert failed")
+
+    monkeypatch.setattr(
+        profile_service, "extract_profile_from_resume", fake_extract_profile_from_resume
+    )
+    monkeypatch.setattr(profile_api, "record_engagement", fail_record_engagement)
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app, raise_app_exceptions=False),
+        base_url="http://test",
+    ) as client:
+        response = await client.post(
+            "/api/profile/upload",
+            files={"file": ("resume.txt", io.BytesIO(b"# Test User"), "text/plain")},
+            headers=auth_headers,
+        )
+
+    assert response.status_code == 500, response.text
+    db_session.expire_all()
+    await db_session.refresh(profile)
+    assert profile.base_resume_md is None
+    assert profile.base_resume_raw is None
+    assert await _event_count(db_session) == 0
 
 
 @pytest.mark.asyncio
@@ -197,6 +268,44 @@ async def test_search_resume_records_only_when_resuming(db_session, auth_headers
             "metadata": {},
         }
     ]
+
+
+@pytest.mark.asyncio
+async def test_search_resume_rolls_back_when_engagement_recording_fails(
+    db_session, auth_headers, seeded_user, monkeypatch
+):
+    from app.api import profile as profile_api
+    from app.main import app
+
+    _, profile = seeded_user
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        pause = await client.patch(
+            "/api/profile/search",
+            json={"search_active": False},
+            headers=auth_headers,
+        )
+    assert pause.status_code == 200, pause.text
+
+    async def fail_record_engagement(*_args, **_kwargs):
+        raise RuntimeError("engagement insert failed")
+
+    monkeypatch.setattr(profile_api, "record_engagement", fail_record_engagement)
+    async with AsyncClient(
+        transport=ASGITransport(app=app, raise_app_exceptions=False),
+        base_url="http://test",
+    ) as client:
+        resume = await client.patch(
+            "/api/profile/search",
+            json={"search_active": True},
+            headers=auth_headers,
+        )
+
+    assert resume.status_code == 500, resume.text
+    db_session.expire_all()
+    await db_session.refresh(profile)
+    assert profile.search_active is False
+    assert await _event_count(db_session) == 0
 
 
 @pytest.mark.asyncio

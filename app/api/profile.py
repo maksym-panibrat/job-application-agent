@@ -205,7 +205,7 @@ async def upload_resume(
         }
 
     updated, extraction_status = await profile_service.save_resume(
-        profile.id, file.filename or "resume", raw, session
+        profile.id, file.filename or "resume", raw, session, commit=False
     )
     await record_engagement(
         session,
@@ -218,6 +218,7 @@ async def upload_resume(
         metadata={"extraction_status": extraction_status},
     )
     await session.commit()
+    await session.refresh(updated)
     return {
         "id": str(updated.id),
         "base_resume_md": updated.base_resume_md,
@@ -267,8 +268,11 @@ async def toggle_search(
         updates["search_expires_at"] = next_search_expiry(datetime.now(UTC), settings)
     else:
         updates["search_expires_at"] = None
-    updated = await profile_service.update_profile(profile.id, updates, session)
-    if search_active and not was_search_active:
+    record_search_resumed = search_active and not was_search_active
+    updated = await profile_service.update_profile(
+        profile.id, updates, session, commit=not record_search_resumed
+    )
+    if record_search_resumed:
         await record_engagement(
             session,
             user_id=updated.user_id,
@@ -279,6 +283,7 @@ async def toggle_search(
             source="api",
         )
         await session.commit()
+        await session.refresh(updated)
     return {
         "search_active": updated.search_active,
         "search_expires_at": updated.search_expires_at,

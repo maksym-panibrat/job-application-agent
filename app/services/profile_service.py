@@ -64,6 +64,7 @@ async def update_profile(
     *,
     entitlements: EffectiveEntitlements | None = None,
     engagement_source: str | None = None,
+    commit: bool = True,
 ) -> UserProfile:
     profile = await session.get(UserProfile, profile_id)
     if profile is None:
@@ -124,13 +125,21 @@ async def update_profile(
                     subject_id=company_id,
                     source=engagement_source,
                 )
-    await session.commit()
-    await session.refresh(profile)
+    if commit:
+        await session.commit()
+        await session.refresh(profile)
+    else:
+        await session.flush()
     return profile
 
 
 async def save_resume(
-    profile_id: uuid.UUID, filename: str, raw_bytes: bytes, session: AsyncSession
+    profile_id: uuid.UUID,
+    filename: str,
+    raw_bytes: bytes,
+    session: AsyncSession,
+    *,
+    commit: bool = True,
 ) -> tuple[UserProfile, str]:
     """
     Parse and store a resume file, then run LLM extraction.
@@ -147,15 +156,18 @@ async def save_resume(
     profile.base_resume_md = md
     profile.updated_at = datetime.now(UTC)
     session.add(profile)
-    await session.commit()
-    await session.refresh(profile)
+    if commit:
+        await session.commit()
+        await session.refresh(profile)
+    else:
+        await session.flush()
 
     extraction_status = "skipped"
     if md:
         try:
             extracted = await extract_profile_from_resume(md)
             if extracted:
-                await _apply_extracted_resume_data(profile_id, extracted, session)
+                await _apply_extracted_resume_data(profile_id, extracted, session, commit=commit)
                 await session.refresh(profile)
             extraction_status = "ok"
         except LLMUnavailableError:
@@ -167,7 +179,7 @@ async def save_resume(
 
 
 async def _apply_extracted_resume_data(
-    profile_id: uuid.UUID, data: dict, session: AsyncSession
+    profile_id: uuid.UUID, data: dict, session: AsyncSession, *, commit: bool = True
 ) -> None:
     """Apply LLM-extracted resume data to the profile, skills, and work_experiences."""
     SCALAR_FIELDS = {
@@ -185,14 +197,14 @@ async def _apply_extracted_resume_data(
 
     if flat:
         try:
-            await update_profile(profile_id, flat, session)
+            await update_profile(profile_id, flat, session, commit=commit)
         except Exception as exc:
             await log.awarning("resume_extraction.apply_flat_failed", error=str(exc))
 
     valid_skills = [s for s in skills if isinstance(s, dict) and s.get("name")]
     if valid_skills:
         try:
-            await replace_all_skills(profile_id, valid_skills, session)
+            await replace_all_skills(profile_id, valid_skills, session, commit=commit)
         except Exception as exc:
             await log.awarning("resume_extraction.apply_skills_failed", error=str(exc))
 
@@ -214,7 +226,9 @@ async def _apply_extracted_resume_data(
         valid_experiences.append(exp_copy)
     if valid_experiences:
         try:
-            await replace_all_work_experiences(profile_id, valid_experiences, session)
+            await replace_all_work_experiences(
+                profile_id, valid_experiences, session, commit=commit
+            )
         except Exception as exc:
             await log.awarning("resume_extraction.apply_experiences_failed", error=str(exc))
 
@@ -266,7 +280,7 @@ async def remove_work_experience(exp_id: uuid.UUID, session: AsyncSession) -> No
 
 
 async def replace_all_skills(
-    profile_id: uuid.UUID, skills: list[dict], session: AsyncSession
+    profile_id: uuid.UUID, skills: list[dict], session: AsyncSession, *, commit: bool = True
 ) -> list[Skill]:
     """Delete all existing skills for the profile and insert the new set."""
     await session.execute(delete(Skill).where(Skill.profile_id == profile_id))
@@ -275,12 +289,19 @@ async def replace_all_skills(
         skill = Skill(profile_id=profile_id, **skill_data)
         session.add(skill)
         result.append(skill)
-    await session.commit()
+    if commit:
+        await session.commit()
+    else:
+        await session.flush()
     return result
 
 
 async def replace_all_work_experiences(
-    profile_id: uuid.UUID, experiences: list[dict], session: AsyncSession
+    profile_id: uuid.UUID,
+    experiences: list[dict],
+    session: AsyncSession,
+    *,
+    commit: bool = True,
 ) -> list[WorkExperience]:
     """Delete all existing work experiences for the profile and insert the new set."""
     if len(experiences) > 50:
@@ -293,7 +314,10 @@ async def replace_all_work_experiences(
         exp = WorkExperience(profile_id=profile_id, **exp_data)
         session.add(exp)
         result.append(exp)
-    await session.commit()
+    if commit:
+        await session.commit()
+    else:
+        await session.flush()
     return result
 
 
