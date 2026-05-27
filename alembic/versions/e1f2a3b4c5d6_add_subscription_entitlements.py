@@ -142,6 +142,8 @@ def upgrade() -> None:
         ),
     )
     op.create_index("ix_subscriptions_user_id", "subscriptions", ["user_id"], unique=False)
+    op.create_index("ix_subscriptions_provider", "subscriptions", ["provider"], unique=False)
+    op.create_index("ix_subscriptions_status", "subscriptions", ["status"], unique=False)
     op.create_index(
         "ix_subscriptions_subscription_account_id",
         "subscriptions",
@@ -188,11 +190,26 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(["user_id"], ["users.id"]),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint(
-            "provider", "provider_event_id", name="uq_subscription_events_provider"
+            "provider", "provider_event_id", name="uq_subscription_events_provider_event"
         ),
     )
     op.create_index(
         "ix_subscription_events_user_id", "subscription_events", ["user_id"], unique=False
+    )
+    op.create_index(
+        "ix_subscription_events_event_type",
+        "subscription_events",
+        ["event_type"],
+        unique=False,
+    )
+    op.create_index(
+        "ix_subscription_events_provider", "subscription_events", ["provider"], unique=False
+    )
+    op.create_index(
+        "ix_subscription_events_occurred_at",
+        "subscription_events",
+        ["occurred_at"],
+        unique=False,
     )
     op.create_index(
         "ix_subscription_events_subscription_id",
@@ -241,6 +258,16 @@ def upgrade() -> None:
     )
     op.create_index("ix_engagement_events_user_id", "engagement_events", ["user_id"], unique=False)
     op.create_index(
+        "ix_engagement_events_event_type", "engagement_events", ["event_type"], unique=False
+    )
+    op.create_index(
+        "ix_engagement_events_subject_id", "engagement_events", ["subject_id"], unique=False
+    )
+    op.create_index("ix_engagement_events_source", "engagement_events", ["source"], unique=False)
+    op.create_index(
+        "ix_engagement_events_occurred_at", "engagement_events", ["occurred_at"], unique=False
+    )
+    op.create_index(
         "ix_engagement_events_profile_id", "engagement_events", ["profile_id"], unique=False
     )
 
@@ -283,6 +310,24 @@ def upgrade() -> None:
         "ix_entitlement_decisions_user_id", "entitlement_decisions", ["user_id"], unique=False
     )
     op.create_index(
+        "ix_entitlement_decisions_decision_type",
+        "entitlement_decisions",
+        ["decision_type"],
+        unique=False,
+    )
+    op.create_index(
+        "ix_entitlement_decisions_source_event_id",
+        "entitlement_decisions",
+        ["source_event_id"],
+        unique=False,
+    )
+    op.create_index(
+        "ix_entitlement_decisions_decided_at",
+        "entitlement_decisions",
+        ["decided_at"],
+        unique=False,
+    )
+    op.create_index(
         "ix_entitlement_decisions_profile_id",
         "entitlement_decisions",
         ["profile_id"],
@@ -295,16 +340,28 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     op.drop_index("ix_entitlement_decisions_profile_id", table_name="entitlement_decisions")
+    op.drop_index("ix_entitlement_decisions_decided_at", table_name="entitlement_decisions")
+    op.drop_index("ix_entitlement_decisions_source_event_id", table_name="entitlement_decisions")
+    op.drop_index("ix_entitlement_decisions_decision_type", table_name="entitlement_decisions")
     op.drop_index("ix_entitlement_decisions_user_id", table_name="entitlement_decisions")
     op.drop_table("entitlement_decisions")
     op.drop_index("ix_engagement_events_profile_id", table_name="engagement_events")
+    op.drop_index("ix_engagement_events_occurred_at", table_name="engagement_events")
+    op.drop_index("ix_engagement_events_source", table_name="engagement_events")
+    op.drop_index("ix_engagement_events_subject_id", table_name="engagement_events")
+    op.drop_index("ix_engagement_events_event_type", table_name="engagement_events")
     op.drop_index("ix_engagement_events_user_id", table_name="engagement_events")
     op.drop_table("engagement_events")
     op.drop_index("ix_subscription_events_subscription_id", table_name="subscription_events")
+    op.drop_index("ix_subscription_events_occurred_at", table_name="subscription_events")
+    op.drop_index("ix_subscription_events_provider", table_name="subscription_events")
+    op.drop_index("ix_subscription_events_event_type", table_name="subscription_events")
     op.drop_index("ix_subscription_events_user_id", table_name="subscription_events")
     op.drop_table("subscription_events")
     op.drop_index("ix_subscriptions_plan_id", table_name="subscriptions")
     op.drop_index("ix_subscriptions_subscription_account_id", table_name="subscriptions")
+    op.drop_index("ix_subscriptions_status", table_name="subscriptions")
+    op.drop_index("ix_subscriptions_provider", table_name="subscriptions")
     op.drop_index("ix_subscriptions_user_id", table_name="subscriptions")
     op.drop_table("subscriptions")
     op.drop_index("ix_subscription_accounts_user_id", table_name="subscription_accounts")

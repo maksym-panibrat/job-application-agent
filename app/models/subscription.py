@@ -101,6 +101,8 @@ class SubscriptionAccount(SQLModel, table=True):
 class Subscription(SQLModel, table=True):
     __tablename__ = "subscriptions"
     __table_args__ = (
+        sa.Index("ix_subscriptions_provider", "provider"),
+        sa.Index("ix_subscriptions_status", "status"),
         sa.UniqueConstraint(
             "provider", "provider_subscription_id", name="uq_subscriptions_provider_subscription"
         ),
@@ -150,8 +152,11 @@ class Subscription(SQLModel, table=True):
 class SubscriptionEvent(SQLModel, table=True):
     __tablename__ = "subscription_events"
     __table_args__ = (
+        sa.Index("ix_subscription_events_event_type", "event_type"),
+        sa.Index("ix_subscription_events_provider", "provider"),
+        sa.Index("ix_subscription_events_occurred_at", "occurred_at"),
         sa.UniqueConstraint(
-            "provider", "provider_event_id", name="uq_subscription_events_provider"
+            "provider", "provider_event_id", name="uq_subscription_events_provider_event"
         ),
         CheckConstraint(
             _check_in("event_type", SUBSCRIPTION_EVENT_TYPES),
@@ -182,6 +187,10 @@ class SubscriptionEvent(SQLModel, table=True):
 class EngagementEvent(SQLModel, table=True):
     __tablename__ = "engagement_events"
     __table_args__ = (
+        sa.Index("ix_engagement_events_event_type", "event_type"),
+        sa.Index("ix_engagement_events_subject_id", "subject_id"),
+        sa.Index("ix_engagement_events_source", "source"),
+        sa.Index("ix_engagement_events_occurred_at", "occurred_at"),
         CheckConstraint(
             _check_in("event_type", ENGAGEMENT_EVENT_TYPES),
             name="ck_engagement_events_event_type",
@@ -215,6 +224,9 @@ class EngagementEvent(SQLModel, table=True):
 class EntitlementDecision(SQLModel, table=True):
     __tablename__ = "entitlement_decisions"
     __table_args__ = (
+        sa.Index("ix_entitlement_decisions_decision_type", "decision_type"),
+        sa.Index("ix_entitlement_decisions_source_event_id", "source_event_id"),
+        sa.Index("ix_entitlement_decisions_decided_at", "decided_at"),
         CheckConstraint(
             _check_in("decision_type", ENTITLEMENT_DECISION_TYPES),
             name="ck_entitlement_decisions_decision_type",
