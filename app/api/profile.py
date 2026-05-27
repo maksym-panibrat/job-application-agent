@@ -17,7 +17,6 @@ from app.models.user_profile import UserProfile
 from app.services import match_service, profile_service
 from app.services.entitlements import (
     CompanyFollowLimitError,
-    company_follow_limit,
     effective_entitlements,
     get_subscription_snapshot,
     next_search_expiry,
@@ -86,7 +85,7 @@ async def get_profile(
             "search_auto_pause": entitlements.search_auto_pause,
         },
         "limits": {
-            "followed_companies": company_follow_limit(entitlements),
+            "followed_companies": entitlements.followed_company_limit,
         },
         "first_name": profile.first_name,
         "last_name": profile.last_name,
