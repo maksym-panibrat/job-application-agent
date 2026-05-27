@@ -10,7 +10,13 @@ from sqlmodel import select
 from app.config import get_settings
 from app.models.user import User
 from app.models.user_profile import Skill, UserProfile, WorkExperience
-from app.services.entitlements import next_search_expiry, validate_company_follow_change
+from app.services.entitlements import (
+    EffectiveEntitlements,
+    effective_entitlements,
+    get_subscription_snapshot,
+    next_search_expiry,
+    validate_company_follow_change,
+)
 from app.services.resume_extraction import (
     InvalidResumeError,
     LLMUnavailableError,
@@ -55,7 +61,7 @@ async def update_profile(
     data: dict,
     session: AsyncSession,
     *,
-    user: User | None = None,
+    entitlements: EffectiveEntitlements | None = None,
 ) -> UserProfile:
     profile = await session.get(UserProfile, profile_id)
     if profile is None:
@@ -64,12 +70,11 @@ async def update_profile(
         raw = data["target_company_ids"]
         if not isinstance(raw, list):
             raise ValueError("target_company_ids must be a list")
-        if user is None:
-            user = await session.get(User, profile.user_id)
-        if user is None:
-            raise ValueError(f"User not found for profile update: {profile.user_id}")
+        if entitlements is None:
+            subscription = await get_subscription_snapshot(profile.user_id, session)
+            entitlements = effective_entitlements(subscription)
         data["target_company_ids"] = validate_company_follow_change(
-            user,
+            entitlements,
             profile.target_company_ids or [],
             raw,
         )

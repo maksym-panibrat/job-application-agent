@@ -4,6 +4,11 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Protocol
 
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlmodel import select
+
+from app.models.subscription import Subscription, SubscriptionPlan
+
 FREE_TIER = "free"
 FREE_COMPANY_LIMIT = 5
 PAID_COMPANY_LIMIT = 100
@@ -73,6 +78,30 @@ def _free_entitlements(subscription_status: str | None) -> EffectiveEntitlements
 
 def company_follow_limit(entitlements: EffectiveEntitlements) -> int:
     return entitlements.followed_company_limit
+
+
+async def get_subscription_snapshot(
+    user_id: uuid.UUID,
+    session: AsyncSession,
+) -> SubscriptionSnapshot | None:
+    result = await session.execute(
+        select(Subscription, SubscriptionPlan)
+        .join(SubscriptionPlan, SubscriptionPlan.id == Subscription.plan_id)
+        .where(Subscription.user_id == user_id)
+        .order_by(Subscription.created_at.desc(), Subscription.id.desc())
+        .limit(1)
+    )
+    row = result.first()
+    if row is None:
+        return None
+
+    subscription, plan = row
+    return SubscriptionSnapshot(
+        tier=plan.tier,
+        status=subscription.status,
+        current_period_end=subscription.current_period_end,
+        followed_company_limit=plan.followed_company_limit,
+    )
 
 
 def next_search_expiry(now: datetime, settings: SearchSettings) -> datetime:

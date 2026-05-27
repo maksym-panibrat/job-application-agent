@@ -6,12 +6,15 @@ HTTP is mocked; the resolver, the SOURCES adapters, the API endpoint,
 and the Company persistence all run for real."""
 
 import uuid
+from datetime import UTC, datetime, timedelta
 
 import pytest
 import respx
 from httpx import ASGITransport, AsyncClient, Response
+from sqlmodel import select
 
 from app.models.company import Company
+from app.models.subscription import Subscription, SubscriptionAccount, SubscriptionPlan
 
 
 async def _seed_companies(db_session, count: int) -> list[Company]:
@@ -28,6 +31,45 @@ async def _seed_companies(db_session, count: int) -> list[Company]:
     for company in companies:
         await db_session.refresh(company)
     return companies
+
+
+async def _seed_paid_subscription(db_session, user_id: uuid.UUID) -> Subscription:
+    paid_plan = (
+        await db_session.execute(select(SubscriptionPlan).where(SubscriptionPlan.tier == "paid"))
+    ).scalar_one_or_none()
+    if paid_plan is None:
+        paid_plan = SubscriptionPlan(
+            tier="paid",
+            display_name="Paid",
+            followed_company_limit=100,
+        )
+        db_session.add(paid_plan)
+        await db_session.commit()
+        await db_session.refresh(paid_plan)
+
+    account = SubscriptionAccount(
+        user_id=user_id,
+        provider="test",
+        provider_customer_id=f"cus_{uuid.uuid4()}",
+    )
+    db_session.add(account)
+    await db_session.flush()
+
+    now = datetime.now(UTC)
+    subscription = Subscription(
+        user_id=user_id,
+        subscription_account_id=account.id,
+        plan_id=paid_plan.id,
+        provider="test",
+        provider_subscription_id=f"sub_{uuid.uuid4()}",
+        status="active",
+        current_period_start=now - timedelta(days=1),
+        current_period_end=now + timedelta(days=30),
+    )
+    db_session.add(subscription)
+    await db_session.commit()
+    await db_session.refresh(subscription)
+    return subscription
 
 
 @respx.mock
@@ -125,14 +167,10 @@ async def test_post_resolve_multi_provider_match_persists_all(
 
 
 @pytest.mark.asyncio
-async def test_get_profile_includes_subscription_and_limits(db_session, auth_headers, seeded_user):
+async def test_get_profile_free_user_includes_canonical_subscription_entitlements_and_limits(
+    db_session, auth_headers, seeded_user
+):
     from app.main import app as fastapi_app
-
-    user, _ = seeded_user
-    user.subscription_plan = "paid"
-    user.subscription_status = "active"
-    db_session.add(user)
-    await db_session.commit()
 
     async with AsyncClient(
         transport=ASGITransport(app=fastapi_app), base_url="http://test"
@@ -141,9 +179,31 @@ async def test_get_profile_includes_subscription_and_limits(db_session, auth_hea
 
     assert resp.status_code == 200
     body = resp.json()
-    assert body["subscription"]["plan"] == "paid"
+    assert body["subscription"] is None
+    assert body["entitlements"] == {"paid_access": False, "search_auto_pause": True}
+    assert body["limits"]["followed_companies"] == 5
+
+
+@pytest.mark.asyncio
+async def test_get_profile_paid_user_includes_canonical_subscription_entitlements_and_limits(
+    db_session, auth_headers, seeded_user
+):
+    from app.main import app as fastapi_app
+
+    user, _ = seeded_user
+    await _seed_paid_subscription(db_session, user.id)
+
+    async with AsyncClient(
+        transport=ASGITransport(app=fastapi_app), base_url="http://test"
+    ) as client:
+        resp = await client.get("/api/profile", headers=auth_headers)
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["subscription"]["tier"] == "paid"
     assert body["subscription"]["status"] == "active"
-    assert body["subscription"]["paid_active"] is True
+    assert body["subscription"]["current_period_end"] is not None
+    assert body["entitlements"] == {"paid_access": True, "search_auto_pause": False}
     assert body["limits"]["followed_companies"] == 100
 
 
@@ -173,10 +233,7 @@ async def test_patch_profile_paid_active_user_can_save_six_companies(
     from app.main import app as fastapi_app
 
     user, profile = seeded_user
-    user.subscription_plan = "paid"
-    user.subscription_status = "active"
-    db_session.add(user)
-    await db_session.commit()
+    await _seed_paid_subscription(db_session, user.id)
     companies = await _seed_companies(db_session, 6)
 
     async with AsyncClient(

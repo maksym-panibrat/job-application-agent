@@ -18,7 +18,8 @@ from app.services import match_service, profile_service
 from app.services.entitlements import (
     CompanyFollowLimitError,
     company_follow_limit,
-    is_paid_active,
+    effective_entitlements,
+    get_subscription_snapshot,
     next_search_expiry,
 )
 from app.services.rate_limit_service import check_daily_quota, check_rate_limit
@@ -33,6 +34,8 @@ async def get_profile(
     profile: UserProfile = Depends(get_current_profile),
     session: AsyncSession = Depends(get_db),
 ):
+    subscription = await get_subscription_snapshot(user.id, session)
+    entitlements = effective_entitlements(subscription)
     skills = await profile_service.get_skills(profile.id, session)
     experiences = await profile_service.get_work_experiences(profile.id, session)
     target_companies: list[dict] = []
@@ -69,13 +72,21 @@ async def get_profile(
         "search_active": profile.search_active,
         "search_expires_at": profile.search_expires_at,
         "target_companies": target_companies,
-        "subscription": {
-            "plan": user.subscription_plan,
-            "status": user.subscription_status,
-            "paid_active": is_paid_active(user),
+        "subscription": (
+            {
+                "tier": subscription.tier,
+                "status": subscription.status,
+                "current_period_end": subscription.current_period_end,
+            }
+            if subscription is not None
+            else None
+        ),
+        "entitlements": {
+            "paid_access": entitlements.paid_access,
+            "search_auto_pause": entitlements.search_auto_pause,
         },
         "limits": {
-            "followed_companies": company_follow_limit(user),
+            "followed_companies": company_follow_limit(entitlements),
         },
         "first_name": profile.first_name,
         "last_name": profile.last_name,
@@ -139,8 +150,15 @@ async def update_profile(
         "last_name",
     }
     filtered = {k: v for k, v in data.items() if k in allowed}
+    subscription = await get_subscription_snapshot(user.id, session)
+    entitlements = effective_entitlements(subscription)
     try:
-        updated = await profile_service.update_profile(profile.id, filtered, session, user=user)
+        updated = await profile_service.update_profile(
+            profile.id,
+            filtered,
+            session,
+            entitlements=entitlements,
+        )
     except CompanyFollowLimitError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return {"id": str(updated.id), "updated": True}

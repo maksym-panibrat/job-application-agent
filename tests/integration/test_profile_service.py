@@ -5,8 +5,43 @@ import pytest
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.config import get_settings
+from app.models.subscription import Subscription, SubscriptionAccount, SubscriptionPlan
 from app.models.user import User
+from app.models.user_profile import UserProfile
 from app.services import profile_service
+
+
+async def _seed_paid_subscription(db_session, user_id: uuid.UUID) -> None:
+    paid_plan = SubscriptionPlan(
+        tier="paid",
+        display_name="Paid",
+        followed_company_limit=100,
+    )
+    db_session.add(paid_plan)
+    await db_session.flush()
+
+    account = SubscriptionAccount(
+        user_id=user_id,
+        provider="test",
+        provider_customer_id=f"cus_{uuid.uuid4()}",
+    )
+    db_session.add(account)
+    await db_session.flush()
+
+    now = datetime.now(UTC)
+    db_session.add(
+        Subscription(
+            user_id=user_id,
+            subscription_account_id=account.id,
+            plan_id=paid_plan.id,
+            provider="test",
+            provider_subscription_id=f"sub_{uuid.uuid4()}",
+            status="active",
+            current_period_start=now - timedelta(days=1),
+            current_period_end=now + timedelta(days=30),
+        )
+    )
+    await db_session.commit()
 
 
 @pytest.mark.asyncio
@@ -77,3 +112,55 @@ async def test_get_or_create_profile_sets_initial_search_expiry(db_session):
     settings = get_settings()
     assert before + timedelta(days=settings.search_auto_pause_days) <= profile.search_expires_at
     assert profile.search_expires_at <= after + timedelta(days=settings.search_auto_pause_days)
+
+
+@pytest.mark.asyncio
+async def test_update_profile_loads_free_entitlements_when_target_companies_change(db_session):
+    user = User(
+        id=uuid.uuid4(),
+        email=f"free-limit-{uuid.uuid4()}@test.com",
+        is_active=True,
+        is_verified=True,
+        is_superuser=False,
+        hashed_password="",
+    )
+    profile = UserProfile(user_id=user.id)
+    db_session.add(user)
+    db_session.add(profile)
+    await db_session.commit()
+    await db_session.refresh(profile)
+
+    with pytest.raises(ValueError, match="Free accounts can follow up to 5 companies"):
+        await profile_service.update_profile(
+            profile.id,
+            {"target_company_ids": [str(uuid.uuid4()) for _ in range(6)]},
+            db_session,
+        )
+
+
+@pytest.mark.asyncio
+async def test_update_profile_loads_paid_entitlements_when_target_companies_change(db_session):
+    user = User(
+        id=uuid.uuid4(),
+        email=f"paid-limit-{uuid.uuid4()}@test.com",
+        is_active=True,
+        is_verified=True,
+        is_superuser=False,
+        hashed_password="",
+    )
+    profile = UserProfile(user_id=user.id)
+    db_session.add(user)
+    db_session.add(profile)
+    await db_session.commit()
+    await db_session.refresh(profile)
+    await _seed_paid_subscription(db_session, user.id)
+
+    requested_ids = [uuid.uuid4() for _ in range(6)]
+
+    updated = await profile_service.update_profile(
+        profile.id,
+        {"target_company_ids": [str(company_id) for company_id in requested_ids]},
+        db_session,
+    )
+
+    assert updated.target_company_ids == requested_ids
