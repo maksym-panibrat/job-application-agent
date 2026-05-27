@@ -3,7 +3,7 @@ Integration test for the onboarding LangGraph agent with a real PostgreSQL check
 """
 
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
 
 import pytest
@@ -254,8 +254,6 @@ async def test_persist_inferred_companies_respects_free_limit(db_session, monkey
     user = User(
         id=user_id,
         email=f"free-limit-{user_id}@local",
-        subscription_plan="free",
-        subscription_status="inactive",
     )
     profile = UserProfile(
         user_id=user_id,
@@ -280,6 +278,88 @@ async def test_persist_inferred_companies_respects_free_limit(db_session, monkey
     db_session.expire_all()
     await db_session.refresh(profile)
     assert profile.target_company_ids == existing_ids
+
+
+@pytest.mark.asyncio
+async def test_persist_inferred_companies_uses_paid_subscription_entitlements(
+    db_session, monkeypatch
+):
+    from app.agents.onboarding import persist_inferred_companies
+    from app.models.company import Company
+    from app.models.subscription import Subscription, SubscriptionAccount, SubscriptionPlan
+    from app.models.user import User
+    from app.models.user_profile import UserProfile
+    from app.services import company_resolver
+
+    existing = [
+        Company(
+            canonical_name=f"Paid Existing {i}",
+            normalized_key=f"paid-existing-{uuid.uuid4()}",
+            provider_slugs={"greenhouse": f"paid-existing-{uuid.uuid4()}"},
+            resolved_at=datetime.now(UTC),
+        )
+        for i in range(5)
+    ]
+    extra = Company(
+        canonical_name="Paid Extra",
+        normalized_key=f"paid-extra-{uuid.uuid4()}",
+        provider_slugs={"greenhouse": f"paid-extra-{uuid.uuid4()}"},
+        resolved_at=datetime.now(UTC),
+    )
+    db_session.add_all([*existing, extra])
+    await db_session.commit()
+    for company in [*existing, extra]:
+        await db_session.refresh(company)
+
+    user_id = uuid.uuid4()
+    user = User(id=user_id, email=f"paid-limit-{user_id}@local")
+    profile = UserProfile(
+        user_id=user_id,
+        target_company_ids=[company.id for company in existing],
+    )
+    paid_plan = SubscriptionPlan(
+        tier="paid",
+        display_name="Paid",
+        followed_company_limit=100,
+    )
+    db_session.add_all([user, profile, paid_plan])
+    await db_session.flush()
+    account = SubscriptionAccount(
+        user_id=user_id,
+        provider="test",
+        provider_customer_id=f"cus_{uuid.uuid4()}",
+    )
+    db_session.add(account)
+    await db_session.flush()
+    now = datetime.now(UTC)
+    db_session.add(
+        Subscription(
+            user_id=user_id,
+            subscription_account_id=account.id,
+            plan_id=paid_plan.id,
+            provider="test",
+            provider_subscription_id=f"sub_{uuid.uuid4()}",
+            status="active",
+            current_period_start=now - timedelta(days=1),
+            current_period_end=now + timedelta(days=30),
+        )
+    )
+    await db_session.commit()
+    await db_session.refresh(profile)
+
+    async def fake_resolve(name, session):
+        if name == "Paid Extra":
+            return extra
+        return None
+
+    monkeypatch.setattr(company_resolver, "resolve", fake_resolve)
+
+    resolved = await persist_inferred_companies(profile, ["Paid Extra"], db_session)
+
+    db_session.expire_all()
+    await db_session.refresh(profile)
+    assert resolved == ["Paid Extra"]
+    assert profile.target_company_ids == [*[company.id for company in existing], extra.id]
 
 
 @pytest.mark.asyncio

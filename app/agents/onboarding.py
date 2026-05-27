@@ -27,10 +27,14 @@ from typing_extensions import TypedDict
 from app.agents.llm_safe import safe_ainvoke
 from app.config import get_settings
 from app.models.company import Company
-from app.models.user import User
 from app.models.user_profile import UserProfile
 from app.services import company_resolver, profile_service
-from app.services.entitlements import CompanyFollowLimitError, validate_company_follow_change
+from app.services.entitlements import (
+    CompanyFollowLimitError,
+    effective_entitlements,
+    get_subscription_snapshot,
+    validate_company_follow_change,
+)
 
 log = structlog.get_logger()
 
@@ -179,11 +183,10 @@ async def persist_inferred_companies(profile, names: list[str], session) -> list
         if company.id not in resolved_ids:
             resolved_ids.append(company.id)
             resolved_names.append(company.canonical_name)
-    user = await session.get(User, profile.user_id)
-    if user is None:
-        raise ValueError(f"User not found for onboarding company update: {profile.user_id}")
+    subscription = await get_subscription_snapshot(profile.user_id, session)
+    entitlements = effective_entitlements(subscription)
     resolved_ids = validate_company_follow_change(
-        user,
+        entitlements,
         profile.target_company_ids or [],
         resolved_ids,
     )
