@@ -297,7 +297,7 @@ class EngagementEvent(SQLModel, table=True):
     __table_args__ = (
         sa.CheckConstraint(
             "event_type IN ('company_followed', 'company_unfollowed', 'profile_updated', 'resume_uploaded', 'application_dismissed', 'application_applied', 'chat_message_sent', 'search_resumed')",
-            name="ck_engagement_events_type",
+            name="ck_engagement_events_event_type",
         ),
     )
 

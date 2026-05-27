@@ -52,9 +52,13 @@ def _check_in(column_name: str, values: tuple[str, ...]) -> str:
 
 class SubscriptionPlan(SQLModel, table=True):
     __tablename__ = "subscription_plans"
+    __table_args__ = (
+        sa.Index("ix_subscription_plans_tier", "tier"),
+        sa.UniqueConstraint("tier", name="uq_subscription_plans_tier"),
+    )
 
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
-    tier: str = Field(sa_column=Column(Text, nullable=False, unique=True, index=True))
+    tier: str = Field(sa_column=Column(Text, nullable=False))
     display_name: str = Field(sa_column=Column(Text, nullable=False))
     followed_company_limit: int = Field(nullable=False)
     valid_from: datetime = Field(
