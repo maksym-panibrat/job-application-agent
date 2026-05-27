@@ -1,19 +1,30 @@
 import uuid
 from collections.abc import Iterable
-from datetime import datetime, timedelta
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from typing import Protocol
 
+FREE_TIER = "free"
 FREE_COMPANY_LIMIT = 5
 PAID_COMPANY_LIMIT = 100
-FREE_PLAN = "free"
-PAID_PLAN = "paid"
-ACTIVE_STATUS = "active"
-INACTIVE_STATUS = "inactive"
+PAID_ENTITLEMENT_STATUSES = {"active", "canceled"}
 
 
-class SubscriptionUser(Protocol):
-    subscription_plan: str
-    subscription_status: str
+@dataclass(frozen=True)
+class SubscriptionSnapshot:
+    tier: str
+    status: str
+    current_period_end: datetime
+    followed_company_limit: int
+
+
+@dataclass(frozen=True)
+class EffectiveEntitlements:
+    tier: str
+    subscription_status: str | None
+    paid_access: bool
+    search_auto_pause: bool
+    followed_company_limit: int
 
 
 class SearchSettings(Protocol):
@@ -22,18 +33,46 @@ class SearchSettings(Protocol):
 
 class CompanyFollowLimitError(ValueError):
     def __init__(self, limit: int) -> None:
-        account_type = "Paid" if limit == PAID_COMPANY_LIMIT else "Free"
+        account_type = "Paid" if limit > FREE_COMPANY_LIMIT else "Free"
         super().__init__(f"{account_type} accounts can follow up to {limit} companies.")
 
 
-def is_paid_active(user: SubscriptionUser) -> bool:
-    return user.subscription_plan == PAID_PLAN and user.subscription_status == ACTIVE_STATUS
+def effective_entitlements(
+    subscription: SubscriptionSnapshot | None,
+    now: datetime | None = None,
+) -> EffectiveEntitlements:
+    if subscription is None:
+        return _free_entitlements(subscription_status=None)
+
+    effective_now = now or datetime.now(UTC)
+    paid_access = (
+        subscription.status in PAID_ENTITLEMENT_STATUSES
+        and subscription.current_period_end > effective_now
+    )
+    if paid_access:
+        return EffectiveEntitlements(
+            tier=subscription.tier,
+            subscription_status=subscription.status,
+            paid_access=True,
+            search_auto_pause=False,
+            followed_company_limit=subscription.followed_company_limit,
+        )
+
+    return _free_entitlements(subscription_status=subscription.status)
 
 
-def company_follow_limit(user: SubscriptionUser) -> int:
-    if is_paid_active(user):
-        return PAID_COMPANY_LIMIT
-    return FREE_COMPANY_LIMIT
+def _free_entitlements(subscription_status: str | None) -> EffectiveEntitlements:
+    return EffectiveEntitlements(
+        tier=FREE_TIER,
+        subscription_status=subscription_status,
+        paid_access=False,
+        search_auto_pause=True,
+        followed_company_limit=FREE_COMPANY_LIMIT,
+    )
+
+
+def company_follow_limit(entitlements: EffectiveEntitlements) -> int:
+    return entitlements.followed_company_limit
 
 
 def next_search_expiry(now: datetime, settings: SearchSettings) -> datetime:
@@ -55,11 +94,11 @@ def dedupe_company_ids(company_ids: Iterable[uuid.UUID | str]) -> list[uuid.UUID
 
 
 def validate_company_follow_change(
-    user: SubscriptionUser,
+    entitlements: EffectiveEntitlements,
     current_ids: Iterable[uuid.UUID | str],
     requested_ids: Iterable[uuid.UUID | str],
 ) -> list[uuid.UUID]:
-    limit = company_follow_limit(user)
+    limit = company_follow_limit(entitlements)
     current_deduped_ids = dedupe_company_ids(current_ids)
     requested_deduped_ids = dedupe_company_ids(requested_ids)
 

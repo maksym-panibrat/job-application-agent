@@ -6,21 +6,43 @@ import pytest
 
 from app.services.entitlements import (
     FREE_COMPANY_LIMIT,
+    FREE_TIER,
     PAID_COMPANY_LIMIT,
     CompanyFollowLimitError,
+    EffectiveEntitlements,
+    SubscriptionSnapshot,
     company_follow_limit,
     dedupe_company_ids,
-    is_paid_active,
+    effective_entitlements,
     next_search_expiry,
     validate_company_follow_change,
 )
 
+NOW = datetime(2026, 5, 27, 12, 0, tzinfo=UTC)
 
-def _user(plan: str = "free", status: str = "inactive", period_end=None) -> SimpleNamespace:
-    return SimpleNamespace(
-        subscription_plan=plan,
-        subscription_status=status,
-        subscription_current_period_end=period_end,
+
+def _subscription(
+    *,
+    tier: str = "paid",
+    status: str = "active",
+    current_period_end: datetime | None = None,
+    followed_company_limit: int = PAID_COMPANY_LIMIT,
+) -> SubscriptionSnapshot:
+    return SubscriptionSnapshot(
+        tier=tier,
+        status=status,
+        current_period_end=current_period_end or NOW + timedelta(days=7),
+        followed_company_limit=followed_company_limit,
+    )
+
+
+def _entitlements(limit: int = FREE_COMPANY_LIMIT) -> EffectiveEntitlements:
+    return EffectiveEntitlements(
+        tier=FREE_TIER,
+        subscription_status=None,
+        paid_access=False,
+        search_auto_pause=True,
+        followed_company_limit=limit,
     )
 
 
@@ -28,28 +50,97 @@ def _ids(count: int) -> list[uuid.UUID]:
     return [uuid.uuid4() for _ in range(count)]
 
 
-def test_is_paid_active_requires_paid_plan_and_active_status():
-    assert is_paid_active(_user(plan="paid", status="active")) is True
-    assert is_paid_active(_user(plan="paid", status="inactive")) is False
-    assert is_paid_active(_user(plan="free", status="active")) is False
+def test_active_before_period_end_grants_paid_access_and_limit():
+    entitlements = effective_entitlements(_subscription(status="active"), now=NOW)
+
+    assert entitlements == EffectiveEntitlements(
+        tier="paid",
+        subscription_status="active",
+        paid_access=True,
+        search_auto_pause=False,
+        followed_company_limit=PAID_COMPANY_LIMIT,
+    )
+    assert company_follow_limit(entitlements) == PAID_COMPANY_LIMIT
 
 
-def test_paid_active_ignores_current_period_end_metadata():
-    expired_at = datetime(2024, 1, 1, tzinfo=UTC)
-    assert is_paid_active(_user(plan="paid", status="active", period_end=expired_at)) is True
+def test_canceled_before_period_end_grants_paid_access_and_limit():
+    entitlements = effective_entitlements(_subscription(status="canceled"), now=NOW)
+
+    assert entitlements == EffectiveEntitlements(
+        tier="paid",
+        subscription_status="canceled",
+        paid_access=True,
+        search_auto_pause=False,
+        followed_company_limit=PAID_COMPANY_LIMIT,
+    )
+    assert company_follow_limit(entitlements) == PAID_COMPANY_LIMIT
 
 
-def test_company_follow_limit_uses_paid_active_policy():
-    assert company_follow_limit(_user(plan="free", status="inactive")) == FREE_COMPANY_LIMIT
-    assert company_follow_limit(_user(plan="paid", status="inactive")) == FREE_COMPANY_LIMIT
-    assert company_follow_limit(_user(plan="paid", status="active")) == PAID_COMPANY_LIMIT
+@pytest.mark.parametrize("status", ["expired", "refunded", "chargeback", "revoked"])
+def test_terminal_statuses_grant_free_access_and_limit(status: str):
+    entitlements = effective_entitlements(_subscription(status=status), now=NOW)
+
+    assert entitlements == EffectiveEntitlements(
+        tier=FREE_TIER,
+        subscription_status=status,
+        paid_access=False,
+        search_auto_pause=True,
+        followed_company_limit=FREE_COMPANY_LIMIT,
+    )
+
+
+def test_active_with_past_period_end_grants_free_access_and_limit():
+    entitlements = effective_entitlements(
+        _subscription(status="active", current_period_end=NOW - timedelta(seconds=1)),
+        now=NOW,
+    )
+
+    assert entitlements == EffectiveEntitlements(
+        tier=FREE_TIER,
+        subscription_status="active",
+        paid_access=False,
+        search_auto_pause=True,
+        followed_company_limit=FREE_COMPANY_LIMIT,
+    )
+
+
+def test_no_subscription_grants_free_access_and_no_subscription_status():
+    entitlements = effective_entitlements(None, now=NOW)
+
+    assert entitlements == EffectiveEntitlements(
+        tier=FREE_TIER,
+        subscription_status=None,
+        paid_access=False,
+        search_auto_pause=True,
+        followed_company_limit=FREE_COMPANY_LIMIT,
+    )
+
+
+def test_active_subscription_trusts_snapshot_limit_even_when_plan_validity_expired():
+    entitlements = effective_entitlements(
+        _subscription(
+            tier="expired-paid-plan",
+            status="active",
+            current_period_end=NOW + timedelta(days=1),
+            followed_company_limit=42,
+        ),
+        now=NOW,
+    )
+
+    assert entitlements == EffectiveEntitlements(
+        tier="expired-paid-plan",
+        subscription_status="active",
+        paid_access=True,
+        search_auto_pause=False,
+        followed_company_limit=42,
+    )
+    assert company_follow_limit(entitlements) == 42
 
 
 def test_next_search_expiry_adds_configured_pause_days():
-    now = datetime(2026, 5, 25, 12, 30, tzinfo=UTC)
     settings = SimpleNamespace(search_auto_pause_days=14)
 
-    assert next_search_expiry(now, settings) == now + timedelta(days=14)
+    assert next_search_expiry(NOW, settings) == NOW + timedelta(days=14)
 
 
 def test_dedupe_company_ids_preserves_order_and_normalizes_strings():
@@ -62,7 +153,7 @@ def test_dedupe_company_ids_preserves_order_and_normalizes_strings():
 def test_free_users_can_follow_five_companies():
     requested_ids = _ids(FREE_COMPANY_LIMIT)
 
-    assert validate_company_follow_change(_user(), [], requested_ids) == requested_ids
+    assert validate_company_follow_change(_entitlements(), [], requested_ids) == requested_ids
 
 
 def test_free_users_cannot_follow_six_companies():
@@ -70,30 +161,38 @@ def test_free_users_cannot_follow_six_companies():
         CompanyFollowLimitError,
         match="Free accounts can follow up to 5 companies.",
     ):
-        validate_company_follow_change(_user(), [], _ids(FREE_COMPANY_LIMIT + 1))
+        validate_company_follow_change(_entitlements(), [], _ids(FREE_COMPANY_LIMIT + 1))
 
 
-def test_paid_active_users_can_follow_one_hundred_companies():
+def test_paid_users_can_follow_one_hundred_companies():
+    entitlements = effective_entitlements(_subscription(), now=NOW)
     requested_ids = _ids(PAID_COMPANY_LIMIT)
 
-    assert (
-        validate_company_follow_change(
-            _user(plan="paid", status="active"),
-            [],
-            requested_ids,
-        )
-        == requested_ids
-    )
+    assert validate_company_follow_change(entitlements, [], requested_ids) == requested_ids
 
 
 def test_downgraded_over_limit_user_can_save_removal_only_subset():
     current_ids = _ids(8)
     requested_ids = current_ids[:6]
 
-    assert validate_company_follow_change(_user(), current_ids, requested_ids) == requested_ids
+    assert (
+        validate_company_follow_change(_entitlements(), current_ids, requested_ids)
+        == requested_ids
+    )
 
 
-def test_downgraded_over_limit_user_cannot_swap_new_company_while_still_over_limit():
+def test_downgraded_over_limit_user_cannot_add_company_while_still_over_limit():
+    current_ids = _ids(8)
+    requested_ids = [*current_ids, uuid.uuid4()]
+
+    with pytest.raises(
+        CompanyFollowLimitError,
+        match="Free accounts can follow up to 5 companies.",
+    ):
+        validate_company_follow_change(_entitlements(), current_ids, requested_ids)
+
+
+def test_downgraded_over_limit_user_cannot_swap_company_while_still_over_limit():
     current_ids = _ids(8)
     requested_ids = [*current_ids[:5], uuid.uuid4()]
 
@@ -101,4 +200,4 @@ def test_downgraded_over_limit_user_cannot_swap_new_company_while_still_over_lim
         CompanyFollowLimitError,
         match="Free accounts can follow up to 5 companies.",
     ):
-        validate_company_follow_change(_user(), current_ids, requested_ids)
+        validate_company_follow_change(_entitlements(), current_ids, requested_ids)
