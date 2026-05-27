@@ -31,6 +31,7 @@ WIPE_TABLES = (
     "jobs",
     "work_queue",
     "events",
+    "feedback_reports",
     "oauth_accounts",
     "skills",
     "work_experiences",

@@ -26,6 +26,8 @@ class Settings(BaseSettings):
     langsmith_project: str = "job-application-agent"
     job_stale_after_days: int = 21
     log_level: str = "INFO"
+    feedback_webhook_url: SecretStr | None = None
+    feedback_webhook_timeout_seconds: float = 3.0
     matching_max_concurrency: int = 8
     matching_jobs_per_batch: int = 20
     # Per-tick match-queue caps. `max_per_profile` bounds how many jobs a
