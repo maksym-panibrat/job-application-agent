@@ -261,13 +261,14 @@ async def toggle_search(
 ):
     """Resume or pause job search. POST {search_active: true} to resume."""
     search_active = data.get("search_active", True)
+    was_search_active = bool(profile.search_active)
     updates: dict = {"search_active": search_active}
     if search_active:
         updates["search_expires_at"] = next_search_expiry(datetime.now(UTC), settings)
     else:
         updates["search_expires_at"] = None
     updated = await profile_service.update_profile(profile.id, updates, session)
-    if search_active:
+    if search_active and not was_search_active:
         await record_engagement(
             session,
             user_id=updated.user_id,

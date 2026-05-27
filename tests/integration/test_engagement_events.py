@@ -168,6 +168,11 @@ async def test_search_resume_records_only_when_resuming(db_session, auth_headers
     _, profile = seeded_user
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        noop_active = await client.patch(
+            "/api/profile/search",
+            json={"search_active": True},
+            headers=auth_headers,
+        )
         pause = await client.patch(
             "/api/profile/search",
             json={"search_active": False},
@@ -179,6 +184,7 @@ async def test_search_resume_records_only_when_resuming(db_session, auth_headers
             headers=auth_headers,
         )
 
+    assert noop_active.status_code == 200, noop_active.text
     assert pause.status_code == 200, pause.text
     assert resume.status_code == 200, resume.text
     rows = await _events(db_session)
