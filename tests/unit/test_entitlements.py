@@ -116,11 +116,14 @@ def test_no_subscription_grants_free_access_and_no_subscription_status():
     )
 
 
-def test_active_subscription_trusts_snapshot_limit_even_when_plan_validity_expired():
+@pytest.mark.parametrize("status", ["active", "canceled"])
+def test_unexpired_paid_subscription_trusts_snapshot_limit_even_when_plan_validity_expired(
+    status: str,
+):
     entitlements = effective_entitlements(
         _subscription(
             tier="expired-paid-plan",
-            status="active",
+            status=status,
             current_period_end=NOW + timedelta(days=1),
             followed_company_limit=42,
         ),
@@ -129,7 +132,7 @@ def test_active_subscription_trusts_snapshot_limit_even_when_plan_validity_expir
 
     assert entitlements == EffectiveEntitlements(
         tier="expired-paid-plan",
-        subscription_status="active",
+        subscription_status=status,
         paid_access=True,
         search_auto_pause=False,
         followed_company_limit=42,
