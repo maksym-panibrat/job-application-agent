@@ -10,6 +10,7 @@ import pytest
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from langgraph.prebuilt import ToolNode
+from sqlalchemy import text
 
 from app.agents.onboarding import build_graph
 from app.agents.test_llm import ToolCapableFakeLLM
@@ -219,6 +220,31 @@ async def test_persist_inferred_companies_resolves_and_appends_ids(db_session, m
     assert sorted(profile.target_company_ids) == sorted([airbnb.id, stripe.id])
     # OpenAI was attempted but did not resolve.
     assert "OpenAI" in seen
+    events = (
+        await db_session.execute(
+            text(
+                """
+                SELECT event_type, subject_type, subject_id, source
+                FROM engagement_events
+                ORDER BY occurred_at, id
+                """
+            )
+        )
+    ).all()
+    assert [dict(row._mapping) for row in events] == [
+        {
+            "event_type": "company_followed",
+            "subject_type": "company",
+            "subject_id": airbnb.id,
+            "source": "agent",
+        },
+        {
+            "event_type": "company_followed",
+            "subject_type": "company",
+            "subject_id": stripe.id,
+            "source": "agent",
+        },
+    ]
 
 
 @pytest.mark.asyncio

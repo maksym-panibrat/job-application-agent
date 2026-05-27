@@ -15,6 +15,7 @@ from app.models.company import Company
 from app.models.user import User
 from app.models.user_profile import UserProfile
 from app.services import match_service, profile_service
+from app.services.engagement_service import record_engagement
 from app.services.entitlements import (
     CompanyFollowLimitError,
     effective_entitlements,
@@ -157,6 +158,7 @@ async def update_profile(
             filtered,
             session,
             entitlements=entitlements,
+            engagement_source="api",
         )
     except CompanyFollowLimitError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -205,6 +207,17 @@ async def upload_resume(
     updated, extraction_status = await profile_service.save_resume(
         profile.id, file.filename or "resume", raw, session
     )
+    await record_engagement(
+        session,
+        user_id=updated.user_id,
+        profile_id=updated.id,
+        event_type="resume_uploaded",
+        subject_type="profile",
+        subject_id=updated.id,
+        source="api",
+        metadata={"extraction_status": extraction_status},
+    )
+    await session.commit()
     return {
         "id": str(updated.id),
         "base_resume_md": updated.base_resume_md,
@@ -254,6 +267,17 @@ async def toggle_search(
     else:
         updates["search_expires_at"] = None
     updated = await profile_service.update_profile(profile.id, updates, session)
+    if search_active:
+        await record_engagement(
+            session,
+            user_id=updated.user_id,
+            profile_id=updated.id,
+            event_type="search_resumed",
+            subject_type="profile",
+            subject_id=updated.id,
+            source="api",
+        )
+        await session.commit()
     return {
         "search_active": updated.search_active,
         "search_expires_at": updated.search_expires_at,

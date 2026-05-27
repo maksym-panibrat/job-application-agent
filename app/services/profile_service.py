@@ -10,6 +10,7 @@ from sqlmodel import select
 from app.config import get_settings
 from app.models.user import User
 from app.models.user_profile import Skill, UserProfile, WorkExperience
+from app.services.engagement_service import record_engagement
 from app.services.entitlements import (
     EffectiveEntitlements,
     effective_entitlements,
@@ -62,10 +63,12 @@ async def update_profile(
     session: AsyncSession,
     *,
     entitlements: EffectiveEntitlements | None = None,
+    engagement_source: str | None = None,
 ) -> UserProfile:
     profile = await session.get(UserProfile, profile_id)
     if profile is None:
         raise ValueError(f"profile {profile_id} not found")
+    current_company_ids = list(profile.target_company_ids or [])
     if "target_company_ids" in data:
         raw = data["target_company_ids"]
         if not isinstance(raw, list):
@@ -78,11 +81,49 @@ async def update_profile(
             profile.target_company_ids or [],
             raw,
         )
+    scalar_changed = False
     for key, value in data.items():
         if hasattr(profile, key) and (value is not None or key == "search_expires_at"):
+            if key != "target_company_ids" and getattr(profile, key) != value:
+                scalar_changed = True
             setattr(profile, key, value)
     profile.updated_at = datetime.now(UTC)
     session.add(profile)
+    if engagement_source is not None:
+        if scalar_changed:
+            await record_engagement(
+                session,
+                user_id=profile.user_id,
+                profile_id=profile.id,
+                event_type="profile_updated",
+                subject_type="profile",
+                subject_id=profile.id,
+                source=engagement_source,
+            )
+        if "target_company_ids" in data:
+            next_company_ids = list(data["target_company_ids"] or [])
+            current_set = set(current_company_ids)
+            next_set = set(next_company_ids)
+            for company_id in sorted(next_set - current_set, key=str):
+                await record_engagement(
+                    session,
+                    user_id=profile.user_id,
+                    profile_id=profile.id,
+                    event_type="company_followed",
+                    subject_type="company",
+                    subject_id=company_id,
+                    source=engagement_source,
+                )
+            for company_id in sorted(current_set - next_set, key=str):
+                await record_engagement(
+                    session,
+                    user_id=profile.user_id,
+                    profile_id=profile.id,
+                    event_type="company_unfollowed",
+                    subject_type="company",
+                    subject_id=company_id,
+                    source=engagement_source,
+                )
     await session.commit()
     await session.refresh(profile)
     return profile
