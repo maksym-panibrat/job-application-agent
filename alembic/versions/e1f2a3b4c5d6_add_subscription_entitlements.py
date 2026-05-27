@@ -1,7 +1,7 @@
 """add subscription entitlements
 
 Revision ID: e1f2a3b4c5d6
-Revises: d8f2c4a9b1e7
+Revises: e4f5a6b7c8d9
 Create Date: 2026-05-25
 
 """
@@ -12,7 +12,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "e1f2a3b4c5d6"
-down_revision: str | None = "d8f2c4a9b1e7"
+down_revision: str | None = "e4f5a6b7c8d9"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
