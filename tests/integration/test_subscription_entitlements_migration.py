@@ -6,7 +6,11 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 import pytest
+import sqlalchemy as sa
+from alembic.config import Config
 from sqlalchemy import text
+
+from alembic import command
 
 MIGRATION_PATH = (
     pathlib.Path(__file__).resolve().parents[2]
@@ -23,36 +27,90 @@ def _load_migration():
     return mod
 
 
-@pytest.mark.asyncio
-async def test_user_subscription_columns_default_to_free_inactive_null(db_session):
-    user_id = uuid.uuid4()
-    await db_session.execute(
-        text(
-            """
-            INSERT INTO users (id, email, hashed_password, is_active, is_superuser, is_verified)
-            VALUES (:user_id, :email, '', true, false, false)
-            """
-        ),
-        {"user_id": user_id, "email": f"user-{user_id}@local"},
-    )
-    await db_session.commit()
+def _reset_public_schema(sync_url: str) -> None:
+    engine = sa.create_engine(sync_url)
+    try:
+        with engine.begin() as conn:
+            conn.execute(text("DROP SCHEMA IF EXISTS public CASCADE"))
+            conn.execute(text("CREATE SCHEMA public"))
+    finally:
+        engine.dispose()
 
-    row = (
-        await db_session.execute(
-            text(
-                """
-                SELECT subscription_plan, subscription_status, subscription_current_period_end
-                FROM users
-                WHERE id = :user_id
-                """
-            ),
-            {"user_id": user_id},
+
+def _fetch_all(sync_url: str, sql: str):
+    engine = sa.create_engine(sync_url)
+    try:
+        with engine.begin() as conn:
+            result = conn.execute(text(sql))
+            return result.all()
+    finally:
+        engine.dispose()
+
+
+def test_subscription_entitlement_migration_creates_canonical_schema(
+    asyncpg_url, sync_url, monkeypatch
+):
+    _reset_public_schema(sync_url)
+    monkeypatch.setenv("DATABASE_URL", asyncpg_url)
+
+    try:
+        command.upgrade(Config("alembic.ini"), "head")
+
+        user_subscription_columns = _fetch_all(
+            sync_url,
+            """
+            SELECT column_name
+            FROM information_schema.columns
+            WHERE table_name = 'users'
+              AND column_name IN (
+                'subscription_plan',
+                'subscription_status',
+                'subscription_current_period_end'
+              )
+            """,
         )
-    ).one()
+        assert user_subscription_columns == []
 
-    assert row.subscription_plan == "free"
-    assert row.subscription_status == "inactive"
-    assert row.subscription_current_period_end is None
+        tables = _fetch_all(
+            sync_url,
+            """
+            SELECT table_name
+            FROM information_schema.tables
+            WHERE table_schema = 'public'
+              AND table_name IN (
+                'subscription_plans',
+                'subscription_accounts',
+                'subscriptions',
+                'subscription_events',
+                'engagement_events',
+                'entitlement_decisions'
+              )
+            ORDER BY table_name
+            """,
+        )
+        assert {row.table_name for row in tables} == {
+            "subscription_plans",
+            "subscription_accounts",
+            "subscriptions",
+            "subscription_events",
+            "engagement_events",
+            "entitlement_decisions",
+        }
+
+        plans = _fetch_all(
+            sync_url,
+            """
+            SELECT tier, followed_company_limit, valid_until
+            FROM subscription_plans
+            ORDER BY tier
+            """,
+        )
+        assert [(row.tier, row.followed_company_limit, row.valid_until) for row in plans] == [
+            ("free", 5, None),
+            ("paid", 100, None),
+        ]
+    finally:
+        _reset_public_schema(sync_url)
 
 
 @pytest.mark.asyncio
