@@ -6,9 +6,47 @@ from sqlalchemy import CheckConstraint, Column, DateTime, ForeignKey, Text, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field, SQLModel
 
+SUBSCRIPTION_STATUSES = ("active", "canceled", "expired", "refunded", "chargeback", "revoked")
+SUBSCRIPTION_EVENT_TYPES = (
+    "subscription_created",
+    "subscription_renewed",
+    "subscription_canceled",
+    "subscription_expired",
+    "subscription_refunded",
+    "subscription_chargeback",
+    "subscription_revoked",
+    "subscription_reactivated",
+    "subscription_plan_changed",
+)
+ENGAGEMENT_EVENT_TYPES = (
+    "company_followed",
+    "company_unfollowed",
+    "profile_updated",
+    "resume_uploaded",
+    "application_dismissed",
+    "application_applied",
+    "chat_message_sent",
+    "search_resumed",
+)
+ENTITLEMENT_DECISION_TYPES = (
+    "follow_limit_applied",
+    "follow_limit_rejected",
+    "subscription_plan_rejected",
+    "search_expiry_seeded",
+    "search_expiry_extended",
+    "search_paused",
+    "paid_entitlement_activated",
+    "paid_entitlement_ended",
+    "over_limit_companies_preserved",
+)
+
 
 def _utc_now() -> datetime:
     return datetime.now(UTC)
+
+
+def _check_in(column_name: str, values: tuple[str, ...]) -> str:
+    return f"{column_name} IN ({','.join(repr(value) for value in values)})"
 
 
 class SubscriptionPlan(SQLModel, table=True):
@@ -67,7 +105,7 @@ class Subscription(SQLModel, table=True):
             "provider", "provider_subscription_id", name="uq_subscriptions_provider_subscription"
         ),
         CheckConstraint(
-            "status IN ('active','canceled','expired','refunded','chargeback','revoked')",
+            _check_in("status", SUBSCRIPTION_STATUSES),
             name="ck_subscriptions_status",
         ),
     )
@@ -116,17 +154,7 @@ class SubscriptionEvent(SQLModel, table=True):
             "provider", "provider_event_id", name="uq_subscription_events_provider"
         ),
         CheckConstraint(
-            "event_type IN ("
-            "'subscription_created',"
-            "'subscription_renewed',"
-            "'subscription_canceled',"
-            "'subscription_expired',"
-            "'subscription_refunded',"
-            "'subscription_chargeback',"
-            "'subscription_revoked',"
-            "'subscription_reactivated',"
-            "'subscription_plan_changed'"
-            ")",
+            _check_in("event_type", SUBSCRIPTION_EVENT_TYPES),
             name="ck_subscription_events_event_type",
         ),
     )
@@ -155,16 +183,7 @@ class EngagementEvent(SQLModel, table=True):
     __tablename__ = "engagement_events"
     __table_args__ = (
         CheckConstraint(
-            "event_type IN ("
-            "'company_followed',"
-            "'company_unfollowed',"
-            "'profile_updated',"
-            "'resume_uploaded',"
-            "'application_dismissed',"
-            "'application_applied',"
-            "'chat_message_sent',"
-            "'search_resumed'"
-            ")",
+            _check_in("event_type", ENGAGEMENT_EVENT_TYPES),
             name="ck_engagement_events_event_type",
         ),
     )
@@ -197,17 +216,7 @@ class EntitlementDecision(SQLModel, table=True):
     __tablename__ = "entitlement_decisions"
     __table_args__ = (
         CheckConstraint(
-            "decision_type IN ("
-            "'follow_limit_applied',"
-            "'follow_limit_rejected',"
-            "'subscription_plan_rejected',"
-            "'search_expiry_seeded',"
-            "'search_expiry_extended',"
-            "'search_paused',"
-            "'paid_entitlement_activated',"
-            "'paid_entitlement_ended',"
-            "'over_limit_companies_preserved'"
-            ")",
+            _check_in("decision_type", ENTITLEMENT_DECISION_TYPES),
             name="ck_entitlement_decisions_decision_type",
         ),
     )
