@@ -48,18 +48,17 @@ Plan/tier configuration.
 Required fields:
 
 - `id`
-- `code`, for example `free`, `paid`, later `pro` or `team`
+- `tier`, for example `free`, `paid`, later `pro` or `team`
 - `display_name`
 - `followed_company_limit`
-- `is_paid`
 - `active`
 - `created_at`
 - `updated_at`
 
 Initial rows:
 
-- `free`: `followed_company_limit = 5`, `is_paid = false`
-- `paid`: `followed_company_limit = 100`, `is_paid = true`
+- `free`: `followed_company_limit = 5`
+- `paid`: `followed_company_limit = 100`
 
 Entitlement code reads limits from this table or a small cached repository layer. Adding a tier should not require changing entitlement logic.
 
