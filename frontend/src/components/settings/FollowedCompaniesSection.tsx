@@ -11,11 +11,12 @@ export interface Company {
 
 export interface FollowedCompaniesSectionProps {
   companies: Company[]
+  limit: number
 }
 
 const MAX_DROPDOWN_ROWS = 8
 
-export function FollowedCompaniesSection({ companies }: FollowedCompaniesSectionProps) {
+export function FollowedCompaniesSection({ companies, limit }: FollowedCompaniesSectionProps) {
   const qc = useQueryClient()
   const { show } = useToast()
   const [draft, setDraft] = useState('')
@@ -57,6 +58,7 @@ export function FollowedCompaniesSection({ companies }: FollowedCompaniesSection
   }, [isError])
 
   const followedIds = useMemo(() => new Set(optimistic.map(c => c.id)), [optimistic])
+  const atLimit = optimistic.length >= limit
 
   const matches = useMemo(() => {
     const q = draft.trim().toLowerCase()
@@ -77,6 +79,10 @@ export function FollowedCompaniesSection({ companies }: FollowedCompaniesSection
 
   async function commit(name: string) {
     setError(null)
+    if (atLimit) {
+      setError(`You've reached your followed company limit of ${limit}.`)
+      return
+    }
     setBusy(true)
     let resolved: { id: string; canonical_name: string } | null = null
     try {
@@ -148,6 +154,7 @@ export function FollowedCompaniesSection({ companies }: FollowedCompaniesSection
       <h2 className="text-xs uppercase tracking-wider font-bold text-muted mb-2">Followed companies</h2>
       <div className="bg-surface border border-border rounded-lg-token p-4 space-y-3">
         <p className="text-sm text-subtle">We'll match you to roles posted by these companies.</p>
+        <p className="text-xs text-muted">{optimistic.length} / {limit} followed</p>
         <div className="flex flex-wrap gap-2">
           {optimistic.map(c => (
             <span

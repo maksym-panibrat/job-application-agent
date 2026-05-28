@@ -15,6 +15,7 @@ from app.models.job import Job
 from app.models.user_profile import UserProfile
 from app.models.work_queue import WorkQueue, WorkQueueStatus
 from app.services import application_service, match_service
+from app.services.engagement_service import record_engagement
 
 log = structlog.get_logger()
 router = APIRouter(prefix="/api/applications", tags=["applications"])
@@ -172,7 +173,8 @@ async def review_application(
             status_code=400, detail="status must be dismissed, applied, or pending_review"
         )
 
-    if action == "applied" and app.status != "applied":
+    previous_status = app.status
+    if action == "applied" and previous_status != "applied":
         app.applied_at = datetime.now(UTC)
     if action == "pending_review":
         # Undo path: clear applied_at so the UI's "applied" status doesn't linger.
@@ -180,6 +182,26 @@ async def review_application(
     app.status = action
     app.updated_at = datetime.now(UTC)
     session.add(app)
+    if action == "dismissed" and previous_status != "dismissed":
+        await record_engagement(
+            session,
+            user_id=profile.user_id,
+            profile_id=profile.id,
+            event_type="application_dismissed",
+            subject_type="application",
+            subject_id=app.id,
+            source="api",
+        )
+    if action == "applied" and previous_status != "applied":
+        await record_engagement(
+            session,
+            user_id=profile.user_id,
+            profile_id=profile.id,
+            event_type="application_applied",
+            subject_type="application",
+            subject_id=app.id,
+            source="api",
+        )
     await session.commit()
 
     return {"id": str(app.id), "status": app.status}
@@ -325,5 +347,14 @@ async def mark_applied(
     app.applied_at = datetime.now(UTC)
     app.updated_at = datetime.now(UTC)
     session.add(app)
+    await record_engagement(
+        session,
+        user_id=profile.user_id,
+        profile_id=profile.id,
+        event_type="application_applied",
+        subject_type="application",
+        subject_id=app.id,
+        source="api",
+    )
     await session.commit()
     return {"id": str(app.id), "status": app.status, "applied_at": app.applied_at}
