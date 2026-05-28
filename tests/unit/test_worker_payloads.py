@@ -4,6 +4,7 @@ import pytest
 from pydantic import ValidationError
 
 from app.worker.payloads import (
+    BatchMatchPayload,
     FetchSlugPayload,
     GenerateCoverLetterPayload,
     MaintenancePayload,
@@ -38,3 +39,8 @@ def test_maintenance_payload_optional_date():
     assert p.date is None
     p2 = MaintenancePayload(date="2026-05-12")
     assert p2.date == "2026-05-12"
+
+
+def test_batch_match_payload_requires_profile_id():
+    with pytest.raises(ValidationError):
+        BatchMatchPayload()
