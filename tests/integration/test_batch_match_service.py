@@ -92,8 +92,60 @@ async def seed_profile_with_non_us_app(db_session) -> tuple[UserProfile, list[Ap
     return profile, apps
 
 
+async def add_unscored_app_for_profile(
+    db_session,
+    profile: UserProfile,
+    *,
+    title: str = "Backend Engineer",
+) -> Application:
+    company_id = profile.target_company_ids[0]
+    job = Job(
+        source="greenhouse",
+        external_id=f"batch-job-{uuid.uuid4()}",
+        title=title,
+        company_name="Airbnb",
+        company_id=company_id,
+        location="Remote - United States",
+        workplace_type="remote",
+        description="Build Python APIs for marketplace systems.",
+        apply_url=f"https://example.com/job/{uuid.uuid4()}",
+        is_active=True,
+    )
+    db_session.add(job)
+    await db_session.commit()
+    await db_session.refresh(job)
+
+    app = Application(
+        job_id=job.id,
+        profile_id=profile.id,
+        status="pending_review",
+        match_score=None,
+        match_strengths=[],
+        match_gaps=[],
+    )
+    db_session.add(app)
+    await db_session.commit()
+    await db_session.refresh(app)
+    return app
+
+
 async def _batch_items(db_session) -> list[LLMMatchBatchItem]:
     return list((await db_session.execute(select(LLMMatchBatchItem))).scalars().all())
+
+
+async def _batch_items_for_batch(
+    db_session,
+    batch_id: uuid.UUID,
+) -> list[LLMMatchBatchItem]:
+    return list(
+        (
+            await db_session.execute(
+                select(LLMMatchBatchItem).where(LLMMatchBatchItem.batch_id == batch_id)
+            )
+        )
+        .scalars()
+        .all()
+    )
 
 
 @pytest.mark.asyncio
@@ -224,6 +276,241 @@ async def test_import_partial_provider_output(db_session):
     assert imported.match_score == 0.8
     assert imported.match_summary == "Backend API role"
     assert retryable.match_score is None
+
+
+@pytest.mark.asyncio
+async def test_ready_import_submits_remaining_unscored_apps_in_same_tick(db_session):
+    from app.services.batch_match_provider import (
+        FakeBatchMatchProvider,
+        ProviderBatchOutput,
+        ProviderJobResult,
+        ProviderRequestResult,
+    )
+    from app.services.batch_match_service import run_batch_match_tick
+
+    profile, apps = await seed_profile_with_unscored_apps(db_session, count=1)
+    first_provider = FakeBatchMatchProvider(ready=False, provider_batch_id="batch-1")
+    await run_batch_match_tick(db_session, profile_id=profile.id, provider=first_provider)
+
+    new_app = await add_unscored_app_for_profile(
+        db_session,
+        profile,
+        title="Platform Engineer",
+    )
+    second_provider = FakeBatchMatchProvider(
+        ready=True,
+        provider_batch_id="batch-2",
+        output=ProviderBatchOutput(
+            requests=[
+                ProviderRequestResult(
+                    request_key="request-0001",
+                    results=[
+                        ProviderJobResult(
+                            application_id=str(apps[0].id),
+                            score=0.82,
+                            summary="Backend API role",
+                            rationale="Strong Python match",
+                            strengths=["Python"],
+                            gaps=[],
+                        )
+                    ],
+                )
+            ]
+        ),
+    )
+
+    result = await run_batch_match_tick(db_session, profile_id=profile.id, provider=second_provider)
+
+    assert result.imported == 1
+    assert result.selected == 1
+    assert result.submitted == 1
+    assert result.retryable_failed == 0
+    assert len(second_provider.submitted_requests) == 1
+    assert second_provider.submitted_requests[0]["jobs"][0]["application_id"] == str(new_app.id)
+
+    old_app = await db_session.get(Application, apps[0].id)
+    refreshed_new_app = await db_session.get(Application, new_app.id)
+    assert old_app is not None
+    assert refreshed_new_app is not None
+    assert old_app.match_score == 0.82
+    assert refreshed_new_app.match_score is None
+
+    batches = list((await db_session.execute(select(LLMMatchBatch))).scalars().all())
+    assert sorted(batch.status for batch in batches) == ["done", "submitted"]
+
+
+@pytest.mark.asyncio
+async def test_duplicate_provider_result_ids_mark_request_retryable_without_partial_import(
+    db_session,
+):
+    from app.services.batch_match_provider import (
+        FakeBatchMatchProvider,
+        ProviderBatchOutput,
+        ProviderJobResult,
+        ProviderRequestResult,
+    )
+    from app.services.batch_match_service import run_batch_match_tick
+
+    profile, apps = await seed_profile_with_unscored_apps(db_session, count=2)
+    first_provider = FakeBatchMatchProvider(ready=False, provider_batch_id="batch-1")
+    await run_batch_match_tick(db_session, profile_id=profile.id, provider=first_provider)
+    original_batch = (await db_session.execute(select(LLMMatchBatch))).scalar_one()
+
+    second_provider = FakeBatchMatchProvider(
+        ready=True,
+        provider_batch_id="batch-1",
+        output=ProviderBatchOutput(
+            requests=[
+                ProviderRequestResult(
+                    request_key="request-0001",
+                    results=[
+                        ProviderJobResult(
+                            application_id=str(apps[0].id),
+                            score=0.8,
+                            summary="Backend API role",
+                            rationale="Strong Python match",
+                            strengths=["Python"],
+                            gaps=[],
+                        ),
+                        ProviderJobResult(
+                            application_id=str(apps[0].id),
+                            score=0.7,
+                            summary="Duplicate",
+                            rationale="Duplicate result",
+                            strengths=["APIs"],
+                            gaps=[],
+                        ),
+                    ],
+                )
+            ]
+        ),
+    )
+
+    result = await run_batch_match_tick(db_session, profile_id=profile.id, provider=second_provider)
+
+    assert result.imported == 0
+    assert result.retryable_failed == 2
+    for app in apps:
+        refreshed = await db_session.get(Application, app.id)
+        assert refreshed is not None
+        assert refreshed.match_score is None
+
+    items = await _batch_items_for_batch(db_session, original_batch.id)
+    assert {item.status for item in items} == {"retryable_failed"}
+    assert {item.error for item in items} == {"provider returned duplicate application_id"}
+
+
+@pytest.mark.asyncio
+async def test_unknown_provider_result_id_marks_request_retryable_without_partial_import(
+    db_session,
+):
+    from app.services.batch_match_provider import (
+        FakeBatchMatchProvider,
+        ProviderBatchOutput,
+        ProviderJobResult,
+        ProviderRequestResult,
+    )
+    from app.services.batch_match_service import run_batch_match_tick
+
+    profile, apps = await seed_profile_with_unscored_apps(db_session, count=2)
+    first_provider = FakeBatchMatchProvider(ready=False, provider_batch_id="batch-1")
+    await run_batch_match_tick(db_session, profile_id=profile.id, provider=first_provider)
+    original_batch = (await db_session.execute(select(LLMMatchBatch))).scalar_one()
+
+    second_provider = FakeBatchMatchProvider(
+        ready=True,
+        provider_batch_id="batch-1",
+        output=ProviderBatchOutput(
+            requests=[
+                ProviderRequestResult(
+                    request_key="request-0001",
+                    results=[
+                        ProviderJobResult(
+                            application_id=str(apps[0].id),
+                            score=0.8,
+                            summary="Backend API role",
+                            rationale="Strong Python match",
+                            strengths=["Python"],
+                            gaps=[],
+                        ),
+                        ProviderJobResult(
+                            application_id=str(uuid.uuid4()),
+                            score=0.7,
+                            summary="Unknown",
+                            rationale="Not from this request",
+                            strengths=["APIs"],
+                            gaps=[],
+                        ),
+                    ],
+                )
+            ]
+        ),
+    )
+
+    result = await run_batch_match_tick(db_session, profile_id=profile.id, provider=second_provider)
+
+    assert result.imported == 0
+    assert result.retryable_failed == 2
+    for app in apps:
+        refreshed = await db_session.get(Application, app.id)
+        assert refreshed is not None
+        assert refreshed.match_score is None
+
+    items = await _batch_items_for_batch(db_session, original_batch.id)
+    assert {item.status for item in items} == {"retryable_failed"}
+    assert {item.error for item in items} == {"provider returned unknown application_id"}
+
+
+@pytest.mark.asyncio
+async def test_malformed_provider_result_fields_mark_item_retryable_without_score(
+    db_session,
+):
+    from app.services.batch_match_provider import (
+        FakeBatchMatchProvider,
+        ProviderBatchOutput,
+        ProviderJobResult,
+        ProviderRequestResult,
+    )
+    from app.services.batch_match_service import run_batch_match_tick
+
+    profile, apps = await seed_profile_with_unscored_apps(db_session, count=1)
+    first_provider = FakeBatchMatchProvider(ready=False, provider_batch_id="batch-1")
+    await run_batch_match_tick(db_session, profile_id=profile.id, provider=first_provider)
+    original_batch = (await db_session.execute(select(LLMMatchBatch))).scalar_one()
+
+    second_provider = FakeBatchMatchProvider(
+        ready=True,
+        provider_batch_id="batch-1",
+        output=ProviderBatchOutput(
+            requests=[
+                ProviderRequestResult(
+                    request_key="request-0001",
+                    results=[
+                        ProviderJobResult(
+                            application_id=str(apps[0].id),
+                            score=0.8,
+                            summary=123,  # type: ignore[arg-type]
+                            rationale="Strong Python match",
+                            strengths=["Python"],
+                            gaps=[],
+                        )
+                    ],
+                )
+            ]
+        ),
+    )
+
+    result = await run_batch_match_tick(db_session, profile_id=profile.id, provider=second_provider)
+
+    assert result.imported == 0
+    assert result.retryable_failed == 1
+    refreshed = await db_session.get(Application, apps[0].id)
+    assert refreshed is not None
+    assert refreshed.match_score is None
+
+    item = (await _batch_items_for_batch(db_session, original_batch.id))[0]
+    assert item.status == "retryable_failed"
+    assert item.error == "provider returned malformed summary"
 
 
 @pytest.mark.asyncio

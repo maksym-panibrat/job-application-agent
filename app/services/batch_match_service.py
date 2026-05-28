@@ -74,12 +74,37 @@ async def run_batch_match_tick(
         BATCH_STATUS_SUBMITTED,
         BATCH_STATUS_IMPORTING,
     ):
-        return await _poll_and_import(session, batch=active, provider=provider)
+        import_result = await _poll_and_import(session, batch=active, provider=provider)
+        if import_result.requeued or active.status == BATCH_STATUS_FAILED:
+            return import_result
+        if active.status != BATCH_STATUS_DONE:
+            return import_result
+        build_result = await _build_and_submit(
+            session,
+            profile_id=profile_id,
+            provider=provider,
+        )
+        return _combine_tick_results(import_result, build_result)
     if active is not None and active.status == BATCH_STATUS_BUILDING:
         return BatchMatchTickResult(requeued=True)
     if active is not None:
         return BatchMatchTickResult(requeued=True)
     return await _build_and_submit(session, profile_id=profile_id, provider=provider)
+
+
+def _combine_tick_results(
+    import_result: BatchMatchTickResult,
+    build_result: BatchMatchTickResult,
+) -> BatchMatchTickResult:
+    return BatchMatchTickResult(
+        selected=build_result.selected,
+        deterministic_rejected=build_result.deterministic_rejected,
+        submitted=build_result.submitted,
+        imported=import_result.imported,
+        retryable_failed=import_result.retryable_failed,
+        terminal_failed=import_result.terminal_failed,
+        requeued=build_result.requeued,
+    )
 
 
 async def _get_active_batch(
@@ -377,6 +402,14 @@ async def _import_provider_output(
                     counters.retryable_failed += 1
                     seen_item_ids.add(item.id)
             continue
+        correlation_error = _request_correlation_error(request_items, request.results)
+        if correlation_error is not None:
+            for item in request_items:
+                if item.status == ITEM_STATUS_SUBMITTED:
+                    _mark_item_retryable(item, correlation_error)
+                    counters.retryable_failed += 1
+                    seen_item_ids.add(item.id)
+            continue
         for result in request.results:
             item = _find_result_item(items, request.request_key, result)
             if item is None or item.status != ITEM_STATUS_SUBMITTED:
@@ -411,14 +444,33 @@ def _items_by_request_key(
     return [item for (key, _), item in items.items() if key == request_key]
 
 
+def _request_correlation_error(
+    request_items: list[LLMMatchBatchItem],
+    results: list[ProviderJobResult],
+) -> str | None:
+    request_application_ids = {item.application_id for item in request_items}
+    seen_application_ids: set[uuid.UUID] = set()
+    for result in results:
+        try:
+            application_id = uuid.UUID(str(getattr(result, "application_id", "")))
+        except (TypeError, ValueError):
+            return "provider returned unknown application_id"
+        if application_id not in request_application_ids:
+            return "provider returned unknown application_id"
+        if application_id in seen_application_ids:
+            return "provider returned duplicate application_id"
+        seen_application_ids.add(application_id)
+    return None
+
+
 def _find_result_item(
     items: dict[tuple[str, uuid.UUID], LLMMatchBatchItem],
     request_key: str,
     result: ProviderJobResult,
 ) -> LLMMatchBatchItem | None:
     try:
-        application_id = uuid.UUID(str(result.application_id))
-    except ValueError:
+        application_id = uuid.UUID(str(getattr(result, "application_id", "")))
+    except (TypeError, ValueError):
         return None
     return items.get((request_key, application_id))
 
@@ -429,9 +481,13 @@ async def _import_result_for_item(
     result: ProviderJobResult,
     counters: _ImportCounters,
 ) -> None:
-    score_error = _score_validation_error(result.score)
-    if result.error or score_error:
-        _mark_item_retryable(item, result.error or score_error or "provider result invalid")
+    result_error = _result_validation_error(result)
+    provider_error = getattr(result, "error", None)
+    if provider_error or result_error:
+        _mark_item_retryable(
+            item,
+            str(provider_error or result_error or "provider result invalid"),
+        )
         counters.retryable_failed += 1
         return
 
@@ -503,6 +559,22 @@ def _apply_item_fields(
     item.updated_at = datetime.now(UTC)
 
 
+def _result_validation_error(result: ProviderJobResult) -> str | None:
+    score_error = _score_validation_error(getattr(result, "score", None))
+    if score_error is not None:
+        return score_error
+    if not isinstance(getattr(result, "summary", None), str):
+        return "provider returned malformed summary"
+    rationale = getattr(result, "rationale", None)
+    if rationale is not None and not isinstance(rationale, str):
+        return "provider returned malformed rationale"
+    if not _is_string_sequence(getattr(result, "strengths", None)):
+        return "provider returned malformed strengths"
+    if not _is_string_sequence(getattr(result, "gaps", None)):
+        return "provider returned malformed gaps"
+    return None
+
+
 def _score_validation_error(score: object) -> str | None:
     if score is None:
         return "provider returned null score"
@@ -511,6 +583,12 @@ def _score_validation_error(score: object) -> str | None:
     if score < 0 or score > 1:
         return "provider returned out-of-range score"
     return None
+
+
+def _is_string_sequence(value: object) -> bool:
+    return isinstance(value, (list, tuple)) and all(
+        isinstance(item, str) for item in value
+    )
 
 
 def _mark_item_retryable(item: LLMMatchBatchItem, error: str) -> None:
