@@ -2,10 +2,11 @@
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import get_settings
 from app.models.work_queue import WorkQueue
 from app.services.batch_match_provider import FakeBatchMatchProvider
 from app.services.batch_match_service import run_batch_match_tick
-from app.worker.handlers import HANDLERS
+from app.worker.handlers import HANDLERS, EnqueueAfterDone
 from app.worker.payloads import BatchMatchPayload
 
 log = structlog.get_logger()
@@ -14,7 +15,16 @@ log = structlog.get_logger()
 class BatchMatchHandler:
     max_attempts = 5
 
-    async def __call__(self, session: AsyncSession, row: WorkQueue) -> None:
+    async def on_terminal_failure(self, session_factory, row: WorkQueue, error: str) -> None:
+        del session_factory
+        payload = BatchMatchPayload(**row.payload)
+        await log.awarning(
+            "worker.batch_match.terminal_failure",
+            profile_id=str(payload.profile_id),
+            error=error,
+        )
+
+    async def __call__(self, session: AsyncSession, row: WorkQueue) -> EnqueueAfterDone | None:
         payload = BatchMatchPayload(**row.payload)
         provider = FakeBatchMatchProvider(ready=False)
         result = await run_batch_match_tick(
@@ -33,6 +43,15 @@ class BatchMatchHandler:
             terminal_failed=result.terminal_failed,
             requeued=result.requeued,
         )
+        if result.requeued or result.submitted:
+            settings = get_settings()
+            return EnqueueAfterDone(
+                job_type="batch-match",
+                payload={"profile_id": str(payload.profile_id)},
+                dedupe_key=f"batch-match:{payload.profile_id}",
+                not_before_seconds=settings.batch_match_poll_interval_seconds,
+            )
+        return None
 
 
 HANDLERS["batch-match"] = BatchMatchHandler()

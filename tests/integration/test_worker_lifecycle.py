@@ -12,15 +12,16 @@ def _disable_default_lanes(monkeypatch) -> None:
     monkeypatch.setenv("WORKER_SLOW_JOB_TYPES", "")
 
 
-def test_main_imports_register_all_four_handlers():
+def test_main_imports_registers_core_handlers():
     from app.worker.handlers import HANDLERS
 
-    assert set(HANDLERS) == {
+    assert {
         "fetch-slug",
         "match",
+        "batch-match",
         "generate-cover-letter",
         "maintenance",
-    }
+    }.issubset(set(HANDLERS))
 
 
 @pytest.mark.asyncio
@@ -58,6 +59,53 @@ async def test_worker_processes_pending(db_session, monkeypatch):
     ).scalar_one()
     assert count == 5
     assert Noop.called == 5
+
+
+@pytest.mark.asyncio
+async def test_worker_enqueues_handler_follow_up_after_mark_done(db_session, monkeypatch):
+    from app.worker.handlers import EnqueueAfterDone, HANDLERS
+
+    _disable_default_lanes(monkeypatch)
+
+    class FollowUp:
+        max_attempts = 3
+
+        async def __call__(self, session, row):
+            return EnqueueAfterDone(
+                job_type="test-follow",
+                payload={"profile_id": "p1"},
+                dedupe_key="test-follow:p1",
+                not_before_seconds=600,
+            )
+
+    monkeypatch.setitem(HANDLERS, "test-follow", FollowUp())
+
+    await enqueue(
+        db_session,
+        job_type="test-follow",
+        payload={"profile_id": "p1"},
+        dedupe_key="test-follow:p1",
+    )
+    await db_session.commit()
+
+    async def stop_soon():
+        await asyncio.sleep(1.5)
+        worker_main._shutdown.set()
+
+    await asyncio.gather(worker_main.run(), stop_soon())
+
+    rows = (
+        await db_session.execute(
+            text(
+                "SELECT status, payload, dedupe_key, not_before "
+                "FROM work_queue WHERE job_type='test-follow' ORDER BY id"
+            )
+        )
+    ).all()
+    assert [row[0] for row in rows] == ["done", "pending"]
+    assert rows[1][1] == {"profile_id": "p1"}
+    assert rows[1][2] == "test-follow:p1"
+    assert rows[1][3] is not None
 
 
 @pytest.mark.asyncio

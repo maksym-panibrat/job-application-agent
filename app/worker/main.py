@@ -7,12 +7,14 @@ import random
 import signal
 import time
 import uuid
+from datetime import UTC, datetime, timedelta
 
 import structlog
 
 from app.database import get_session_factory
 from app.worker.config import WorkerLane, WorkerSettings
 from app.worker.handlers import (  # noqa: F401
+    EnqueueAfterDone,
     HANDLERS,
     TransientError,
     batch_match,
@@ -149,7 +151,7 @@ async def _handle_one(
     started_at = time.monotonic()
     try:
         async with session_factory() as session:
-            await handler(session, job_row)
+            follow_up = await handler(session, job_row)
             await session.commit()
     except TransientError as exc:
         backoff_s = exc.retry_after_seconds or _compute_backoff(job_row.attempts, settings)
@@ -202,6 +204,20 @@ async def _handle_one(
             from app.worker import queue_service
 
             await queue_service.mark_done(session, job_row.id, worker_id=_worker_id)
+            if isinstance(follow_up, EnqueueAfterDone):
+                not_before = (
+                    datetime.now(UTC) + timedelta(seconds=follow_up.not_before_seconds)
+                    if follow_up.not_before_seconds is not None
+                    else None
+                )
+                await queue_service.enqueue(
+                    session,
+                    job_type=follow_up.job_type,
+                    payload=follow_up.payload,
+                    dedupe_key=follow_up.dedupe_key,
+                    on_conflict="upsert_reset_not_before",
+                    not_before=not_before,
+                )
             await session.commit()
     except Exception:
         await log.aexception(
