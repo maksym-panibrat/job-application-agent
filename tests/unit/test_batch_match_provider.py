@@ -49,6 +49,27 @@ def test_get_batch_match_provider_returns_fake_when_dry_run_enabled(monkeypatch)
     assert provider.ready is False
 
 
+def test_get_batch_match_provider_returns_fake_when_provider_is_fake(monkeypatch):
+    from app.services.batch_match_provider import (
+        FakeBatchMatchProvider,
+        get_batch_match_provider,
+    )
+
+    monkeypatch.setenv("DATABASE_URL", "postgresql://user:pass@localhost:5432/db")
+    monkeypatch.setenv("ENVIRONMENT", "development")
+    monkeypatch.setenv("BATCH_MATCH_PROVIDER", "fake")
+    monkeypatch.setenv("BATCH_MATCH_DRY_RUN", "false")
+    _reset_settings()
+
+    try:
+        provider = get_batch_match_provider()
+    finally:
+        _reset_settings()
+
+    assert isinstance(provider, FakeBatchMatchProvider)
+    assert provider.ready is False
+
+
 def test_get_batch_match_provider_rejects_unknown_provider(monkeypatch):
     from app.services.batch_match_provider import get_batch_match_provider
 
