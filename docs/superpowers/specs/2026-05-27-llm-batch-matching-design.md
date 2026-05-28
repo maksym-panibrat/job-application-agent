@@ -322,7 +322,7 @@ same lane capacity as live cover-letter generation.
 
 Recommended defaults:
 
-- LLM lane: `match,generate-cover-letter`
+- fast lane: `match,generate-cover-letter`
 - slow lane: `fetch-slug,maintenance,batch-match`
 
 Queue priority should keep `fetch-slug` ahead of `batch-match` so fetching can
