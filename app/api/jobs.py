@@ -14,9 +14,10 @@ from app.config import Settings, get_settings
 from app.database import get_db
 from app.models.application import Application
 from app.models.company import Company
+from app.models.llm_match_batch import ACTIVE_BATCH_STATUSES, LLMMatchBatch
 from app.models.slug_fetch import SlugFetch
 from app.models.user_profile import UserProfile
-from app.models.work_queue import WorkQueue
+from app.models.work_queue import WorkQueue, WorkQueueStatus
 from app.services import job_sync_service
 from app.services.rate_limit_service import check_daily_quota
 
@@ -120,9 +121,38 @@ async def sync_status(
         ).scalar_one()
     )
 
+    batch_queue_pending = int(
+        (
+            await session.execute(
+                select(func.count())
+                .select_from(WorkQueue)
+                .where(
+                    WorkQueue.job_type == "batch-match",
+                    col(WorkQueue.status).in_(
+                        (WorkQueueStatus.PENDING, WorkQueueStatus.IN_PROGRESS)
+                    ),
+                    col(WorkQueue.payload)["profile_id"].astext == str(profile.id),
+                )
+            )
+        ).scalar_one()
+    )
+    active_batches = int(
+        (
+            await session.execute(
+                select(func.count())
+                .select_from(LLMMatchBatch)
+                .where(
+                    LLMMatchBatch.profile_id == profile.id,
+                    col(LLMMatchBatch.status).in_(ACTIVE_BATCH_STATUSES),
+                )
+            )
+        ).scalar_one()
+    )
+    batch_matches_pending = batch_queue_pending + active_batches
+
     if slugs_pending > 0:
         state = "syncing"
-    elif matches_pending > 0:
+    elif matches_pending > 0 or batch_matches_pending > 0:
         state = "matching"
     else:
         state = "idle"
@@ -148,6 +178,7 @@ async def sync_status(
         "slugs_total": len(pairs),
         "slugs_pending": slugs_pending,
         "matches_pending": matches_pending,
+        "batch_matches_pending": batch_matches_pending,
         "last_sync_requested_at": profile.last_sync_requested_at.isoformat()
         if profile.last_sync_requested_at
         else None,

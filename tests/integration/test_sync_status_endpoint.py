@@ -9,6 +9,7 @@ from sqlmodel import SQLModel
 
 import app.models  # noqa: F401
 from app.models.company import Company
+from app.models.llm_match_batch import BATCH_STATUS_SUBMITTED, LLMMatchBatch
 from app.models.slug_fetch import SlugFetch
 from app.services import slug_registry_service
 from app.worker.payloads import FetchSlugPayload
@@ -36,6 +37,7 @@ async def test_status_idle_when_nothing_queued(client, auth_headers, seeded_user
     assert body["state"] == "idle"
     assert body["slugs_pending"] == 0
     assert body["matches_pending"] == 0
+    assert body["batch_matches_pending"] == 0
     assert body["invalid_slugs"] == []
 
 
@@ -66,6 +68,51 @@ async def test_status_syncing_when_user_slug_queued(client, auth_headers, seeded
     body = response.json()
     assert body["state"] == "syncing"
     assert body["slugs_pending"] == 1
+
+
+@pytest.mark.asyncio
+async def test_status_matching_when_active_batch_exists(
+    client, auth_headers, seeded_user, db_session
+):
+    _, profile = seeded_user
+    db_session.add(
+        LLMMatchBatch(
+            profile_id=profile.id,
+            provider="openai",
+            provider_batch_id="batch-active",
+            model="gpt-test",
+            prompt_version="batch-match-v1",
+            status=BATCH_STATUS_SUBMITTED,
+            submitted_at=datetime.now(UTC),
+        )
+    )
+    await db_session.commit()
+
+    response = await client.get("/api/sync/status", headers=auth_headers)
+    body = response.json()
+    assert body["state"] == "matching"
+    assert body["matches_pending"] == 0
+    assert body["batch_matches_pending"] == 1
+
+
+@pytest.mark.asyncio
+async def test_status_matching_when_batch_match_queued(
+    client, auth_headers, seeded_user, db_session
+):
+    _, profile = seeded_user
+    await enqueue(
+        db_session,
+        job_type="batch-match",
+        payload={"profile_id": str(profile.id)},
+        dedupe_key=f"batch-match:{profile.id}",
+    )
+    await db_session.commit()
+
+    response = await client.get("/api/sync/status", headers=auth_headers)
+    body = response.json()
+    assert body["state"] == "matching"
+    assert body["matches_pending"] == 0
+    assert body["batch_matches_pending"] == 1
 
 
 @pytest.mark.asyncio
