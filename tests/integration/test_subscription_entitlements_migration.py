@@ -159,8 +159,15 @@ def _load_migration():
     return mod
 
 
+def _sqlalchemy_sync_url(sync_url: str) -> sa.engine.URL:
+    url = sa.engine.make_url(sync_url)
+    if url.drivername == "postgresql":
+        return url.set(drivername="postgresql+psycopg")
+    return url
+
+
 def _reset_public_schema(sync_url: str) -> None:
-    engine = sa.create_engine(sync_url)
+    engine = sa.create_engine(_sqlalchemy_sync_url(sync_url))
     try:
         with engine.begin() as conn:
             conn.execute(text("DROP SCHEMA IF EXISTS public CASCADE"))
@@ -170,7 +177,7 @@ def _reset_public_schema(sync_url: str) -> None:
 
 
 def _fetch_all(sync_url: str, sql: str):
-    engine = sa.create_engine(sync_url)
+    engine = sa.create_engine(_sqlalchemy_sync_url(sync_url))
     try:
         with engine.begin() as conn:
             result = conn.execute(text(sql))

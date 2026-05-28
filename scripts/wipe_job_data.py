@@ -32,6 +32,11 @@ WIPE_TABLES = (
     "work_queue",
     "events",
     "feedback_reports",
+    "entitlement_decisions",
+    "engagement_events",
+    "subscription_events",
+    "subscriptions",
+    "subscription_accounts",
     "oauth_accounts",
     "skills",
     "work_experiences",
@@ -49,7 +54,7 @@ CHECKPOINT_WIPE_TABLES = (
     "checkpoint_migrations",
 )
 
-PRESERVE_TABLES = ("companies",)
+PRESERVE_TABLES = ("companies", "subscription_plans")
 ROW_COUNT_PRESERVE_TABLES = ("slug_fetches",)
 
 

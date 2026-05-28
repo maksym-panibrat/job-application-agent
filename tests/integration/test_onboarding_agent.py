@@ -381,11 +381,12 @@ async def test_persist_inferred_companies_uses_paid_subscription_entitlements(
     monkeypatch.setattr(company_resolver, "resolve", fake_resolve)
 
     resolved = await persist_inferred_companies(profile, ["Paid Extra"], db_session)
+    expected_ids = [*[company.id for company in existing], extra.id]
 
     db_session.expire_all()
     await db_session.refresh(profile)
     assert resolved == ["Paid Extra"]
-    assert profile.target_company_ids == [*[company.id for company in existing], extra.id]
+    assert profile.target_company_ids == expected_ids
 
 
 @pytest.mark.asyncio
