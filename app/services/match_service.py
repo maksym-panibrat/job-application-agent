@@ -5,7 +5,7 @@ Match service — scores jobs against a profile and creates Application rows.
 import time
 import uuid
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TypedDict
 
 import structlog
 from sqlalchemy import update
@@ -17,7 +17,7 @@ from app.models.application import Application
 from app.models.job import Job
 from app.models.user_profile import Skill, UserProfile, WorkExperience
 from app.services import profile_service
-from app.services.remote_policy import evaluate_remote_policy
+from app.services.remote_policy import evaluate_remote_policy, evaluate_us_location_policy
 
 if TYPE_CHECKING:
     from app.agents.matching_agent import ScoreResult
@@ -58,6 +58,51 @@ JobScoreRow = tuple[
     str | None,
     str | None,
 ]
+
+
+class DeterministicRejectionFields(TypedDict):
+    score: float
+    summary: str
+    rationale: str
+    strengths: list[str]
+    gaps: list[str]
+    policy: str
+
+
+def deterministic_rejection_score(threshold: float) -> float:
+    return max(0.0, min(0.29, threshold - 0.01))
+
+
+def deterministic_rejection_fields(
+    profile: UserProfile,
+    job: Job,
+    threshold: float,
+) -> DeterministicRejectionFields | None:
+    us_verdict = evaluate_us_location_policy(job)
+    if us_verdict.hard_mismatch:
+        gap = us_verdict.gap or "Deterministic match policy mismatch"
+        return {
+            "score": deterministic_rejection_score(threshold),
+            "summary": "Deterministic mismatch: non-US position",
+            "rationale": gap,
+            "strengths": [],
+            "gaps": [gap],
+            "policy": "us_location",
+        }
+
+    remote_verdict = evaluate_remote_policy(profile, job)
+    if remote_verdict.hard_mismatch:
+        gap = remote_verdict.gap or "Deterministic match policy mismatch"
+        return {
+            "score": deterministic_rejection_score(threshold),
+            "summary": "Deterministic mismatch: recurring office attendance requirement",
+            "rationale": gap,
+            "strengths": [],
+            "gaps": [gap],
+            "policy": "remote_office",
+        }
+
+    return None
 
 
 async def mark_for_rescore(profile_id: uuid.UUID, session: AsyncSession) -> int:
