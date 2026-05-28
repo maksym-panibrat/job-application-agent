@@ -471,11 +471,14 @@ def _provider_output_correlation_errors(
         request_application_ids.setdefault(request_key, set()).add(application_id)
 
     request_errors: dict[str, str] = {}
+    seen_request_keys: set[str] = set()
     seen_results: set[tuple[str, uuid.UUID]] = set()
     for request in output.requests:
         expected_application_ids = request_application_ids.get(request.request_key)
         if expected_application_ids is None:
             return "provider returned unknown request_key", {}
+        repeated_request_key = request.request_key in seen_request_keys
+        seen_request_keys.add(request.request_key)
 
         for result in request.results:
             try:
@@ -500,6 +503,8 @@ def _provider_output_correlation_errors(
                 )
                 continue
             seen_results.add(seen_key)
+        if repeated_request_key and request.request_key not in request_errors:
+            request_errors[request.request_key] = "provider returned duplicate request_key"
     return None, request_errors
 
 
