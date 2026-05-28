@@ -6,6 +6,8 @@ import uuid
 from dataclasses import dataclass
 
 TRUNCATION_SUFFIX = "\n\n[Description truncated for batch]"
+REQUEST_OVERHEAD_CHARS = 20
+JOB_OVERHEAD_CHARS = 10
 
 
 @dataclass(frozen=True)
@@ -50,9 +52,10 @@ def build_request_hash(
 
 
 def estimate_request_chars(*, profile_text: str, jobs: list[BatchJobContext]) -> int:
-    fixed = len(profile_text)
+    fixed = REQUEST_OVERHEAD_CHARS + len(profile_text)
     per_job = 0
     for job in jobs:
+        per_job += JOB_OVERHEAD_CHARS
         per_job += len(str(job.application_id))
         per_job += len(job.title)
         per_job += len(job.company)
@@ -96,6 +99,8 @@ def _truncate_job_to_request_budget(
         profile_text=profile_text,
         jobs=[empty_description_job],
     )
+    if non_description_chars > max_request_chars:
+        raise ValueError("max_request_chars cannot fit a single job without description")
     max_description_chars = max_request_chars - non_description_chars
     if len(job.description) > max_description_chars:
         max_description_chars = max(0, max_description_chars)
@@ -109,6 +114,9 @@ def pack_provider_requests(
     max_apps_per_request: int,
     max_request_chars: int,
 ) -> list[PackedProviderRequest]:
+    if max_apps_per_request < 1:
+        raise ValueError("max_apps_per_request must be at least 1")
+
     groups: list[PackedProviderRequest] = []
     current: list[BatchJobContext] = []
 

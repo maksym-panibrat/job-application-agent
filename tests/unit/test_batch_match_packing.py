@@ -1,5 +1,7 @@
 import uuid
 
+import pytest
+
 from app.services.batch_match_packing import (
     BatchJobContext,
     build_request_hash,
@@ -43,6 +45,20 @@ def test_pack_provider_requests_respects_char_budget():
     assert [len(group.jobs) for group in groups] == [2, 1]
 
 
+def test_estimate_request_chars_includes_request_and_job_overhead():
+    job = _job(1, "")
+    raw_chars = (
+        len("Python")
+        + len(str(job.application_id))
+        + len(job.title)
+        + len(job.company)
+        + len(job.location or "unspecified")
+        + len(job.workplace_type or "unspecified")
+    )
+
+    assert estimate_request_chars(profile_text="Python", jobs=[job]) > raw_chars
+
+
 def test_pack_provider_requests_truncates_single_oversized_job_to_budget():
     groups = pack_provider_requests(
         profile_text="Python",
@@ -56,7 +72,7 @@ def test_pack_provider_requests_truncates_single_oversized_job_to_budget():
     assert "[Description truncated for batch]" in groups[0].jobs[0].description
 
 
-def test_pack_provider_requests_handles_budget_too_small_for_truncation_marker():
+def test_pack_provider_requests_handles_tight_budget_smaller_than_truncation_marker():
     job = _job(1, "A" * 5000)
     empty_description_job = _job(1, "")
     max_request_chars = estimate_request_chars(
@@ -73,6 +89,31 @@ def test_pack_provider_requests_handles_budget_too_small_for_truncation_marker()
 
     assert len(groups) == 1
     assert groups[0].estimated_chars <= max_request_chars
+
+
+def test_pack_provider_requests_rejects_zero_max_apps_per_request():
+    with pytest.raises(ValueError):
+        pack_provider_requests(
+            profile_text="Python",
+            jobs=[_job(1)],
+            max_apps_per_request=0,
+            max_request_chars=100000,
+        )
+
+
+def test_pack_provider_requests_rejects_budget_too_small_for_single_job_metadata():
+    empty_description_job = _job(1, "")
+    max_request_chars = (
+        estimate_request_chars(profile_text="Python", jobs=[empty_description_job]) - 1
+    )
+
+    with pytest.raises(ValueError):
+        pack_provider_requests(
+            profile_text="Python",
+            jobs=[_job(1, "A" * 5000)],
+            max_apps_per_request=10,
+            max_request_chars=max_request_chars,
+        )
 
 
 def test_request_hash_changes_when_context_changes():
