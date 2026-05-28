@@ -160,23 +160,6 @@ async def upsert_job(
     return job, True
 
 
-async def get_active_jobs(
-    session: AsyncSession,
-    source: str | None = None,
-    workplace_type: str | None = None,
-    limit: int = 50,
-    offset: int = 0,
-) -> list[Job]:
-    q = select(Job).where(Job.is_active.is_(True))
-    if source:
-        q = q.where(Job.source == source)
-    if workplace_type:
-        q = q.where(Job.workplace_type == workplace_type)
-    q = q.limit(limit).offset(offset)
-    result = await session.execute(q)
-    return list(result.scalars().all())
-
-
 async def mark_stale_jobs(stale_after_days: int, session: AsyncSession) -> int:
     """Mark jobs as inactive if not refreshed within stale_after_days. Returns count."""
     cutoff = datetime.now(UTC) - timedelta(days=stale_after_days)

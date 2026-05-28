@@ -169,13 +169,6 @@ async def add_skill(profile_id: uuid.UUID, skill_data: dict, session: AsyncSessi
     return skill
 
 
-async def remove_skill(skill_id: uuid.UUID, session: AsyncSession) -> None:
-    skill = await session.get(Skill, skill_id)
-    if skill:
-        await session.delete(skill)
-        await session.commit()
-
-
 async def add_work_experience(
     profile_id: uuid.UUID, exp_data: dict, session: AsyncSession
 ) -> WorkExperience:
@@ -184,13 +177,6 @@ async def add_work_experience(
     await session.commit()
     await session.refresh(exp)
     return exp
-
-
-async def remove_work_experience(exp_id: uuid.UUID, session: AsyncSession) -> None:
-    exp = await session.get(WorkExperience, exp_id)
-    if exp:
-        await session.delete(exp)
-        await session.commit()
 
 
 async def replace_all_skills(

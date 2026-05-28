@@ -1,28 +1,21 @@
-"""
-Match service — scores jobs against a profile and creates Application rows.
-"""
+"""Match service helpers for profile formatting and application listing."""
 
-import time
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
-import structlog
 from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
-from app.config import get_settings
 from app.models.application import Application
 from app.models.job import Job
 from app.models.user_profile import Skill, UserProfile, WorkExperience
-from app.services import profile_service
 from app.services.remote_policy import evaluate_remote_policy
 
 if TYPE_CHECKING:
     from app.agents.matching_agent import ScoreResult
 
-log = structlog.get_logger()
 DISPLAY_JOB_MAX_AGE_DAYS = 10
 
 ApplicationListRow = tuple[
@@ -45,20 +38,6 @@ ApplicationListRow = tuple[
     str,
     datetime | None,
 ]
-
-JobScoreRow = tuple[
-    uuid.UUID,
-    str,
-    str,
-    str,
-    str,
-    str | None,
-    str | None,
-    str | None,
-    str | None,
-    str | None,
-]
-
 
 async def mark_for_rescore(profile_id: uuid.UUID, session: AsyncSession) -> int:
     """Clear eligible scored applications and enqueue match work for re-scoring.
@@ -179,207 +158,6 @@ def apply_remote_policy_to_score(
     return score_result
 
 
-async def get_or_create_application(
-    job_id: uuid.UUID,
-    profile_id: uuid.UUID,
-    session: AsyncSession,
-) -> Application | None:
-    """Create an Application row. Returns None if already exists (idempotent)."""
-    result = await session.execute(
-        select(Application).where(
-            Application.job_id == job_id,
-            Application.profile_id == profile_id,
-        )
-    )
-    existing = result.scalar_one_or_none()
-    if existing:
-        return None
-
-    app = Application(job_id=job_id, profile_id=profile_id)
-    session.add(app)
-    await session.commit()
-    await session.refresh(app)
-    return app
-
-
-async def score_and_match(
-    profile: UserProfile,
-    session: AsyncSession,
-    jobs: list[Job] | None = None,
-) -> list[Application]:
-    """
-    Score all unmatched jobs for a profile and create Application rows above threshold.
-    Uses the LangGraph matching agent with Send-based fan-out for parallelism.
-    """
-    t0 = time.perf_counter()
-    await log.ainfo("match.score_and_match.started", profile_id=str(profile.id))
-    settings = get_settings()
-
-    skills = await profile_service.get_skills(profile.id, session)
-    experiences = await profile_service.get_work_experiences(profile.id, session)
-    profile_text = format_profile_text(profile, skills, experiences)
-
-    if jobs is None:
-        company_ids = list(profile.target_company_ids or [])
-        if not company_ids:
-            return []
-
-        matched_result = await session.execute(
-            select(Application.job_id).where(
-                Application.profile_id == profile.id,
-                col(Application.match_score).is_not(None),
-            )
-        )
-        matched_ids = {row[0] for row in matched_result.all()}
-
-        candidates_q = build_score_candidate_query(
-            company_ids=company_ids,
-            matched_ids=matched_ids,
-            limit=settings.matching_jobs_per_batch,
-        )
-        candidate_rows: list[JobScoreRow] = list(
-            (await session.execute(candidates_q)).tuples().all()
-        )
-        jobs = [
-            Job(
-                id=job_id,
-                source=source,
-                external_id=external_id,
-                title=title,
-                company_name=company_name,
-                location=location,
-                workplace_type=workplace_type,
-                description=description,
-                description_raw=description_raw,
-                apply_url=apply_url,
-            )
-            for (
-                job_id,
-                source,
-                external_id,
-                title,
-                company_name,
-                location,
-                workplace_type,
-                description,
-                description_raw,
-                apply_url,
-            ) in candidate_rows
-        ]
-
-    if not jobs:
-        return []
-
-    from app.agents.matching_agent import JobContext, build_graph
-
-    job_contexts: list[JobContext] = []
-    job_map: dict[str, Job] = {}
-    for job in jobs:
-        # We need application rows first so we can link scores
-        app = await get_or_create_application(job.id, profile.id, session)
-        if app is None:
-            # Already exists
-            result = await session.execute(
-                select(Application).where(
-                    Application.job_id == job.id,
-                    Application.profile_id == profile.id,
-                )
-            )
-            app = result.scalar_one_or_none()
-        if app:
-            job_contexts.append(
-                {
-                    "application_id": str(app.id),
-                    "title": job.title,
-                    "company": job.company_name,
-                    "location": job.location,
-                    "workplace_type": job.workplace_type,
-                    "description": job.description or job.description_raw or "",
-                }
-            )
-            job_map[str(app.id)] = job
-
-    if not job_contexts:
-        return []
-
-    graph = build_graph()
-    result = await graph.ainvoke(
-        {
-            "profile_id": str(profile.id),
-            "profile_text": profile_text,
-            "jobs": job_contexts,
-            "scores": [],
-        },
-        config={
-            "run_name": "match-scoring",
-            "metadata": {"profile_id": str(profile.id), "job_count": len(job_contexts)},
-        },
-    )
-
-    scored_apps = []
-    for score_result in result.get("scores", []):
-        job = job_map.get(score_result.application_id)
-        if job is not None:
-            score_result = apply_remote_policy_to_score(
-                score_result,
-                profile,
-                job,
-                settings.match_score_threshold,
-            )
-
-        app_result = await session.execute(
-            select(Application).where(Application.id == uuid.UUID(score_result.application_id))
-        )
-        app = app_result.scalar_one_or_none()
-        if not app:
-            continue
-
-        # score=None means scoring was skipped (rate limit / quota / transient).
-        # Leave match_score NULL so the Application is re-eligible on the next
-        # sync instead of being permanently auto_rejected at 0.0 (issue #46).
-        if score_result.score is None:
-            await log.awarning(
-                "match.scoring_skipped",
-                application_id=score_result.application_id,
-                rationale=score_result.rationale[:200],
-            )
-            continue
-
-        # Always persist scores for auditability
-        app.match_score = score_result.score
-        app.match_summary = score_result.summary
-        app.match_rationale = score_result.rationale
-        app.match_strengths = score_result.strengths
-        app.match_gaps = score_result.gaps
-
-        passed = score_result.score >= settings.match_score_threshold
-        if not passed:
-            if app.status == "pending_review":
-                app.status = "auto_rejected"
-        else:
-            scored_apps.append(app)
-
-        session.add(app)
-        await log.ainfo(
-            "match.scored",
-            application_id=score_result.application_id,
-            score=round(score_result.score, 3),
-            passed=passed,
-            summary=score_result.summary[:200],
-            rationale=score_result.rationale[:200],
-        )
-
-    await session.commit()
-    await log.ainfo(
-        "match.complete",
-        profile_id=str(profile.id),
-        scored=len(scored_apps),
-        total_jobs=len(job_contexts),
-        duration_ms=int((time.perf_counter() - t0) * 1000),
-    )
-    return scored_apps
-
-
 async def list_applications(
     profile_id: uuid.UUID,
     session: AsyncSession,
@@ -442,35 +220,4 @@ def build_application_list_query(
             q = q.where(col(Application.match_score).is_not(None))
     if min_score is not None:
         q = q.where(Application.match_score >= min_score)
-    return q
-
-
-def build_score_candidate_query(
-    *,
-    company_ids: list[uuid.UUID],
-    matched_ids: set[uuid.UUID],
-    limit: int,
-):
-    q = (
-        select(
-            Job.id,
-            Job.source,
-            Job.external_id,
-            Job.title,
-            Job.company_name,
-            Job.location,
-            Job.workplace_type,
-            Job.description,
-            Job.description_raw,
-            Job.apply_url,
-        )
-        .where(
-            Job.is_active.is_(True),
-            col(Job.company_id).in_(company_ids),
-        )
-        .order_by(Job.posted_at.desc().nullslast(), Job.fetched_at.desc())
-        .limit(limit)
-    )
-    if matched_ids:
-        q = q.where(col(Job.id).notin_(matched_ids))
     return q

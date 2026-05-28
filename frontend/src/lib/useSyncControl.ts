@@ -7,7 +7,7 @@ import { track } from './track'
 const POLL_MS = 3_000
 const FAST_SYNC_INVALIDATE_MS = 1_500
 
-export function liveLabel(s: SyncStatus | null): string {
+function liveLabel(s: SyncStatus | null): string {
   if (!s) return 'Sync now'
   if (s.state === 'syncing') {
     const done = s.slugs_total - s.slugs_pending

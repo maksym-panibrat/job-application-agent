@@ -1,5 +1,34 @@
 import '@testing-library/jest-dom'
+import React from 'react'
+import { vi } from 'vitest'
 import { server } from './server'
+
+vi.mock('react-swipeable-list', () => {
+  const passthrough = ({ children }: { children: React.ReactNode }) =>
+    React.createElement(React.Fragment, null, children)
+  const item = ({
+    children,
+    trailingActions,
+  }: {
+    children: React.ReactNode
+    trailingActions?: React.ReactNode
+  }) => React.createElement(React.Fragment, null, children, trailingActions)
+  return {
+    Type: { IOS: 'IOS' },
+    SwipeableList: passthrough,
+    SwipeableListItem: item,
+    TrailingActions: passthrough,
+    SwipeAction: ({
+      children,
+      onClick,
+    }: {
+      children: React.ReactNode
+      onClick?: () => void
+    }) => React.isValidElement(children)
+      ? React.cloneElement(children, { onClick } as React.HTMLAttributes<HTMLElement>)
+      : React.createElement('button', { type: 'button', onClick }, children),
+  }
+})
 
 beforeAll(() => server.listen({ onUnhandledRequest: 'warn' }))
 afterEach(() => server.resetHandlers())

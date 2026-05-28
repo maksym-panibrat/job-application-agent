@@ -22,10 +22,8 @@ Required env: `DATABASE_URL`, `GOOGLE_API_KEY`. Full list: `app/config.py::Setti
 uv run pytest tests/unit/           # fast, no DB
 uv run pytest tests/integration/    # testcontainers Postgres
 uv run pytest tests/e2e/            # full stack
-uv run pytest tests/smoke/ --has-seed-api   # live server at :8000
+uv run pytest tests/smoke/          # live server at :8000
 ```
-
-`--has-seed-api` enables tests that call `POST /api/test/seed` — mounted only when `ENVIRONMENT in ("development","test")`.
 
 Each agent module's `get_llm()` returns `FakeListChatModel` when `ENVIRONMENT=test`, so no real API key is needed.
 
@@ -45,9 +43,9 @@ Onboarding (`app/agents/onboarding.py`) is the only agent that uses `AsyncPostgr
 
 `rate_limit_service.py` is only enforced when `settings.environment == "production"` (guard at the API layer — e.g. `app/api/profile.py`, `app/api/jobs.py`). Tests would break otherwise.
 
-### Matching throttle
+### Matching
 
-Matching agent uses `asyncio.Semaphore` + 1.5s sleep + 10s/30s exponential backoff on 429; falls back to `score=0.0` after retries. `ScoreResult.strengths/gaps` coerces prose to lists.
+Matching runs through the worker queue (`match` jobs). The matching agent scores one `Application` at a time; `safe_ainvoke()` handles quota/rate-limit exceptions before the worker retry policy decides whether to retry. `ScoreResult.strengths/gaps` coerces prose to lists.
 
 ### Worker queue and cron
 

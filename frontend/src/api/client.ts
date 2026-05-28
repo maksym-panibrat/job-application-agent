@@ -25,7 +25,7 @@ export interface Profile {
   work_experiences: WorkExperience[]
 }
 
-export interface Skill {
+interface Skill {
   id: string
   name: string
   category: string | null
@@ -33,7 +33,7 @@ export interface Skill {
   years: number | null
 }
 
-export interface WorkExperience {
+interface WorkExperience {
   id: string
   company: string
   title: string

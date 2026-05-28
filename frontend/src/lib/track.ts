@@ -14,9 +14,16 @@ interface EventIn {
 const SESSION_KEY = 'ja_session_id'
 const FLUSH_MS = 5_000
 const MAX_BATCH = 50
+const PAGEHIDE_LISTENER_KEY = '__jobApplicationAgentTrackPagehideListener'
 
 const queue: EventIn[] = []
 let flushTimer: number | null = null
+
+declare global {
+  interface Window {
+    [PAGEHIDE_LISTENER_KEY]?: () => void
+  }
+}
 
 function getSessionId(): string {
   let s = sessionStorage.getItem(SESSION_KEY)
@@ -68,21 +75,13 @@ export function track(name: string, properties?: Record<string, unknown>): void 
   }
 }
 
-/** Clears internal state and removes the pagehide listener.
- *  Exported for test isolation only — do not call in production code. */
-export function _reset(): void {
-  queue.length = 0
-  if (flushTimer !== null) {
-    clearTimeout(flushTimer)
-    flushTimer = null
-  }
-  if (typeof window !== 'undefined') {
-    window.removeEventListener('pagehide', onPagehide)
-  }
-}
-
 function onPagehide(): void { void flush() }
 
 if (typeof window !== 'undefined') {
+  const previous = window[PAGEHIDE_LISTENER_KEY]
+  if (previous) {
+    window.removeEventListener('pagehide', previous)
+  }
   window.addEventListener('pagehide', onPagehide)
+  window[PAGEHIDE_LISTENER_KEY] = onPagehide
 }

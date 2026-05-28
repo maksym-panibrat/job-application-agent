@@ -1,14 +1,9 @@
 """Matching agent scoring primitives."""
 
-import operator
-from typing import Annotated
-
 import structlog
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.tools import tool
 from langchain_google_genai import ChatGoogleGenerativeAI
-from langgraph.graph import END, StateGraph
-from langgraph.types import Send
 from pydantic import BaseModel, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing_extensions import TypedDict
@@ -57,18 +52,6 @@ class JobContext(TypedDict):
     location: str | None
     workplace_type: str | None
     description: str
-
-
-class MatchState(TypedDict):
-    profile_id: str
-    profile_text: str
-    jobs: list[JobContext]
-    scores: Annotated[list[ScoreResult], operator.add]
-
-
-class SingleJobState(TypedDict):
-    profile_text: str
-    job: JobContext
 
 
 def get_llm():
@@ -196,34 +179,3 @@ async def score_one(application: Application, session: AsyncSession) -> dict:
     settings = get_settings()
     score = apply_remote_policy_to_score(score, profile, job, settings.match_score_threshold)
     return score.model_dump()
-
-
-def build_graph() -> StateGraph:
-    def load_context_node(state: MatchState) -> dict:
-        return {}
-
-    def fan_out(state: MatchState) -> list[Send]:
-        return [
-            Send("score_job", {"profile_text": state["profile_text"], "job": job})
-            for job in state["jobs"]
-        ]
-
-    async def score_job_node(state: SingleJobState) -> dict:
-        score_result = await score_job_context(
-            profile_text=state["profile_text"], job=state["job"]
-        )
-        return {"scores": [score_result]}
-
-    async def persist_results_node(state: MatchState) -> dict:
-        return {}
-
-    builder = StateGraph(MatchState)
-    builder.add_node("load_context", load_context_node)
-    builder.add_node("score_job", score_job_node)
-    builder.add_node("persist_results", persist_results_node)
-    builder.set_entry_point("load_context")
-    builder.add_conditional_edges("load_context", fan_out, ["score_job"])
-    builder.add_edge("score_job", "persist_results")
-    builder.add_edge("persist_results", END)
-
-    return builder.compile()
