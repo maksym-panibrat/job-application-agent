@@ -12,8 +12,10 @@ from app.models.application import Application
 from app.models.job import Job
 from app.models.llm_match_batch import (
     ACTIVE_BATCH_STATUSES,
+    BATCH_STATUS_BUILDING,
     BATCH_STATUS_DONE,
     BATCH_STATUS_FAILED,
+    BATCH_STATUS_IMPORTING,
     BATCH_STATUS_SUBMITTED,
     ITEM_STATUS_IMPORTED,
     ITEM_STATUS_RETRYABLE_FAILED,
@@ -68,8 +70,13 @@ async def run_batch_match_tick(
     provider: BatchMatchProvider,
 ) -> BatchMatchTickResult:
     active = await _get_active_batch(session, profile_id)
-    if active is not None and active.status == BATCH_STATUS_SUBMITTED:
+    if active is not None and active.status in (
+        BATCH_STATUS_SUBMITTED,
+        BATCH_STATUS_IMPORTING,
+    ):
         return await _poll_and_import(session, batch=active, provider=provider)
+    if active is not None and active.status == BATCH_STATUS_BUILDING:
+        return BatchMatchTickResult(requeued=True)
     if active is not None:
         return BatchMatchTickResult(requeued=True)
     return await _build_and_submit(session, profile_id=profile_id, provider=provider)
@@ -144,12 +151,17 @@ async def _build_and_submit(
         profile_text=profile_text,
         groups=groups,
     )
+    await session.commit()
 
     now = datetime.now(UTC)
-    provider_batch_id = await provider.submit(
-        requests=requests,
-        display_name=f"batch-match:{profile_id}",
-    )
+    try:
+        provider_batch_id = await provider.submit(
+            requests=requests,
+            display_name=f"batch-match-{batch.id}",
+        )
+    except Exception as exc:
+        await _fail_batch(session, batch=batch, error=str(exc))
+        raise
     batch.provider_batch_id = provider_batch_id
     batch.status = BATCH_STATUS_SUBMITTED
     batch.submitted_at = now
@@ -173,30 +185,23 @@ async def _poll_and_import(
     settings = get_settings()
     now = datetime.now(UTC)
     if not batch.provider_batch_id:
-        batch.status = BATCH_STATUS_FAILED
-        batch.last_error = "missing provider_batch_id"
-        batch.completed_at = now
-        batch.updated_at = now
-        session.add(batch)
-        await session.commit()
-        return BatchMatchTickResult(terminal_failed=1)
+        return await _fail_batch(session, batch=batch, error="missing provider_batch_id")
 
     status = await provider.poll(provider_batch_id=batch.provider_batch_id)
     batch.last_polled_at = now
     batch.updated_at = now
     if status.failed:
-        await _mark_submitted_items_retryable(session, batch.id, status.error or "provider failed")
-        batch.status = BATCH_STATUS_FAILED
-        batch.last_error = status.error or "provider failed"
-        batch.completed_at = now
-        session.add(batch)
-        await session.commit()
-        return await _result_from_batch(session, batch, requeued=False)
+        return await _fail_batch(session, batch=batch, error=status.error or "provider failed")
     if not status.ready:
         batch.next_poll_at = now + timedelta(seconds=settings.batch_match_poll_interval_seconds)
         session.add(batch)
         await session.commit()
         return BatchMatchTickResult(requeued=True)
+
+    batch.status = BATCH_STATUS_IMPORTING
+    batch.next_poll_at = None
+    session.add(batch)
+    await session.commit()
 
     output = await provider.fetch_output(provider_batch_id=batch.provider_batch_id)
     counters = await _import_provider_output(session, batch=batch, output=output)
@@ -209,6 +214,24 @@ async def _poll_and_import(
     )
 
 
+async def _fail_batch(
+    session: AsyncSession,
+    *,
+    batch: LLMMatchBatch,
+    error: str,
+) -> BatchMatchTickResult:
+    now = datetime.now(UTC)
+    await _mark_submitted_items_retryable(session, batch.id, error)
+    batch.status = BATCH_STATUS_FAILED
+    batch.last_error = error
+    batch.completed_at = now
+    batch.next_poll_at = None
+    batch.updated_at = now
+    session.add(batch)
+    await session.commit()
+    return await _result_from_batch(session, batch, requeued=False)
+
+
 async def _select_unscored_application_rows(
     session: AsyncSession,
     *,
@@ -216,16 +239,30 @@ async def _select_unscored_application_rows(
     limit: int,
 ) -> list[tuple[Application, Job]]:
     posted_cutoff = datetime.now(UTC) - timedelta(days=DISPLAY_JOB_MAX_AGE_DAYS)
+    active_item_app_ids = (
+        select(LLMMatchBatchItem.application_id)
+        .join(LLMMatchBatch, LLMMatchBatchItem.batch_id == LLMMatchBatch.id)
+        .where(
+            LLMMatchBatchItem.status == ITEM_STATUS_SUBMITTED,
+            col(LLMMatchBatch.status).in_(ACTIVE_BATCH_STATUSES),
+        )
+    )
     result = await session.execute(
         select(Application, Job)
         .join(Job, Application.job_id == Job.id)
         .where(
             Application.profile_id == profile_id,
             col(Application.match_score).is_(None),
+            col(Application.status).in_(("pending_review", "auto_rejected")),
             Job.is_active.is_(True),
             (col(Job.posted_at).is_(None)) | (Job.posted_at >= posted_cutoff),
+            col(Application.id).notin_(active_item_app_ids),
         )
-        .order_by(Job.posted_at.desc().nullslast(), Job.fetched_at.desc())
+        .order_by(
+            Job.posted_at.desc().nullslast(),
+            Application.created_at.desc(),
+            Application.id.asc(),
+        )
         .limit(limit)
     )
     return [(app, job) for app, job in result.all()]
@@ -301,8 +338,11 @@ def _job_context(app: Application, job: Job) -> BatchJobContext:
 
 
 def _provider_request(group: PackedProviderRequest, *, profile_text: str) -> dict:
+    settings = get_settings()
     return {
         "request_key": group.request_key,
+        "model": settings.llm_matching_model,
+        "prompt_version": settings.batch_match_prompt_version,
         "profile_text": profile_text,
         "jobs": [
             {
@@ -400,16 +440,28 @@ async def _import_result_for_item(
         _mark_item_terminal(item, "application missing")
         counters.terminal_failed += 1
         return
-    if app.match_score is not None:
-        _apply_item_imported(item, result)
-        counters.imported += 1
-        return
 
     job = await session.get(Job, app.job_id)
     profile = await session.get(UserProfile, app.profile_id)
     if job is None or profile is None:
         _mark_item_terminal(item, "domain row missing")
         counters.terminal_failed += 1
+        return
+    if app.match_score is not None:
+        _apply_item_imported(item, result)
+        counters.imported += 1
+        return
+
+    deterministic_fields = deterministic_rejection_fields(
+        profile,
+        job,
+        get_settings().match_score_threshold,
+    )
+    if deterministic_fields is not None:
+        _apply_score_fields(app, deterministic_fields)
+        _apply_item_fields(item, deterministic_fields)
+        counters.imported += 1
+        session.add(app)
         return
 
     _apply_item_imported(item, result)
@@ -419,6 +471,7 @@ async def _import_result_for_item(
     app.match_rationale = result.rationale
     app.match_strengths = list(result.strengths)
     app.match_gaps = list(result.gaps)
+    app.updated_at = datetime.now(UTC)
     settings = get_settings()
     if item.score < settings.match_score_threshold and app.status == "pending_review":
         app.status = "auto_rejected"
@@ -432,6 +485,21 @@ def _apply_item_imported(item: LLMMatchBatchItem, result: ProviderJobResult) -> 
     item.strengths = list(result.strengths)
     item.gaps = list(result.gaps)
     item.status = ITEM_STATUS_IMPORTED
+    item.error = None
+    item.updated_at = datetime.now(UTC)
+
+
+def _apply_item_fields(
+    item: LLMMatchBatchItem,
+    fields: DeterministicRejectionFields,
+) -> None:
+    item.score = fields["score"]
+    item.summary = fields["summary"]
+    item.rationale = fields["rationale"]
+    item.strengths = list(fields["strengths"])
+    item.gaps = list(fields["gaps"])
+    item.status = ITEM_STATUS_IMPORTED
+    item.error = None
     item.updated_at = datetime.now(UTC)
 
 
