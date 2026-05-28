@@ -1,7 +1,7 @@
 """add llm match batches
 
 Revision ID: b7c8d9e0f1a2
-Revises: e4f5a6b7c8d9
+Revises: e1f2a3b4c5d6
 Create Date: 2026-05-28 10:00:00.000000
 
 """
@@ -14,7 +14,7 @@ from sqlalchemy.dialects import postgresql
 from alembic import op
 
 revision: str = "b7c8d9e0f1a2"
-down_revision: str | None = "e4f5a6b7c8d9"
+down_revision: str | None = "e1f2a3b4c5d6"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
