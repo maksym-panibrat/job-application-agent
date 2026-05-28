@@ -35,7 +35,7 @@ export function ChatDrawer() {
   }
 
   return (
-    <Drawer open={open} onClose={close} title="Chat">
+    <Drawer open={open} onClose={close} title="Chat" widthClassName="w-full md:w-[640px] lg:w-[720px]">
       <Chat initialPrompt={initialPrompt} />
     </Drawer>
   )

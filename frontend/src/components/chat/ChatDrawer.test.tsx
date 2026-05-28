@@ -32,6 +32,12 @@ describe('ChatDrawer', () => {
     expect(dlg).toHaveAttribute('aria-label', 'Chat')
   })
 
+  it('uses a wider desktop panel than the default drawer', () => {
+    render(withCtx('/?chat=1'))
+    const panel = screen.getByRole('dialog').querySelector('[tabindex="-1"]')
+    expect(panel?.className).toMatch(/md:w-\[640px\]/)
+  })
+
   it('closing the drawer removes ?chat from the URL', async () => {
     const user = userEvent.setup()
     render(withCtx('/?chat=1&status=applied'))
