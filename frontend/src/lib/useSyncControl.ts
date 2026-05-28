@@ -7,7 +7,13 @@ import { track } from './track'
 const POLL_MS = 3_000
 const FAST_SYNC_INVALIDATE_MS = 1_500
 
-export function liveLabel(s: SyncStatus | null): string {
+function syncStartedMessage(queuedSlugs?: string[]): string {
+  const count = queuedSlugs?.length ?? 0
+  if (count === 0) return 'Search started.'
+  return `Search started — checking ${count} board${count === 1 ? '' : 's'}.`
+}
+
+function liveLabel(s: SyncStatus | null): string {
   if (!s) return 'Sync now'
   if (s.state === 'syncing') {
     const done = s.slugs_total - s.slugs_pending
@@ -88,9 +94,9 @@ export function useSyncControl({ enabled = true }: UseSyncControlOptions = {}): 
         matched_now: data.matched_now ?? 0,
         queued_slugs: data.queued_slugs?.length ?? 0,
       })
-      show(`Searching now — ${data.matched_now ?? 0} from cache.`, 'success')
+      show(syncStartedMessage(data.queued_slugs), 'success')
       // Belt-and-suspenders for fast syncs that finish before the poller
-      // catches a non-idle state — surfaces `matched_now` cache hits in the feed.
+      // catches a non-idle state, so the feed refreshes after a manual sync.
       if (fastSyncTimeout.current) clearTimeout(fastSyncTimeout.current)
       setPollKick((value) => value + 1)
       fastSyncTimeout.current = setTimeout(

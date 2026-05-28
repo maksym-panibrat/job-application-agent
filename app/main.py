@@ -224,12 +224,6 @@ if _startup_settings.google_oauth_client_id and _startup_settings.google_oauth_c
         tags=["auth"],
     )
 
-# Dev-only endpoints for E2E testing
-if _startup_settings.environment in ("development", "test"):
-    from app.api.test_helpers import router as test_helpers_router
-
-    app.include_router(test_helpers_router)
-
 # SPA catch-all: serve React build. The route is always registered so it is
 # testable via monkeypatching static_dir; the handler returns 404 if the
 # build doesn't exist (dev without a build, or CI without frontend step).

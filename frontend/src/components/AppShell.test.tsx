@@ -104,6 +104,15 @@ describe('AppShell (desktop)', () => {
     expect(screen.getByRole('button', { name: /sign out/i })).toBeInTheDocument()
   })
 
+  it('adds hover labels to desktop header controls', () => {
+    renderShell()
+    expect(screen.getByRole('button', { name: /sync now/i })).toHaveAttribute('title', 'Sync now')
+    expect(screen.getByRole('link', { name: /settings/i })).toHaveAttribute('title', 'Open settings')
+    expect(screen.getByRole('button', { name: /send feedback/i })).toHaveAttribute('title', 'Send feedback')
+    expect(screen.getByRole('button', { name: /chat/i })).toHaveAttribute('title', 'Open chat')
+    expect(screen.getByRole('button', { name: /sign out/i })).toHaveAttribute('title', 'Sign out')
+  })
+
   it('renders the hamburger button (visible on mobile; rendered at all widths)', () => {
     renderShell()
     expect(screen.getByRole('button', { name: /open menu/i })).toBeInTheDocument()
@@ -148,8 +157,9 @@ describe('AppShell sync (header button)', () => {
     await user.click(screen.getByRole('button', { name: /sync now/i }))
     await waitFor(() => expect(posted).toBe(true))
     await waitFor(() =>
-      expect(screen.getByRole('status')).toHaveTextContent(/searching/i)
+      expect(screen.getByRole('status')).toHaveTextContent('Search started — checking 1 board.')
     )
+    expect(screen.getByRole('status')).not.toHaveTextContent(/cache/i)
   })
 
   it('stops polling sync status after an idle response', async () => {

@@ -122,6 +122,7 @@ async def test_toggle_search_pause(test_app):
     resp = await test_app.patch("/api/profile/search", json={"search_active": False})
     assert resp.status_code == 200
     assert resp.json()["search_active"] is False
+    assert resp.json()["search_expires_at"] is None
 
     # Resume
     resp2 = await test_app.patch("/api/profile/search", json={"search_active": True})

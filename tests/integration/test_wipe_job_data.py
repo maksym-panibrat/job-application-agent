@@ -35,6 +35,12 @@ async def _seed_reset_rows(db_session) -> None:
     oauth_id = uuid.uuid4()
     skill_id = uuid.uuid4()
     work_experience_id = uuid.uuid4()
+    subscription_plan_id = uuid.uuid4()
+    subscription_account_id = uuid.uuid4()
+    subscription_id = uuid.uuid4()
+    subscription_event_id = uuid.uuid4()
+    engagement_event_id = uuid.uuid4()
+    entitlement_decision_id = uuid.uuid4()
     usage_counter_id = uuid.uuid4()
 
     await db_session.execute(
@@ -62,6 +68,75 @@ async def _seed_reset_rows(db_session) -> None:
                 '{}'::jsonb, '{}'::jsonb, ARRAY[:company_id]::uuid[], TRUE, now(), now())
         """),
         {"profile_id": profile_id, "user_id": user_id, "company_id": company_id},
+    )
+    await db_session.execute(
+        text("""
+            INSERT INTO subscription_plans (id, tier, display_name, followed_company_limit)
+            VALUES (:subscription_plan_id, 'paid', 'Paid', 100)
+        """),
+        {"subscription_plan_id": subscription_plan_id},
+    )
+    await db_session.execute(
+        text("""
+            INSERT INTO subscription_accounts (id, user_id, provider, provider_customer_id)
+            VALUES (:subscription_account_id, :user_id, 'test', 'cus_wipe')
+        """),
+        {"subscription_account_id": subscription_account_id, "user_id": user_id},
+    )
+    await db_session.execute(
+        text("""
+            INSERT INTO subscriptions (id, user_id, subscription_account_id, plan_id,
+                provider, provider_subscription_id, status, current_period_start,
+                current_period_end)
+            VALUES (:subscription_id, :user_id, :subscription_account_id,
+                :subscription_plan_id, 'test', 'sub_wipe', 'active', now(), now())
+        """),
+        {
+            "subscription_id": subscription_id,
+            "user_id": user_id,
+            "subscription_account_id": subscription_account_id,
+            "subscription_plan_id": subscription_plan_id,
+        },
+    )
+    await db_session.execute(
+        text("""
+            INSERT INTO subscription_events (id, user_id, subscription_id, event_type,
+                provider, provider_event_id, payload)
+            VALUES (:subscription_event_id, :user_id, :subscription_id,
+                'subscription_created', 'test', 'evt_wipe', '{}'::jsonb)
+        """),
+        {
+            "subscription_event_id": subscription_event_id,
+            "user_id": user_id,
+            "subscription_id": subscription_id,
+        },
+    )
+    await db_session.execute(
+        text("""
+            INSERT INTO engagement_events (id, user_id, profile_id, event_type,
+                subject_type, subject_id, source, metadata)
+            VALUES (:engagement_event_id, :user_id, :profile_id, 'company_followed',
+                'company', :company_id, 'test', '{}'::jsonb)
+        """),
+        {
+            "engagement_event_id": engagement_event_id,
+            "user_id": user_id,
+            "profile_id": profile_id,
+            "company_id": company_id,
+        },
+    )
+    await db_session.execute(
+        text("""
+            INSERT INTO entitlement_decisions (id, user_id, profile_id, decision_type,
+                previous_value, next_value, reason)
+            VALUES (:entitlement_decision_id, :user_id, :profile_id,
+                'paid_entitlement_activated', NULL, '{}'::jsonb, 'wipe test')
+        """),
+        {
+            "entitlement_decision_id": entitlement_decision_id,
+            "user_id": user_id,
+            "profile_id": profile_id,
+        },
     )
     await db_session.execute(
         text("""
@@ -179,6 +254,11 @@ async def test_wipe_removes_user_owned_and_job_search_rows_but_preserves_compani
         "work_queue",
         "events",
         "feedback_reports",
+        "entitlement_decisions",
+        "engagement_events",
+        "subscription_events",
+        "subscriptions",
+        "subscription_accounts",
         "oauth_accounts",
         "skills",
         "work_experiences",
@@ -190,6 +270,7 @@ async def test_wipe_removes_user_owned_and_job_search_rows_but_preserves_compani
     ):
         assert await _count(db_session, table) == 0
     assert await _count(db_session, "companies") == 1
+    assert await _count(db_session, "subscription_plans") == 1
 
 
 @pytest.mark.asyncio

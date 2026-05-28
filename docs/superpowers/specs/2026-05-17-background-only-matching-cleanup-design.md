@@ -34,7 +34,7 @@ The worker path is now the safe operational path. Leaving the old synchronous sc
 
 `app/api/internal_cron.py` should not import `slug_registry_service`, `FetchSlugPayload`, or `enqueue` for sync. Its `/sync` endpoint gets a session, delegates to the active-profile sync helper, logs the aggregated summary, and returns it. `app/scheduler/tasks.py` should use the same helper so scheduled/background cron execution and HTTP cron execution cannot drift.
 
-`app/services/match_service.py` keeps profile formatting, application listing, and rematch enqueueing. The obsolete `score_cached()` helper is removed because no production caller should synchronously score cached jobs. The older batch `score_and_match()` path remains for now because integration tests and historical utilities still exercise it, but it should not be wired back into HTTP sync.
+`app/services/match_service.py` keeps profile formatting, application listing, and rematch enqueueing. The obsolete synchronous cached/batch scoring helpers are removed because production scoring is owned by the worker queue.
 
 The worker handler in `app/worker/handlers/match.py` remains the single production scoring entrypoint. It loads the `Application`, `Job`, and `UserProfile`; applies `evaluate_us_location_policy()` and `evaluate_remote_policy()` before importing/calling `matching_agent.score_one()`; and persists deterministic auto-rejects without spending LLM quota.
 
@@ -57,7 +57,7 @@ Cron flow:
 ## Error Handling
 
 - Sync failures remain request-scoped database/API failures.
-- Cron sync failures remain cron-scoped database/API failures and keep the existing structured error logging in `_run_cron` if that wrapper is used by future endpoints.
+- Cron sync failures remain cron-scoped database/API failures handled by the endpoint/worker logging paths.
 - Match failures remain worker-scoped transient or terminal failures.
 - If deterministic filters reject a job, the worker writes a below-threshold score, summary, rationale, and gaps, then marks `pending_review` rows `auto_rejected`.
 - Existing `dismissed` and `applied` statuses are not overwritten by deterministic rejects.

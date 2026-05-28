@@ -11,13 +11,9 @@ class Settings(BaseSettings):
     llm_matching_model: str = "gemini-2.5-flash"
     llm_resume_extraction_model: str = "gemini-2.5-flash"
     match_score_threshold: float = 0.65
-    max_matches_displayed: int = 20
-    job_sync_interval_hours: int = 24
     environment: str = "development"
     google_oauth_client_id: SecretStr | None = None
     google_oauth_client_secret: SecretStr | None = None
-    github_oauth_client_id: SecretStr | None = None
-    github_oauth_client_secret: SecretStr | None = None
     jwt_secret: SecretStr = SecretStr("dev-secret")
     cron_shared_secret: SecretStr = SecretStr("dev-cron-secret")
     search_auto_pause_days: int = 7
@@ -28,14 +24,6 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     feedback_webhook_url: SecretStr | None = None
     feedback_webhook_timeout_seconds: float = 3.0
-    matching_max_concurrency: int = 8
-    matching_jobs_per_batch: int = 20
-    # Per-tick match-queue caps. `max_per_profile` bounds how many jobs a
-    # single profile can own in one score_and_match call (slower ticks risk
-    # Cloud Run's 300s wall when one profile dominates the batch — see #71).
-    # `tick_deadline_seconds` bounds total wall time per tick.
-    matching_max_per_profile_per_tick: int = 30
-    matching_tick_deadline_seconds: int = 240
     queue_depth_emit_interval_s: int = 60
     batch_match_enabled: bool = False
     batch_match_dry_run: bool = True

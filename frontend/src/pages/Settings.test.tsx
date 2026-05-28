@@ -22,6 +22,9 @@ function fullProfile(): Profile {
     base_resume_md: 'r', target_roles: ['Backend'], target_locations: ['Berlin'],
     remote_ok: true, seniority: 'senior', search_keywords: ['python'],
     search_active: true, search_expires_at: null,
+    subscription: null,
+    entitlements: { paid_access: false, search_auto_pause: true },
+    limits: { followed_companies: 5 },
     target_companies: [{ id: 'co-1', canonical_name: 'Stripe' }],
     skills: [], work_experiences: [],
   }
@@ -49,6 +52,7 @@ describe('Settings page', () => {
         last_sync_requested_at: null, last_sync_completed_at: null,
         last_sync_summary: null, invalid_slugs: [],
       })),
+      http.get('/api/companies/catalog', () => HttpResponse.json([])),
     )
   })
 
@@ -57,6 +61,7 @@ describe('Settings page', () => {
     await waitFor(() => expect(screen.getByText(/search active/i)).toBeInTheDocument())
     expect(screen.getByText(/resume on file/i)).toBeInTheDocument()
     expect(screen.getByText(/followed companies/i)).toBeInTheDocument()
+    expect(screen.getByText('1 / 5 followed')).toBeInTheDocument()
     expect(screen.getByText(/account/i)).toBeInTheDocument()
     expect(screen.getByText(/profile/i)).toBeInTheDocument()
   })

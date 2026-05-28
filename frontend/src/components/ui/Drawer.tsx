@@ -12,9 +12,18 @@ export interface DrawerProps {
   children: ReactNode
   /** Optional class added to the inner panel — e.g. for layout overrides. */
   className?: string
+  /** Width utilities for the panel. Defaults to the standard drawer width. */
+  widthClassName?: string
 }
 
-export function Drawer({ open, onClose, title, children, className }: DrawerProps) {
+export function Drawer({
+  open,
+  onClose,
+  title,
+  children,
+  className,
+  widthClassName = 'w-full md:w-[420px]',
+}: DrawerProps) {
   const panelRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -39,7 +48,7 @@ export function Drawer({ open, onClose, title, children, className }: DrawerProp
         tabIndex={-1}
         className={cn(
           'absolute top-0 bottom-0 right-0 bg-surface border-l border-border',
-          'w-full md:w-[420px]',
+          widthClassName,
           'flex flex-col outline-none',
           className,
         )}

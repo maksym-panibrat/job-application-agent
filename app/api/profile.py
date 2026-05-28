@@ -1,19 +1,27 @@
 """Profile management endpoints."""
 
 import hashlib
-from datetime import UTC
+from datetime import UTC, datetime
 
 import structlog
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
-from app.api.deps import get_current_profile
+from app.api.deps import get_current_profile, get_current_user
 from app.config import Settings, get_settings
 from app.database import get_db
 from app.models.company import Company
+from app.models.user import User
 from app.models.user_profile import UserProfile
 from app.services import match_service, profile_service
+from app.services.engagement_service import record_engagement
+from app.services.entitlements import (
+    CompanyFollowLimitError,
+    effective_entitlements,
+    get_subscription_snapshot,
+    next_search_expiry,
+)
 from app.services.rate_limit_service import check_daily_quota, check_rate_limit
 
 log = structlog.get_logger()
@@ -22,9 +30,12 @@ router = APIRouter(prefix="/api/profile", tags=["profile"])
 
 @router.get("")
 async def get_profile(
+    user: User = Depends(get_current_user),
     profile: UserProfile = Depends(get_current_profile),
     session: AsyncSession = Depends(get_db),
 ):
+    subscription = await get_subscription_snapshot(user.id, session)
+    entitlements = effective_entitlements(subscription)
     skills = await profile_service.get_skills(profile.id, session)
     experiences = await profile_service.get_work_experiences(profile.id, session)
     target_companies: list[dict] = []
@@ -61,6 +72,22 @@ async def get_profile(
         "search_active": profile.search_active,
         "search_expires_at": profile.search_expires_at,
         "target_companies": target_companies,
+        "subscription": (
+            {
+                "tier": subscription.tier,
+                "status": subscription.status,
+                "current_period_end": subscription.current_period_end,
+            }
+            if subscription is not None
+            else None
+        ),
+        "entitlements": {
+            "paid_access": entitlements.paid_access,
+            "search_auto_pause": entitlements.search_auto_pause,
+        },
+        "limits": {
+            "followed_companies": entitlements.followed_company_limit,
+        },
         "first_name": profile.first_name,
         "last_name": profile.last_name,
         "skills": [
@@ -91,6 +118,7 @@ async def get_profile(
 @router.patch("")
 async def update_profile(
     data: dict,
+    user: User = Depends(get_current_user),
     profile: UserProfile = Depends(get_current_profile),
     session: AsyncSession = Depends(get_db),
     settings: Settings = Depends(get_settings),
@@ -122,7 +150,18 @@ async def update_profile(
         "last_name",
     }
     filtered = {k: v for k, v in data.items() if k in allowed}
-    updated = await profile_service.update_profile(profile.id, filtered, session)
+    subscription = await get_subscription_snapshot(user.id, session)
+    entitlements = effective_entitlements(subscription)
+    try:
+        updated = await profile_service.update_profile(
+            profile.id,
+            filtered,
+            session,
+            entitlements=entitlements,
+            engagement_source="api",
+        )
+    except CompanyFollowLimitError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     return {"id": str(updated.id), "updated": True}
 
 
@@ -166,8 +205,20 @@ async def upload_resume(
         }
 
     updated, extraction_status = await profile_service.save_resume(
-        profile.id, file.filename or "resume", raw, session
+        profile.id, file.filename or "resume", raw, session, commit=False
     )
+    await record_engagement(
+        session,
+        user_id=updated.user_id,
+        profile_id=updated.id,
+        event_type="resume_uploaded",
+        subject_type="profile",
+        subject_id=updated.id,
+        source="api",
+        metadata={"extraction_status": extraction_status},
+    )
+    await session.commit()
+    await session.refresh(updated)
     return {
         "id": str(updated.id),
         "base_resume_md": updated.base_resume_md,
@@ -207,20 +258,32 @@ async def toggle_search(
     data: dict,
     profile: UserProfile = Depends(get_current_profile),
     session: AsyncSession = Depends(get_db),
+    settings: Settings = Depends(get_settings),
 ):
     """Resume or pause job search. POST {search_active: true} to resume."""
-    from datetime import datetime, timedelta
-
     search_active = data.get("search_active", True)
+    was_search_active = bool(profile.search_active)
     updates: dict = {"search_active": search_active}
     if search_active:
-        from app.config import get_settings
-
-        settings = get_settings()
-        updates["search_expires_at"] = datetime.now(UTC) + timedelta(
-            days=settings.search_auto_pause_days
+        updates["search_expires_at"] = next_search_expiry(datetime.now(UTC), settings)
+    else:
+        updates["search_expires_at"] = None
+    record_search_resumed = search_active and not was_search_active
+    updated = await profile_service.update_profile(
+        profile.id, updates, session, commit=not record_search_resumed
+    )
+    if record_search_resumed:
+        await record_engagement(
+            session,
+            user_id=updated.user_id,
+            profile_id=updated.id,
+            event_type="search_resumed",
+            subject_type="profile",
+            subject_id=updated.id,
+            source="api",
         )
-    updated = await profile_service.update_profile(profile.id, updates, session)
+        await session.commit()
+        await session.refresh(updated)
     return {
         "search_active": updated.search_active,
         "search_expires_at": updated.search_expires_at,

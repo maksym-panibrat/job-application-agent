@@ -7,7 +7,17 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
+from app.config import get_settings
+from app.models.user import User
 from app.models.user_profile import Skill, UserProfile, WorkExperience
+from app.services.engagement_service import record_engagement
+from app.services.entitlements import (
+    EffectiveEntitlements,
+    effective_entitlements,
+    get_subscription_snapshot,
+    next_search_expiry,
+    validate_company_follow_change,
+)
 from app.services.resume_extraction import (
     InvalidResumeError,
     LLMUnavailableError,
@@ -27,7 +37,14 @@ async def get_profile_by_user(user_id: uuid.UUID, session: AsyncSession) -> User
 async def get_or_create_profile(user_id: uuid.UUID, session: AsyncSession) -> UserProfile:
     profile = await get_profile_by_user(user_id, session)
     if profile is None:
-        profile = UserProfile(user_id=user_id)
+        user = await session.get(User, user_id)
+        if user is None:
+            raise ValueError(f"User not found for profile creation: {user_id}")
+        profile = UserProfile(
+            user_id=user_id,
+            search_active=True,
+            search_expires_at=next_search_expiry(datetime.now(UTC), get_settings()),
+        )
         session.add(profile)
         try:
             await session.commit()
@@ -40,25 +57,89 @@ async def get_or_create_profile(user_id: uuid.UUID, session: AsyncSession) -> Us
     return profile
 
 
-async def update_profile(profile_id: uuid.UUID, data: dict, session: AsyncSession) -> UserProfile:
+async def update_profile(
+    profile_id: uuid.UUID,
+    data: dict,
+    session: AsyncSession,
+    *,
+    entitlements: EffectiveEntitlements | None = None,
+    engagement_source: str | None = None,
+    commit: bool = True,
+) -> UserProfile:
     profile = await session.get(UserProfile, profile_id)
+    if profile is None:
+        raise ValueError(f"profile {profile_id} not found")
+    current_company_ids = list(profile.target_company_ids or [])
     if "target_company_ids" in data:
         raw = data["target_company_ids"]
         if not isinstance(raw, list):
             raise ValueError("target_company_ids must be a list")
-        data["target_company_ids"] = [uuid.UUID(x) if isinstance(x, str) else x for x in raw]
+        if entitlements is None:
+            subscription = await get_subscription_snapshot(profile.user_id, session)
+            entitlements = effective_entitlements(subscription)
+        data["target_company_ids"] = validate_company_follow_change(
+            entitlements,
+            profile.target_company_ids or [],
+            raw,
+        )
+    scalar_changed = False
     for key, value in data.items():
-        if hasattr(profile, key) and value is not None:
+        if hasattr(profile, key) and (value is not None or key == "search_expires_at"):
+            if key != "target_company_ids" and getattr(profile, key) != value:
+                scalar_changed = True
             setattr(profile, key, value)
     profile.updated_at = datetime.now(UTC)
     session.add(profile)
-    await session.commit()
-    await session.refresh(profile)
+    if engagement_source is not None:
+        if scalar_changed:
+            await record_engagement(
+                session,
+                user_id=profile.user_id,
+                profile_id=profile.id,
+                event_type="profile_updated",
+                subject_type="profile",
+                subject_id=profile.id,
+                source=engagement_source,
+            )
+        if "target_company_ids" in data:
+            next_company_ids = list(data["target_company_ids"] or [])
+            current_set = set(current_company_ids)
+            next_set = set(next_company_ids)
+            for company_id in sorted(next_set - current_set, key=str):
+                await record_engagement(
+                    session,
+                    user_id=profile.user_id,
+                    profile_id=profile.id,
+                    event_type="company_followed",
+                    subject_type="company",
+                    subject_id=company_id,
+                    source=engagement_source,
+                )
+            for company_id in sorted(current_set - next_set, key=str):
+                await record_engagement(
+                    session,
+                    user_id=profile.user_id,
+                    profile_id=profile.id,
+                    event_type="company_unfollowed",
+                    subject_type="company",
+                    subject_id=company_id,
+                    source=engagement_source,
+                )
+    if commit:
+        await session.commit()
+        await session.refresh(profile)
+    else:
+        await session.flush()
     return profile
 
 
 async def save_resume(
-    profile_id: uuid.UUID, filename: str, raw_bytes: bytes, session: AsyncSession
+    profile_id: uuid.UUID,
+    filename: str,
+    raw_bytes: bytes,
+    session: AsyncSession,
+    *,
+    commit: bool = True,
 ) -> tuple[UserProfile, str]:
     """
     Parse and store a resume file, then run LLM extraction.
@@ -75,15 +156,18 @@ async def save_resume(
     profile.base_resume_md = md
     profile.updated_at = datetime.now(UTC)
     session.add(profile)
-    await session.commit()
-    await session.refresh(profile)
+    if commit:
+        await session.commit()
+        await session.refresh(profile)
+    else:
+        await session.flush()
 
     extraction_status = "skipped"
     if md:
         try:
             extracted = await extract_profile_from_resume(md)
             if extracted:
-                await _apply_extracted_resume_data(profile_id, extracted, session)
+                await _apply_extracted_resume_data(profile_id, extracted, session, commit=commit)
                 await session.refresh(profile)
             extraction_status = "ok"
         except LLMUnavailableError:
@@ -95,7 +179,7 @@ async def save_resume(
 
 
 async def _apply_extracted_resume_data(
-    profile_id: uuid.UUID, data: dict, session: AsyncSession
+    profile_id: uuid.UUID, data: dict, session: AsyncSession, *, commit: bool = True
 ) -> None:
     """Apply LLM-extracted resume data to the profile, skills, and work_experiences."""
     SCALAR_FIELDS = {
@@ -113,14 +197,14 @@ async def _apply_extracted_resume_data(
 
     if flat:
         try:
-            await update_profile(profile_id, flat, session)
+            await update_profile(profile_id, flat, session, commit=commit)
         except Exception as exc:
             await log.awarning("resume_extraction.apply_flat_failed", error=str(exc))
 
     valid_skills = [s for s in skills if isinstance(s, dict) and s.get("name")]
     if valid_skills:
         try:
-            await replace_all_skills(profile_id, valid_skills, session)
+            await replace_all_skills(profile_id, valid_skills, session, commit=commit)
         except Exception as exc:
             await log.awarning("resume_extraction.apply_skills_failed", error=str(exc))
 
@@ -142,7 +226,9 @@ async def _apply_extracted_resume_data(
         valid_experiences.append(exp_copy)
     if valid_experiences:
         try:
-            await replace_all_work_experiences(profile_id, valid_experiences, session)
+            await replace_all_work_experiences(
+                profile_id, valid_experiences, session, commit=commit
+            )
         except Exception as exc:
             await log.awarning("resume_extraction.apply_experiences_failed", error=str(exc))
 
@@ -169,13 +255,6 @@ async def add_skill(profile_id: uuid.UUID, skill_data: dict, session: AsyncSessi
     return skill
 
 
-async def remove_skill(skill_id: uuid.UUID, session: AsyncSession) -> None:
-    skill = await session.get(Skill, skill_id)
-    if skill:
-        await session.delete(skill)
-        await session.commit()
-
-
 async def add_work_experience(
     profile_id: uuid.UUID, exp_data: dict, session: AsyncSession
 ) -> WorkExperience:
@@ -186,15 +265,8 @@ async def add_work_experience(
     return exp
 
 
-async def remove_work_experience(exp_id: uuid.UUID, session: AsyncSession) -> None:
-    exp = await session.get(WorkExperience, exp_id)
-    if exp:
-        await session.delete(exp)
-        await session.commit()
-
-
 async def replace_all_skills(
-    profile_id: uuid.UUID, skills: list[dict], session: AsyncSession
+    profile_id: uuid.UUID, skills: list[dict], session: AsyncSession, *, commit: bool = True
 ) -> list[Skill]:
     """Delete all existing skills for the profile and insert the new set."""
     await session.execute(delete(Skill).where(Skill.profile_id == profile_id))
@@ -203,12 +275,19 @@ async def replace_all_skills(
         skill = Skill(profile_id=profile_id, **skill_data)
         session.add(skill)
         result.append(skill)
-    await session.commit()
+    if commit:
+        await session.commit()
+    else:
+        await session.flush()
     return result
 
 
 async def replace_all_work_experiences(
-    profile_id: uuid.UUID, experiences: list[dict], session: AsyncSession
+    profile_id: uuid.UUID,
+    experiences: list[dict],
+    session: AsyncSession,
+    *,
+    commit: bool = True,
 ) -> list[WorkExperience]:
     """Delete all existing work experiences for the profile and insert the new set."""
     if len(experiences) > 50:
@@ -221,7 +300,10 @@ async def replace_all_work_experiences(
         exp = WorkExperience(profile_id=profile_id, **exp_data)
         session.add(exp)
         result.append(exp)
-    await session.commit()
+    if commit:
+        await session.commit()
+    else:
+        await session.flush()
     return result
 
 

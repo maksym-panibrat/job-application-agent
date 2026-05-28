@@ -11,6 +11,14 @@ from app.models.llm_status import LLMStatus  # noqa: F401
 from app.models.oauth_account import OAuthAccount  # noqa: F401
 from app.models.rate_limits import RateLimit  # noqa: F401
 from app.models.slug_fetch import SlugFetch  # noqa: F401
+from app.models.subscription import (  # noqa: F401
+    EngagementEvent,
+    EntitlementDecision,
+    Subscription,
+    SubscriptionAccount,
+    SubscriptionEvent,
+    SubscriptionPlan,
+)
 from app.models.usage_counters import UsageCounter  # noqa: F401
 from app.models.user import User  # noqa: F401
 from app.models.user_profile import Skill, UserProfile, WorkExperience  # noqa: F401
@@ -33,6 +41,12 @@ __all__ = [
     "OAuthAccount",
     "RateLimit",
     "SlugFetch",
+    "SubscriptionPlan",
+    "SubscriptionAccount",
+    "Subscription",
+    "SubscriptionEvent",
+    "EngagementEvent",
+    "EntitlementDecision",
     "UsageCounter",
     "WorkQueue",
     "WorkQueueStatus",

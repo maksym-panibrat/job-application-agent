@@ -18,21 +18,28 @@ function withCtx(node: React.ReactNode) {
 
 describe('SearchToggleSection', () => {
   it('renders active state with Pause button', () => {
-    render(withCtx(<SearchToggleSection active expiresAt={null} />))
+    render(withCtx(<SearchToggleSection active expiresAt={null} searchAutoPause />))
     expect(screen.getByText(/search active/i)).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /pause/i })).toBeInTheDocument()
   })
 
   it('renders paused state with Resume button', () => {
-    render(withCtx(<SearchToggleSection active={false} expiresAt={null} />))
+    render(withCtx(<SearchToggleSection active={false} expiresAt={null} searchAutoPause />))
     expect(screen.getByText(/search paused/i)).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /resume/i })).toBeInTheDocument()
   })
 
   it('shows expiry countdown when expiresAt is in the future', () => {
     const inThreeDays = new Date(Date.now() + 3 * 86_400_000).toISOString()
-    render(withCtx(<SearchToggleSection active expiresAt={inThreeDays} />))
+    render(withCtx(<SearchToggleSection active expiresAt={inThreeDays} searchAutoPause />))
     expect(screen.getByText(/3 days/i)).toBeInTheDocument()
+  })
+
+  it('hides expiry countdown for paid active users', () => {
+    const inThreeDays = new Date(Date.now() + 3 * 86_400_000).toISOString()
+    render(withCtx(<SearchToggleSection active expiresAt={inThreeDays} searchAutoPause={false} />))
+    expect(screen.getByText(/search active/i)).toBeInTheDocument()
+    expect(screen.queryByText(/auto-pause/i)).not.toBeInTheDocument()
   })
 
   it('clicking Pause calls toggleSearch(false)', async () => {
@@ -44,7 +51,7 @@ describe('SearchToggleSection', () => {
       }),
     )
     const user = userEvent.setup()
-    render(withCtx(<SearchToggleSection active expiresAt={null} />))
+    render(withCtx(<SearchToggleSection active expiresAt={null} searchAutoPause />))
     await user.click(screen.getByRole('button', { name: /pause/i }))
     await waitFor(() => expect(body).toEqual({ search_active: false }))
   })

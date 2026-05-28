@@ -7,7 +7,6 @@ def test_settings_defaults():
 
     s = Settings()
     assert s.match_score_threshold == 0.65
-    assert s.max_matches_displayed == 20
 
 
 def test_job_stale_after_days_default_is_21():
