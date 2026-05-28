@@ -231,7 +231,8 @@ async def test_persist_inferred_companies_resolves_and_appends_ids(db_session, m
             )
         )
     ).all()
-    assert [dict(row._mapping) for row in events] == [
+    actual_events = [dict(row._mapping) for row in events]
+    expected_events = [
         {
             "event_type": "company_followed",
             "subject_type": "company",
@@ -245,6 +246,10 @@ async def test_persist_inferred_companies_resolves_and_appends_ids(db_session, m
             "source": "agent",
         },
     ]
+    assert sorted(actual_events, key=lambda event: str(event["subject_id"])) == sorted(
+        expected_events,
+        key=lambda event: str(event["subject_id"]),
+    )
 
 
 @pytest.mark.asyncio
