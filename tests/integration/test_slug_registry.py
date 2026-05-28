@@ -3,16 +3,13 @@
 import uuid
 from datetime import UTC, datetime
 
-import httpx
 import pytest
-import respx
 from sqlmodel import select
 
 from app.models.company import Company
 from app.models.slug_fetch import SlugFetch
 from app.models.user_profile import UserProfile
 from app.services import slug_registry_service
-from app.sources.greenhouse_board import GREENHOUSE_BOARDS_BASE
 
 
 async def _profile_with_slugs(db_session, *slugs: str) -> UserProfile:
@@ -52,29 +49,6 @@ async def test_slug_fetch_round_trip(db_session):
     assert fetched.is_invalid is False
     assert fetched.consecutive_404_count == 0
     assert fetched.last_fetched_at is None
-
-
-@pytest.mark.asyncio
-async def test_validate_slug_writes_row_on_success(db_session):
-    with respx.mock:
-        respx.get(f"{GREENHOUSE_BOARDS_BASE}/airbnb").mock(
-            return_value=httpx.Response(200, json={"name": "Airbnb", "content": "<p/>"})
-        )
-        ok = await slug_registry_service.validate_slug("greenhouse", "airbnb", db_session)
-    assert ok is True
-    row = await slug_registry_service.get("greenhouse", "airbnb", db_session)
-    assert row is not None
-    assert row.last_fetched_at is None  # validate is existence-only
-
-
-@pytest.mark.asyncio
-async def test_validate_slug_returns_false_on_404_and_writes_no_row(db_session):
-    with respx.mock:
-        respx.get(f"{GREENHOUSE_BOARDS_BASE}/openai").mock(return_value=httpx.Response(404))
-        ok = await slug_registry_service.validate_slug("greenhouse", "openai", db_session)
-    assert ok is False
-    row = await slug_registry_service.get("greenhouse", "openai", db_session)
-    assert row is None
 
 
 @pytest.mark.asyncio

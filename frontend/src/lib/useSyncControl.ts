@@ -13,7 +13,7 @@ function syncStartedMessage(queuedSlugs?: string[]): string {
   return `Search started — checking ${count} board${count === 1 ? '' : 's'}.`
 }
 
-export function liveLabel(s: SyncStatus | null): string {
+function liveLabel(s: SyncStatus | null): string {
   if (!s) return 'Sync now'
   if (s.state === 'syncing') {
     const done = s.slugs_total - s.slugs_pending

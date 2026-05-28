@@ -8,20 +8,13 @@ function resetModule() {
 
 describe('track()', () => {
   let originalFetch: typeof fetch
-  // Hold a reference to the current test's _reset so afterEach can drain the
-  // stale queue and remove its pagehide listener before the next module load.
-  let currentReset: (() => void) | null = null
 
   beforeEach(() => {
-    currentReset = null
     resetModule()
     vi.useFakeTimers()
     originalFetch = globalThis.fetch
   })
   afterEach(async () => {
-    // Drain any buffered events from this test's module instance and remove its
-    // pagehide listener so it doesn't bleed into subsequent tests.
-    if (currentReset) currentReset()
     vi.useRealTimers()
     globalThis.fetch = originalFetch
   })
@@ -30,8 +23,7 @@ describe('track()', () => {
     sessionStorage.setItem('access_token', 'test-token')
     const fetchSpy = vi.fn().mockResolvedValue(new Response(null, { status: 204 }))
     globalThis.fetch = fetchSpy as typeof fetch
-    const { track, _reset } = await import('./track')
-    currentReset = _reset
+    const { track } = await import('./track')
     track('feed.viewed', { status_filter: 'pending' })
     expect(fetchSpy).not.toHaveBeenCalled()
   })
@@ -40,8 +32,7 @@ describe('track()', () => {
     sessionStorage.setItem('access_token', 'test-token')
     const fetchSpy = vi.fn().mockResolvedValue(new Response(null, { status: 204 }))
     globalThis.fetch = fetchSpy as typeof fetch
-    const { track, _reset } = await import('./track')
-    currentReset = _reset
+    const { track } = await import('./track')
     track('feed.viewed')
     track('match.card_opened', { application_id: 'a1' })
     await vi.advanceTimersByTimeAsync(5_000)
@@ -58,8 +49,7 @@ describe('track()', () => {
     sessionStorage.setItem('access_token', 'event-token')
     const fetchSpy = vi.fn().mockResolvedValue(new Response(null, { status: 204 }))
     globalThis.fetch = fetchSpy as typeof fetch
-    const { track, _reset } = await import('./track')
-    currentReset = _reset
+    const { track } = await import('./track')
     track('feed.viewed')
     await vi.advanceTimersByTimeAsync(5_000)
     expect(fetchSpy).toHaveBeenCalledTimes(1)
@@ -71,8 +61,7 @@ describe('track()', () => {
   it('drops queued events without an access token', async () => {
     const fetchSpy = vi.fn().mockResolvedValue(new Response(null, { status: 204 }))
     globalThis.fetch = fetchSpy as typeof fetch
-    const { track, _reset } = await import('./track')
-    currentReset = _reset
+    const { track } = await import('./track')
     track('auth.signin_clicked', { method: 'google' })
     await vi.advanceTimersByTimeAsync(5_000)
     expect(fetchSpy).not.toHaveBeenCalled()
@@ -82,8 +71,7 @@ describe('track()', () => {
     sessionStorage.setItem('access_token', 'test-token')
     const fetchSpy = vi.fn().mockResolvedValue(new Response(null, { status: 204 }))
     globalThis.fetch = fetchSpy as typeof fetch
-    const { track, _reset } = await import('./track')
-    currentReset = _reset
+    const { track } = await import('./track')
     track('app.error_boundary_hit')
     window.dispatchEvent(new Event('pagehide'))
     expect(fetchSpy).toHaveBeenCalledTimes(1)
@@ -93,8 +81,7 @@ describe('track()', () => {
     sessionStorage.setItem('access_token', 'test-token')
     const fetchSpy = vi.fn().mockResolvedValue(new Response(null, { status: 204 }))
     globalThis.fetch = fetchSpy as typeof fetch
-    const { track, _reset } = await import('./track')
-    currentReset = _reset
+    const { track } = await import('./track')
     for (let i = 0; i < 60; i++) track(`evt_${i}`)
     await vi.advanceTimersByTimeAsync(5_000)
     expect(fetchSpy).toHaveBeenCalledTimes(1)
@@ -106,8 +93,7 @@ describe('track()', () => {
     sessionStorage.setItem('access_token', 'test-token')
     const fetchSpy = vi.fn().mockRejectedValue(new Error('network'))
     globalThis.fetch = fetchSpy as typeof fetch
-    const { track, _reset } = await import('./track')
-    currentReset = _reset
+    const { track } = await import('./track')
     track('feed.viewed')
     await vi.advanceTimersByTimeAsync(5_000)
   })
@@ -116,8 +102,7 @@ describe('track()', () => {
     sessionStorage.setItem('access_token', 'test-token')
     const fetchSpy = vi.fn().mockResolvedValue(new Response(null, { status: 204 }))
     globalThis.fetch = fetchSpy as typeof fetch
-    const { track, _reset } = await import('./track')
-    currentReset = _reset
+    const { track } = await import('./track')
     track('a')
     await vi.advanceTimersByTimeAsync(5_000)
     track('b')

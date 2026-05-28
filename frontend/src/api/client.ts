@@ -28,22 +28,22 @@ export interface Profile {
   work_experiences: WorkExperience[]
 }
 
-export interface SubscriptionInfo {
+interface SubscriptionInfo {
   tier: string
   status: 'active' | 'canceled' | 'expired' | 'refunded' | 'chargeback' | 'revoked'
   current_period_end: string
 }
 
-export interface EntitlementInfo {
+interface EntitlementInfo {
   paid_access: boolean
   search_auto_pause: boolean
 }
 
-export interface ProfileLimits {
+interface ProfileLimits {
   followed_companies: number
 }
 
-export interface Skill {
+interface Skill {
   id: string
   name: string
   category: string | null
@@ -51,7 +51,7 @@ export interface Skill {
   years: number | null
 }
 
-export interface WorkExperience {
+interface WorkExperience {
   id: string
   company: string
   title: string

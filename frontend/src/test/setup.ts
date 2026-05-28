@@ -3,24 +3,32 @@ import React from 'react'
 import { vi } from 'vitest'
 import { server } from './server'
 
-vi.mock('react-swipeable-list', () => ({
-  SwipeableList: ({ children, className, style }: {
-    children: React.ReactNode
-    className?: string
-    style?: React.CSSProperties
-  }) => React.createElement('div', { className, style }, children),
-  SwipeableListItem: ({ children, trailingActions }: {
+vi.mock('react-swipeable-list', () => {
+  const passthrough = ({ children }: { children: React.ReactNode }) =>
+    React.createElement(React.Fragment, null, children)
+  const item = ({
+    children,
+    trailingActions,
+  }: {
     children: React.ReactNode
     trailingActions?: React.ReactNode
-  }) => React.createElement('div', null, trailingActions, children),
-  SwipeAction: ({ children, onClick }: {
-    children: React.ReactNode
-    onClick?: () => void
-  }) => React.createElement('div', { onClick }, children),
-  TrailingActions: ({ children }: { children: React.ReactNode }) =>
-    React.createElement('div', null, children),
-  Type: { IOS: 'ios' },
-}))
+  }) => React.createElement(React.Fragment, null, children, trailingActions)
+  return {
+    Type: { IOS: 'IOS' },
+    SwipeableList: passthrough,
+    SwipeableListItem: item,
+    TrailingActions: passthrough,
+    SwipeAction: ({
+      children,
+      onClick,
+    }: {
+      children: React.ReactNode
+      onClick?: () => void
+    }) => React.isValidElement(children)
+      ? React.cloneElement(children, { onClick } as React.HTMLAttributes<HTMLElement>)
+      : React.createElement('button', { type: 'button', onClick }, children),
+  }
+})
 
 beforeAll(() => server.listen({ onUnhandledRequest: 'warn' }))
 afterEach(() => server.resetHandlers())

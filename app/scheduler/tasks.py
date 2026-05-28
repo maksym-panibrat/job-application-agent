@@ -8,21 +8,6 @@ from sqlmodel import col, select
 log = structlog.get_logger()
 
 
-async def run_job_sync() -> dict:
-    """Bulk sweep: prune invalid slugs + enqueue stale slugs for active profiles."""
-    from app.database import get_session_factory
-    from app.services.job_sync_service import sync_active_profiles
-
-    factory = get_session_factory()
-    async with factory() as session:
-        summary = await sync_active_profiles(session)
-    return {
-        "profiles_enqueued": summary["profiles_enqueued"],
-        "slugs_enqueued": len(summary["enqueued"]),
-        "slugs_pruned": summary["pruned"],
-    }
-
-
 async def run_daily_maintenance() -> dict:
     """Mark stale jobs + auto-pause expired searches + trim excess matched applications."""
     from sqlalchemy import text

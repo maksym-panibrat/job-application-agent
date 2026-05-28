@@ -7,8 +7,7 @@ not mocked — we accept the test depending on Greenhouse's public board
 being reachable.
 
 Self-cleaning: removes Stripe from target_company_ids on teardown so it
-doesn't pollute the smoke profile across runs. Safe to run against any
-environment that exposes /api/test/seed (i.e., dev/test, NOT production).
+doesn't pollute the smoke profile across runs.
 """
 
 import pytest

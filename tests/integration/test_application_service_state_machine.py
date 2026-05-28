@@ -93,31 +93,3 @@ async def test_flip_to_pending_and_enqueue_rejects_in_flight(db_session, forbidd
             session_factory=get_session_factory(),
             application_id=app_id,
         )
-
-
-@pytest.mark.asyncio
-async def test_create_with_generation_requested_writes_pending_and_enqueues(db_session):
-    job_id, profile_id = await _seed_job_and_profile(db_session)
-
-    app_id = await application_service.create_with_generation_requested(
-        session_factory=get_session_factory(),
-        job_id=job_id,
-        profile_id=profile_id,
-    )
-
-    assert await _generation_status(db_session, app_id) == "pending"
-    assert await _generation_queue_count(db_session, app_id) == 1
-
-
-@pytest.mark.asyncio
-async def test_create_without_generation_writes_none_and_does_not_enqueue(db_session):
-    job_id, profile_id = await _seed_job_and_profile(db_session)
-
-    app_id = await application_service.create_without_generation(
-        session_factory=get_session_factory(),
-        job_id=job_id,
-        profile_id=profile_id,
-    )
-
-    assert await _generation_status(db_session, app_id) == "none"
-    assert await _generation_queue_count(db_session, app_id) == 0

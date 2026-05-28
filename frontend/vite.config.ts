@@ -1,6 +1,7 @@
 /// <reference types="vitest" />
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
+import { fileURLToPath, URL } from 'node:url'
 
 export default defineConfig({
   test: {
@@ -16,12 +17,12 @@ export default defineConfig({
       thresholds: { lines: 29 },
     },
   },
-  plugins: [react()],
   resolve: {
     alias: {
-      'prop-types': 'prop-types/prop-types',
+      'prop-types': fileURLToPath(new URL('./src/vendor/propTypesShim.ts', import.meta.url)),
     },
   },
+  plugins: [react()],
   build: {
     outDir: '../app/static',
     emptyOutDir: true,
