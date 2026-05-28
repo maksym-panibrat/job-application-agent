@@ -604,7 +604,7 @@ async def test_unknown_provider_request_key_marks_batch_retryable_without_partia
 
 
 @pytest.mark.asyncio
-async def test_duplicate_provider_result_ids_split_across_requests_mark_retryable_without_partial_import(
+async def test_duplicate_provider_result_ids_split_across_requests_mark_retryable(
     db_session,
 ):
     from app.services.batch_match_provider import (

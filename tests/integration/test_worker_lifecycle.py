@@ -63,7 +63,7 @@ async def test_worker_processes_pending(db_session, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_worker_enqueues_handler_follow_up_after_mark_done(db_session, monkeypatch):
-    from app.worker.handlers import EnqueueAfterDone, HANDLERS
+    from app.worker.handlers import HANDLERS, EnqueueAfterDone
 
     _disable_default_lanes(monkeypatch)
 

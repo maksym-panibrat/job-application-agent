@@ -14,8 +14,8 @@ import structlog
 from app.database import get_session_factory
 from app.worker.config import WorkerLane, WorkerSettings
 from app.worker.handlers import (  # noqa: F401
-    EnqueueAfterDone,
     HANDLERS,
+    EnqueueAfterDone,
     TransientError,
     batch_match,
     fetch_slug,

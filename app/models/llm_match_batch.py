@@ -6,7 +6,6 @@ from sqlalchemy import Column
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlmodel import Field, SQLModel
 
-
 BATCH_STATUS_BUILDING = "building"
 BATCH_STATUS_SUBMITTED = "submitted"
 BATCH_STATUS_IMPORTING = "importing"

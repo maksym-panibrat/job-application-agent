@@ -26,8 +26,8 @@ def test_batch_match_handler_registers():
 
 @pytest.mark.asyncio
 async def test_batch_match_handler_calls_service_with_parsed_profile_id(db_session):
-    from app.services.batch_match_service import BatchMatchTickResult
     from app.services.batch_match_provider import FakeBatchMatchProvider
+    from app.services.batch_match_service import BatchMatchTickResult
     from app.worker.handlers.batch_match import BatchMatchHandler
 
     profile_id = uuid.uuid4()
