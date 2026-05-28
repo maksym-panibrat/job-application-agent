@@ -57,11 +57,19 @@ class LLMMatchBatch(SQLModel, table=True):
     last_error: str | None = Field(default=None, sa_column=Column(sa.Text))
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(UTC),
-        sa_column=Column(sa.DateTime(timezone=True), nullable=False),
+        sa_column=Column(
+            sa.DateTime(timezone=True),
+            nullable=False,
+            server_default=sa.text("now()"),
+        ),
     )
     updated_at: datetime = Field(
         default_factory=lambda: datetime.now(UTC),
-        sa_column=Column(sa.DateTime(timezone=True), nullable=False),
+        sa_column=Column(
+            sa.DateTime(timezone=True),
+            nullable=False,
+            server_default=sa.text("now()"),
+        ),
     )
 
     # Keep partial-index predicates aligned with status constants and migration literals.
@@ -113,11 +121,19 @@ class LLMMatchBatchItem(SQLModel, table=True):
     error: str | None = Field(default=None, sa_column=Column(sa.Text))
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(UTC),
-        sa_column=Column(sa.DateTime(timezone=True), nullable=False),
+        sa_column=Column(
+            sa.DateTime(timezone=True),
+            nullable=False,
+            server_default=sa.text("now()"),
+        ),
     )
     updated_at: datetime = Field(
         default_factory=lambda: datetime.now(UTC),
-        sa_column=Column(sa.DateTime(timezone=True), nullable=False),
+        sa_column=Column(
+            sa.DateTime(timezone=True),
+            nullable=False,
+            server_default=sa.text("now()"),
+        ),
     )
 
     # Keep partial-index predicates aligned with status constants and migration literals.

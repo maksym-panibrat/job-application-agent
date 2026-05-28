@@ -4,6 +4,8 @@ from pathlib import Path
 import pytest
 from sqlalchemy import text
 
+from app.models.llm_match_batch import LLMMatchBatch, LLMMatchBatchItem
+
 
 @pytest.mark.asyncio
 async def test_llm_match_batches_table_exists(db_session):
@@ -137,3 +139,11 @@ def test_llm_match_batch_migration_file_matches_schema_contract():
     assert "ix_llm_match_batch_items_batch_status" in source
     assert 'server_default=sa.text("now()")' in source
     assert 'server_default=sa.text("\'{}\'::text[]")' in source
+
+
+def test_llm_match_batch_model_timestamp_defaults_match_migration():
+    for table in (LLMMatchBatch.__table__, LLMMatchBatchItem.__table__):
+        for column_name in ("created_at", "updated_at"):
+            default = table.c[column_name].server_default
+            assert default is not None
+            assert str(default.arg) == "now()"
