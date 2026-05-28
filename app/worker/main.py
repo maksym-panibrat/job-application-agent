@@ -15,6 +15,7 @@ from app.worker.config import WorkerLane, WorkerSettings
 from app.worker.handlers import (  # noqa: F401
     HANDLERS,
     TransientError,
+    batch_match,
     fetch_slug,
     generate_cover_letter,
     maintenance,

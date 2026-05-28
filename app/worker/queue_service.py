@@ -125,8 +125,9 @@ async def claim_one(
                   WHEN 'generate-cover-letter' THEN 0
                   WHEN 'fetch-slug' THEN 1
                   WHEN 'maintenance' THEN 2
-                  WHEN 'match' THEN 3
-                  ELSE 4
+                  WHEN 'batch-match' THEN 3
+                  WHEN 'match' THEN 4
+                  ELSE 5
                 END ASC,
                 enqueued_at ASC
               FOR UPDATE SKIP LOCKED
