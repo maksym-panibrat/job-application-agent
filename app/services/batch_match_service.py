@@ -629,8 +629,7 @@ def _result_validation_error(result: ProviderJobResult) -> str | None:
         return score_error
     if not isinstance(getattr(result, "summary", None), str):
         return "provider returned malformed summary"
-    rationale = getattr(result, "rationale", None)
-    if rationale is not None and not isinstance(rationale, str):
+    if not isinstance(getattr(result, "rationale", None), str):
         return "provider returned malformed rationale"
     if not _is_string_sequence(getattr(result, "strengths", None)):
         return "provider returned malformed strengths"

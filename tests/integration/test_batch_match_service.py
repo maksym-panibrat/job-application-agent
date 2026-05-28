@@ -712,6 +712,58 @@ async def test_malformed_provider_result_fields_mark_item_retryable_without_scor
 
 
 @pytest.mark.asyncio
+async def test_null_provider_result_rationale_marks_item_retryable_without_score(
+    db_session,
+):
+    from app.services.batch_match_provider import (
+        FakeBatchMatchProvider,
+        ProviderBatchOutput,
+        ProviderJobResult,
+        ProviderRequestResult,
+    )
+    from app.services.batch_match_service import run_batch_match_tick
+
+    profile, apps = await seed_profile_with_unscored_apps(db_session, count=1)
+    first_provider = FakeBatchMatchProvider(ready=False, provider_batch_id="batch-1")
+    await run_batch_match_tick(db_session, profile_id=profile.id, provider=first_provider)
+    original_batch = (await db_session.execute(select(LLMMatchBatch))).scalar_one()
+
+    second_provider = FakeBatchMatchProvider(
+        ready=True,
+        provider_batch_id="batch-1",
+        output=ProviderBatchOutput(
+            requests=[
+                ProviderRequestResult(
+                    request_key="request-0001",
+                    results=[
+                        ProviderJobResult(
+                            application_id=str(apps[0].id),
+                            score=0.8,
+                            summary="Backend API role",
+                            rationale=None,  # type: ignore[arg-type]
+                            strengths=["Python"],
+                            gaps=[],
+                        )
+                    ],
+                )
+            ]
+        ),
+    )
+
+    result = await run_batch_match_tick(db_session, profile_id=profile.id, provider=second_provider)
+
+    assert result.imported == 0
+    assert result.retryable_failed == 1
+    refreshed = await db_session.get(Application, apps[0].id)
+    assert refreshed is not None
+    assert refreshed.match_score is None
+
+    item = (await _batch_items_for_batch(db_session, original_batch.id))[0]
+    assert item.status == "retryable_failed"
+    assert item.error == "provider returned malformed rationale"
+
+
+@pytest.mark.asyncio
 async def test_import_skips_existing_scored_application(db_session):
     from app.services.batch_match_provider import (
         FakeBatchMatchProvider,
