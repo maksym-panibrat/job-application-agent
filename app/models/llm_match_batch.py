@@ -64,6 +64,7 @@ class LLMMatchBatch(SQLModel, table=True):
         sa_column=Column(sa.DateTime(timezone=True), nullable=False),
     )
 
+    # Keep partial-index predicates aligned with status constants and migration literals.
     __table_args__ = (
         sa.Index(
             "uq_llm_match_batches_one_active_per_profile",
@@ -95,11 +96,19 @@ class LLMMatchBatchItem(SQLModel, table=True):
     rationale: str | None = Field(default=None, sa_column=Column(sa.Text))
     strengths: list[str] = Field(
         default_factory=list,
-        sa_column=Column(ARRAY(sa.Text), nullable=False),
+        sa_column=Column(
+            ARRAY(sa.Text),
+            nullable=False,
+            server_default=sa.text("'{}'::text[]"),
+        ),
     )
     gaps: list[str] = Field(
         default_factory=list,
-        sa_column=Column(ARRAY(sa.Text), nullable=False),
+        sa_column=Column(
+            ARRAY(sa.Text),
+            nullable=False,
+            server_default=sa.text("'{}'::text[]"),
+        ),
     )
     error: str | None = Field(default=None, sa_column=Column(sa.Text))
     created_at: datetime = Field(
@@ -111,6 +120,7 @@ class LLMMatchBatchItem(SQLModel, table=True):
         sa_column=Column(sa.DateTime(timezone=True), nullable=False),
     )
 
+    # Keep partial-index predicates aligned with status constants and migration literals.
     __table_args__ = (
         sa.Index(
             "uq_llm_match_batch_items_active_attempt",

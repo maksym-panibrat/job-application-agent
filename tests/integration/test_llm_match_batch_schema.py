@@ -1,3 +1,6 @@
+import importlib.util
+from pathlib import Path
+
 import pytest
 from sqlalchemy import text
 
@@ -90,3 +93,47 @@ async def test_llm_match_batch_indexes_exist(db_session):
     assert "ix_llm_match_batches_next_poll_at" in by_name
     assert "uq_llm_match_batch_items_active_attempt" in by_name
     assert "ix_llm_match_batch_items_batch_status" in by_name
+
+    batch_unique_index = by_name["uq_llm_match_batches_one_active_per_profile"].upper()
+    assert "CREATE UNIQUE INDEX" in batch_unique_index
+    assert "(PROFILE_ID)" in batch_unique_index
+    assert "WHERE" in batch_unique_index
+    assert "'BUILDING'" in batch_unique_index
+    assert "'SUBMITTED'" in batch_unique_index
+    assert "'IMPORTING'" in batch_unique_index
+
+    item_unique_index = by_name["uq_llm_match_batch_items_active_attempt"].upper()
+    assert "CREATE UNIQUE INDEX" in item_unique_index
+    assert "(APPLICATION_ID, REQUEST_HASH)" in item_unique_index
+    assert "WHERE" in item_unique_index
+    assert "STATUS = 'SUBMITTED'" in item_unique_index
+
+
+def test_llm_match_batch_migration_file_matches_schema_contract():
+    migration_path = (
+        Path(__file__).parents[2]
+        / "alembic"
+        / "versions"
+        / "b7c8d9e0f1a2_add_llm_match_batches.py"
+    )
+    spec = importlib.util.spec_from_file_location(
+        "b7c8d9e0f1a2_add_llm_match_batches",
+        migration_path,
+    )
+    assert spec is not None
+    assert spec.loader is not None
+    migration = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(migration)
+
+    assert migration.revision == "b7c8d9e0f1a2"
+    assert migration.down_revision == "e4f5a6b7c8d9"
+
+    source = migration_path.read_text()
+    assert "llm_match_batches" in source
+    assert "llm_match_batch_items" in source
+    assert "uq_llm_match_batches_one_active_per_profile" in source
+    assert "ix_llm_match_batches_next_poll_at" in source
+    assert "uq_llm_match_batch_items_active_attempt" in source
+    assert "ix_llm_match_batch_items_batch_status" in source
+    assert 'server_default=sa.text("now()")' in source
+    assert 'server_default=sa.text("\'{}\'::text[]")' in source
