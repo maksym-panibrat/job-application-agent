@@ -128,7 +128,7 @@ def test_llm_match_batch_migration_file_matches_schema_contract():
     spec.loader.exec_module(migration)
 
     assert migration.revision == "b7c8d9e0f1a2"
-    assert migration.down_revision == "e4f5a6b7c8d9"
+    assert migration.down_revision == "e1f2a3b4c5d6"
 
     source = migration_path.read_text()
     assert "llm_match_batches" in source
