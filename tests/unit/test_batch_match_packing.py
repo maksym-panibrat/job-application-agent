@@ -35,13 +35,19 @@ def test_pack_provider_requests_caps_at_ten_apps():
 
 
 def test_pack_provider_requests_respects_char_budget():
+    profile_text = "Python backend engineer"
+    jobs = [_job(1, "A" * 100), _job(2, "B" * 100), _job(3, "C" * 100)]
+    two_job_budget = estimate_request_chars(profile_text=profile_text, jobs=jobs[:2])
+    three_job_estimate = estimate_request_chars(profile_text=profile_text, jobs=jobs)
+
     groups = pack_provider_requests(
-        profile_text="Python backend engineer",
-        jobs=[_job(1, "A" * 100), _job(2, "B" * 100), _job(3, "C" * 100)],
+        profile_text=profile_text,
+        jobs=jobs,
         max_apps_per_request=10,
-        max_request_chars=430,
+        max_request_chars=two_job_budget,
     )
 
+    assert two_job_budget < three_job_estimate
     assert [len(group.jobs) for group in groups] == [2, 1]
 
 
@@ -60,15 +66,20 @@ def test_estimate_request_chars_includes_request_and_job_overhead():
 
 
 def test_pack_provider_requests_truncates_single_oversized_job_to_budget():
+    max_request_chars = estimate_request_chars(
+        profile_text="Python",
+        jobs=[_job(1, "")],
+    ) + 500
+
     groups = pack_provider_requests(
         profile_text="Python",
         jobs=[_job(1, "A" * 5000)],
         max_apps_per_request=10,
-        max_request_chars=600,
+        max_request_chars=max_request_chars,
     )
 
     assert len(groups) == 1
-    assert groups[0].estimated_chars <= 600
+    assert groups[0].estimated_chars <= max_request_chars
     assert "[Description truncated for batch]" in groups[0].jobs[0].description
 
 

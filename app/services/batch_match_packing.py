@@ -6,8 +6,8 @@ import uuid
 from dataclasses import dataclass
 
 TRUNCATION_SUFFIX = "\n\n[Description truncated for batch]"
-REQUEST_OVERHEAD_CHARS = 20
-JOB_OVERHEAD_CHARS = 10
+REQUEST_OVERHEAD_CHARS = 1800
+JOB_OVERHEAD_CHARS = 320
 
 
 @dataclass(frozen=True)
