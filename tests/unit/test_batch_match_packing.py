@@ -42,6 +42,19 @@ def test_pack_provider_requests_respects_char_budget():
     assert [len(group.jobs) for group in groups] == [2, 1]
 
 
+def test_pack_provider_requests_truncates_single_oversized_job_to_budget():
+    groups = pack_provider_requests(
+        profile_text="Python",
+        jobs=[_job(1, "A" * 5000)],
+        max_apps_per_request=10,
+        max_request_chars=600,
+    )
+
+    assert len(groups) == 1
+    assert groups[0].estimated_chars <= 600
+    assert "[Description truncated for batch]" in groups[0].jobs[0].description
+
+
 def test_request_hash_changes_when_context_changes():
     first = build_request_hash(
         prompt_version="batch-match-v1",

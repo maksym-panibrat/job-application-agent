@@ -5,6 +5,8 @@ import json
 import uuid
 from dataclasses import dataclass
 
+TRUNCATION_SUFFIX = "\n\n[Description truncated for batch]"
+
 
 @dataclass(frozen=True)
 class BatchJobContext:
@@ -63,15 +65,39 @@ def estimate_request_chars(*, profile_text: str, jobs: list[BatchJobContext]) ->
 def _truncate_to_budget(job: BatchJobContext, max_description_chars: int) -> BatchJobContext:
     if len(job.description) <= max_description_chars:
         return job
+    prefix_chars = max(0, max_description_chars)
     return BatchJobContext(
         application_id=job.application_id,
         title=job.title,
         company=job.company,
         location=job.location,
         workplace_type=job.workplace_type,
-        description=job.description[:max_description_chars]
-        + "\n\n[Description truncated for batch]",
+        description=job.description[:prefix_chars] + TRUNCATION_SUFFIX,
     )
+
+
+def _truncate_job_to_request_budget(
+    *,
+    profile_text: str,
+    job: BatchJobContext,
+    max_request_chars: int,
+) -> BatchJobContext:
+    empty_description_job = BatchJobContext(
+        application_id=job.application_id,
+        title=job.title,
+        company=job.company,
+        location=job.location,
+        workplace_type=job.workplace_type,
+        description="",
+    )
+    non_description_chars = estimate_request_chars(
+        profile_text=profile_text,
+        jobs=[empty_description_job],
+    )
+    max_description_chars = max_request_chars - non_description_chars
+    if len(job.description) > max_description_chars:
+        max_description_chars -= len(TRUNCATION_SUFFIX)
+    return _truncate_to_budget(job, max_description_chars)
 
 
 def pack_provider_requests(
@@ -97,7 +123,11 @@ def pack_provider_requests(
         current.clear()
 
     for original_job in jobs:
-        job = _truncate_to_budget(original_job, max(1000, max_request_chars // 2))
+        job = _truncate_job_to_request_budget(
+            profile_text=profile_text,
+            job=original_job,
+            max_request_chars=max_request_chars,
+        )
         candidate = [*current, job]
         if current and (
             len(candidate) > max_apps_per_request
