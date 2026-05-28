@@ -1,0 +1,110 @@
+from __future__ import annotations
+
+import hashlib
+import json
+import uuid
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True)
+class BatchJobContext:
+    application_id: uuid.UUID
+    title: str
+    company: str
+    location: str | None
+    workplace_type: str | None
+    description: str
+
+
+@dataclass(frozen=True)
+class PackedProviderRequest:
+    request_key: str
+    jobs: list[BatchJobContext]
+    estimated_chars: int
+
+
+def build_request_hash(
+    *,
+    prompt_version: str,
+    model: str,
+    profile_text: str,
+    job: BatchJobContext,
+) -> str:
+    payload = {
+        "prompt_version": prompt_version,
+        "model": model,
+        "profile_text": profile_text,
+        "job": {
+            "application_id": str(job.application_id),
+            "title": job.title,
+            "company": job.company,
+            "location": job.location,
+            "workplace_type": job.workplace_type,
+            "description": job.description,
+        },
+    }
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def estimate_request_chars(*, profile_text: str, jobs: list[BatchJobContext]) -> int:
+    fixed = len(profile_text)
+    per_job = 0
+    for job in jobs:
+        per_job += len(str(job.application_id))
+        per_job += len(job.title)
+        per_job += len(job.company)
+        per_job += len(job.location or "unspecified")
+        per_job += len(job.workplace_type or "unspecified")
+        per_job += len(job.description)
+    return fixed + per_job
+
+
+def _truncate_to_budget(job: BatchJobContext, max_description_chars: int) -> BatchJobContext:
+    if len(job.description) <= max_description_chars:
+        return job
+    return BatchJobContext(
+        application_id=job.application_id,
+        title=job.title,
+        company=job.company,
+        location=job.location,
+        workplace_type=job.workplace_type,
+        description=job.description[:max_description_chars]
+        + "\n\n[Description truncated for batch]",
+    )
+
+
+def pack_provider_requests(
+    *,
+    profile_text: str,
+    jobs: list[BatchJobContext],
+    max_apps_per_request: int,
+    max_request_chars: int,
+) -> list[PackedProviderRequest]:
+    groups: list[PackedProviderRequest] = []
+    current: list[BatchJobContext] = []
+
+    def flush() -> None:
+        if not current:
+            return
+        groups.append(
+            PackedProviderRequest(
+                request_key=f"request-{len(groups) + 1:04d}",
+                jobs=list(current),
+                estimated_chars=estimate_request_chars(profile_text=profile_text, jobs=current),
+            )
+        )
+        current.clear()
+
+    for original_job in jobs:
+        job = _truncate_to_budget(original_job, max(1000, max_request_chars // 2))
+        candidate = [*current, job]
+        if current and (
+            len(candidate) > max_apps_per_request
+            or estimate_request_chars(profile_text=profile_text, jobs=candidate)
+            > max_request_chars
+        ):
+            flush()
+        current.append(job)
+    flush()
+    return groups
