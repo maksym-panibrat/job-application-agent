@@ -23,11 +23,6 @@ export default defineConfig({
     },
   },
   plugins: [react()],
-  resolve: {
-    alias: {
-      'prop-types': 'prop-types/prop-types',
-    },
-  },
   build: {
     outDir: '../app/static',
     emptyOutDir: true,
