@@ -4,7 +4,6 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from app.models.work_queue import WorkQueue, WorkQueueStatus
-from app.services.batch_match_provider import FakeBatchMatchProvider
 from app.worker.handlers import HANDLERS
 
 
@@ -28,9 +27,11 @@ def test_batch_match_handler_registers():
 @pytest.mark.asyncio
 async def test_batch_match_handler_calls_service_with_parsed_profile_id(db_session):
     from app.services.batch_match_service import BatchMatchTickResult
+    from app.services.batch_match_provider import FakeBatchMatchProvider
     from app.worker.handlers.batch_match import BatchMatchHandler
 
     profile_id = uuid.uuid4()
+    provider = FakeBatchMatchProvider(provider_batch_id="factory-provider", ready=False)
     result = BatchMatchTickResult(
         selected=1,
         deterministic_rejected=2,
@@ -45,16 +46,19 @@ async def test_batch_match_handler_calls_service_with_parsed_profile_id(db_sessi
         "app.worker.handlers.batch_match.run_batch_match_tick",
         AsyncMock(return_value=result),
     ) as mock_tick, patch(
+        "app.worker.handlers.batch_match.get_batch_match_provider",
+        return_value=provider,
+    ) as mock_provider_factory, patch(
         "app.worker.handlers.batch_match.log.ainfo",
         AsyncMock(),
     ) as mock_log:
         follow_up = await BatchMatchHandler()(db_session, _batch_match_row(profile_id))
 
+    mock_provider_factory.assert_called_once_with()
     assert mock_tick.call_count == 1
     _, kwargs = mock_tick.call_args
     assert kwargs["profile_id"] == profile_id
-    assert isinstance(kwargs["provider"], FakeBatchMatchProvider)
-    assert kwargs["provider"].ready is False
+    assert kwargs["provider"] is provider
     assert follow_up is not None
     assert follow_up.job_type == "batch-match"
     assert follow_up.payload == {"profile_id": str(profile_id)}

@@ -67,3 +67,18 @@ class FakeBatchMatchProvider:
 
     async def fetch_output(self, *, provider_batch_id: str) -> ProviderBatchOutput:
         return self.output
+
+
+def get_batch_match_provider() -> BatchMatchProvider:
+    from app.config import get_settings
+
+    settings = get_settings()
+    if (
+        settings.environment == "test"
+        or settings.batch_match_provider == "fake"
+        or settings.batch_match_dry_run
+    ):
+        return FakeBatchMatchProvider(ready=False)
+    if settings.batch_match_provider == "gemini":
+        raise ValueError("gemini batch match provider is not implemented")
+    raise ValueError(f"unknown batch match provider: {settings.batch_match_provider}")
