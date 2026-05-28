@@ -3,6 +3,7 @@ import uuid
 from app.services.batch_match_packing import (
     BatchJobContext,
     build_request_hash,
+    estimate_request_chars,
     pack_provider_requests,
 )
 
@@ -53,6 +54,25 @@ def test_pack_provider_requests_truncates_single_oversized_job_to_budget():
     assert len(groups) == 1
     assert groups[0].estimated_chars <= 600
     assert "[Description truncated for batch]" in groups[0].jobs[0].description
+
+
+def test_pack_provider_requests_handles_budget_too_small_for_truncation_marker():
+    job = _job(1, "A" * 5000)
+    empty_description_job = _job(1, "")
+    max_request_chars = estimate_request_chars(
+        profile_text="Python",
+        jobs=[empty_description_job],
+    ) + 10
+
+    groups = pack_provider_requests(
+        profile_text="Python",
+        jobs=[job],
+        max_apps_per_request=10,
+        max_request_chars=max_request_chars,
+    )
+
+    assert len(groups) == 1
+    assert groups[0].estimated_chars <= max_request_chars
 
 
 def test_request_hash_changes_when_context_changes():

@@ -65,14 +65,16 @@ def estimate_request_chars(*, profile_text: str, jobs: list[BatchJobContext]) ->
 def _truncate_to_budget(job: BatchJobContext, max_description_chars: int) -> BatchJobContext:
     if len(job.description) <= max_description_chars:
         return job
-    prefix_chars = max(0, max_description_chars)
+    available_chars = max(0, max_description_chars)
+    marker = TRUNCATION_SUFFIX[:available_chars]
+    prefix_chars = available_chars - len(marker)
     return BatchJobContext(
         application_id=job.application_id,
         title=job.title,
         company=job.company,
         location=job.location,
         workplace_type=job.workplace_type,
-        description=job.description[:prefix_chars] + TRUNCATION_SUFFIX,
+        description=job.description[:prefix_chars] + marker,
     )
 
 
@@ -96,7 +98,7 @@ def _truncate_job_to_request_budget(
     )
     max_description_chars = max_request_chars - non_description_chars
     if len(job.description) > max_description_chars:
-        max_description_chars -= len(TRUNCATION_SUFFIX)
+        max_description_chars = max(0, max_description_chars)
     return _truncate_to_budget(job, max_description_chars)
 
 
