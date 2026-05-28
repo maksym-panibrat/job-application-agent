@@ -57,18 +57,24 @@ export function AppShell({ children }: AppShellProps) {
                   <Link
                     to="/settings"
                     aria-label="Settings"
+                    title="Open settings"
                     className="inline-flex items-center justify-center w-11 h-11 rounded-md-token text-muted hover:bg-surface-2 hover:text-text"
                   >
                     <Settings className="w-5 h-5" />
                   </Link>
-                  <IconButton aria-label="Send feedback" onClick={() => setFeedbackOpen(true)}>
+                  <IconButton
+                    aria-label="Send feedback"
+                    title="Send feedback"
+                    onClick={() => setFeedbackOpen(true)}
+                  >
                     <FeedbackIcon className="w-5 h-5" />
                   </IconButton>
-                  <IconButton aria-label="Chat" onClick={openChat}>
+                  <IconButton aria-label="Chat" title="Open chat" onClick={openChat}>
                     <Chat className="w-5 h-5" />
                   </IconButton>
                   <button
                     type="button"
+                    title="Sign out"
                     onClick={() => signOut()}
                     className="px-3 py-1.5 text-sm text-muted hover:text-text"
                   >
@@ -78,6 +84,7 @@ export function AppShell({ children }: AppShellProps) {
 
                 <IconButton
                   aria-label="Open menu"
+                  title="Open menu"
                   className="md:hidden"
                   onClick={() => setMenuOpen(true)}
                 >
