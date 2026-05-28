@@ -87,10 +87,32 @@ async def run_batch_match_tick(
         )
         return _combine_tick_results(import_result, build_result)
     if active is not None and active.status == BATCH_STATUS_BUILDING:
+        if _is_stale_building_batch(active):
+            fail_result = await _fail_batch(
+                session,
+                batch=active,
+                error="stale building batch",
+                requeued=False,
+            )
+            build_result = await _build_and_submit(
+                session,
+                profile_id=profile_id,
+                provider=provider,
+            )
+            return _combine_tick_results(fail_result, build_result)
         return BatchMatchTickResult(requeued=True)
     if active is not None:
         return BatchMatchTickResult(requeued=True)
     return await _build_and_submit(session, profile_id=profile_id, provider=provider)
+
+
+def _is_stale_building_batch(batch: LLMMatchBatch) -> bool:
+    settings = get_settings()
+    cutoff = datetime.now(UTC) - timedelta(
+        seconds=max(settings.batch_match_poll_interval_seconds, 60)
+    )
+    last_change = batch.updated_at or batch.created_at
+    return last_change < cutoff
 
 
 def _combine_tick_results(
@@ -213,11 +235,24 @@ async def _poll_and_import(
     if not batch.provider_batch_id:
         return await _fail_batch(session, batch=batch, error="missing provider_batch_id")
 
-    status = await provider.poll(provider_batch_id=batch.provider_batch_id)
+    try:
+        status = await provider.poll(provider_batch_id=batch.provider_batch_id)
+    except Exception as exc:
+        return await _fail_batch(
+            session,
+            batch=batch,
+            error=f"provider poll failed: {exc}",
+            requeued=True,
+        )
     batch.last_polled_at = now
     batch.updated_at = now
     if status.failed:
-        return await _fail_batch(session, batch=batch, error=status.error or "provider failed")
+        return await _fail_batch(
+            session,
+            batch=batch,
+            error=status.error or "provider failed",
+            requeued=True,
+        )
     if not status.ready:
         batch.next_poll_at = now + timedelta(seconds=settings.batch_match_poll_interval_seconds)
         session.add(batch)
@@ -229,7 +264,15 @@ async def _poll_and_import(
     session.add(batch)
     await session.commit()
 
-    output = await provider.fetch_output(provider_batch_id=batch.provider_batch_id)
+    try:
+        output = await provider.fetch_output(provider_batch_id=batch.provider_batch_id)
+    except Exception as exc:
+        return await _fail_batch(
+            session,
+            batch=batch,
+            error=f"provider output fetch failed: {exc}",
+            requeued=True,
+        )
     counters = await _import_provider_output(session, batch=batch, output=output)
     await _finish_batch_if_drained(session, batch=batch)
     await session.commit()
@@ -245,6 +288,7 @@ async def _fail_batch(
     *,
     batch: LLMMatchBatch,
     error: str,
+    requeued: bool = False,
 ) -> BatchMatchTickResult:
     now = datetime.now(UTC)
     await _mark_submitted_items_retryable(session, batch.id, error)
@@ -255,7 +299,7 @@ async def _fail_batch(
     batch.updated_at = now
     session.add(batch)
     await session.commit()
-    return await _result_from_batch(session, batch, requeued=False)
+    return await _result_from_batch(session, batch, requeued=requeued)
 
 
 async def _select_unscored_application_rows(

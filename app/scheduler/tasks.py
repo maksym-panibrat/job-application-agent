@@ -239,7 +239,8 @@ async def _enqueue_batch_match_for_affected_profiles(job_id, session) -> int:
     from app.models.application import Application
     from app.worker.queue_service import enqueue
 
-    if not get_settings().batch_match_enabled:
+    settings = get_settings()
+    if not settings.batch_match_enabled or settings.batch_match_dry_run:
         return 0
 
     result = await session.execute(

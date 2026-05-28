@@ -1,5 +1,5 @@
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from sqlmodel import select
@@ -218,6 +218,82 @@ async def test_poll_requeues_when_provider_is_not_ready(db_session):
     assert batch.status == "submitted"
     assert batch.last_polled_at is not None
     assert batch.next_poll_at is not None
+
+
+@pytest.mark.asyncio
+async def test_poll_exception_fails_batch_and_requeues(db_session):
+    from app.services.batch_match_provider import FakeBatchMatchProvider
+    from app.services.batch_match_service import run_batch_match_tick
+
+    class PollRaises(FakeBatchMatchProvider):
+        async def poll(self, *, provider_batch_id: str):
+            raise RuntimeError("poll boom")
+
+    profile, _ = await seed_profile_with_unscored_apps(db_session, count=2)
+    first_provider = FakeBatchMatchProvider(ready=False, provider_batch_id="batch-1")
+    await run_batch_match_tick(db_session, profile_id=profile.id, provider=first_provider)
+    original_batch = (await db_session.execute(select(LLMMatchBatch))).scalar_one()
+
+    result = await run_batch_match_tick(
+        db_session,
+        profile_id=profile.id,
+        provider=PollRaises(ready=False, provider_batch_id="batch-1"),
+    )
+
+    assert result.requeued is True
+    assert result.retryable_failed == 2
+
+    await db_session.refresh(original_batch)
+    assert original_batch.status == "failed"
+    assert original_batch.last_error == "provider poll failed: poll boom"
+
+    items = await _batch_items_for_batch(db_session, original_batch.id)
+    assert {item.status for item in items} == {"retryable_failed"}
+
+
+@pytest.mark.asyncio
+async def test_stale_building_batch_is_failed_and_rebuilt(db_session):
+    from app.services.batch_match_provider import FakeBatchMatchProvider
+    from app.services.batch_match_service import run_batch_match_tick
+
+    profile, apps = await seed_profile_with_unscored_apps(db_session, count=1)
+    stale_at = datetime.now(UTC) - timedelta(seconds=120)
+    stale_batch = LLMMatchBatch(
+        profile_id=profile.id,
+        provider="fake",
+        model="gemini-2.5-flash",
+        prompt_version="batch-match-v1",
+        status="building",
+        created_at=stale_at,
+        updated_at=stale_at,
+    )
+    db_session.add(stale_batch)
+    await db_session.flush()
+    db_session.add(
+        LLMMatchBatchItem(
+            batch_id=stale_batch.id,
+            application_id=apps[0].id,
+            provider_request_key="request-0001",
+            request_hash="stale",
+        )
+    )
+    await db_session.commit()
+
+    result = await run_batch_match_tick(
+        db_session,
+        profile_id=profile.id,
+        provider=FakeBatchMatchProvider(ready=False, provider_batch_id="batch-2"),
+    )
+
+    assert result.retryable_failed == 1
+    assert result.submitted == 1
+
+    batches = (
+        await db_session.execute(
+            select(LLMMatchBatch).order_by(LLMMatchBatch.created_at.asc())
+        )
+    ).scalars().all()
+    assert [batch.status for batch in batches] == ["failed", "submitted"]
 
 
 @pytest.mark.asyncio

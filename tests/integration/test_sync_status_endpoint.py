@@ -116,6 +116,36 @@ async def test_status_matching_when_batch_match_queued(
 
 
 @pytest.mark.asyncio
+async def test_status_counts_active_batch_and_follow_up_queue_as_one_logical_batch(
+    client, auth_headers, seeded_user, db_session
+):
+    _, profile = seeded_user
+    db_session.add(
+        LLMMatchBatch(
+            profile_id=profile.id,
+            provider="fake",
+            provider_batch_id="batch-active",
+            model="gemini-2.5-flash",
+            prompt_version="batch-match-v1",
+            status=BATCH_STATUS_SUBMITTED,
+            submitted_at=datetime.now(UTC),
+        )
+    )
+    await enqueue(
+        db_session,
+        job_type="batch-match",
+        payload={"profile_id": str(profile.id)},
+        dedupe_key=f"batch-match:{profile.id}",
+    )
+    await db_session.commit()
+
+    response = await client.get("/api/sync/status", headers=auth_headers)
+    body = response.json()
+    assert body["state"] == "matching"
+    assert body["batch_matches_pending"] == 1
+
+
+@pytest.mark.asyncio
 async def test_status_lists_invalid_slugs(client, auth_headers, seeded_user, db_session):
     _, profile = seeded_user
     company = Company(

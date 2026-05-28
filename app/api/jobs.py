@@ -148,7 +148,7 @@ async def sync_status(
             )
         ).scalar_one()
     )
-    batch_matches_pending = batch_queue_pending + active_batches
+    batch_matches_pending = int(batch_queue_pending > 0 or active_batches > 0)
 
     if slugs_pending > 0:
         state = "syncing"

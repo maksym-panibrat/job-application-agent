@@ -131,6 +131,7 @@ async def test_enqueue_batch_match_for_affected_profiles_when_enabled(db_session
     import app.config as cfg
 
     monkeypatch.setenv("BATCH_MATCH_ENABLED", "true")
+    monkeypatch.setenv("BATCH_MATCH_DRY_RUN", "false")
     cfg._settings = None
 
     job = await _seed_job(db_session)
@@ -205,6 +206,33 @@ async def test_enqueue_batch_match_returns_zero_when_disabled(db_session, monkey
 
 
 @pytest.mark.asyncio
+async def test_enqueue_batch_match_returns_zero_when_dry_run(db_session, monkeypatch):
+    import app.config as cfg
+
+    monkeypatch.setenv("BATCH_MATCH_ENABLED", "true")
+    monkeypatch.setenv("BATCH_MATCH_DRY_RUN", "true")
+    cfg._settings = None
+
+    job = await _seed_job(db_session)
+    profile = await _seed_profile(db_session)
+    await _seed_application(db_session, job_id=job.id, profile_id=profile.id)
+
+    enqueued = await _enqueue_batch_match_for_affected_profiles(job.id, db_session)
+    await db_session.commit()
+
+    batch_match_count = (
+        await db_session.execute(
+            sa.select(sa.func.count())
+            .select_from(WorkQueue)
+            .where(WorkQueue.job_type == "batch-match")
+        )
+    ).scalar_one()
+
+    assert enqueued == 0
+    assert batch_match_count == 0
+
+
+@pytest.mark.asyncio
 async def test_fetch_slug_enqueues_batch_match_instead_of_match_when_enabled(
     db_session,
     monkeypatch,
@@ -212,6 +240,7 @@ async def test_fetch_slug_enqueues_batch_match_instead_of_match_when_enabled(
     import app.config as cfg
 
     monkeypatch.setenv("BATCH_MATCH_ENABLED", "true")
+    monkeypatch.setenv("BATCH_MATCH_DRY_RUN", "false")
     cfg._settings = None
 
     slug = "figma"
@@ -240,3 +269,42 @@ async def test_fetch_slug_enqueues_batch_match_instead_of_match_when_enabled(
     assert [(row.payload, row.dedupe_key) for row in batch_match_rows] == [
         ({"profile_id": str(profile.id)}, f"batch-match:{profile.id}")
     ]
+
+
+@pytest.mark.asyncio
+async def test_fetch_slug_keeps_match_path_when_batch_dry_run_enabled(
+    db_session,
+    monkeypatch,
+):
+    import app.config as cfg
+
+    monkeypatch.setenv("BATCH_MATCH_ENABLED", "true")
+    monkeypatch.setenv("BATCH_MATCH_DRY_RUN", "true")
+    cfg._settings = None
+
+    slug = "notion"
+    await _seed_interested_profile(db_session, slug)
+
+    with respx.mock:
+        respx.get(f"{GREENHOUSE_BOARDS_BASE}/{slug}/jobs").mock(
+            return_value=httpx.Response(200, json=_greenhouse_fixture(slug))
+        )
+        await FetchSlugHandler()(db_session, _fetch_row(slug))
+
+    batch_match_count = (
+        await db_session.execute(
+            sa.select(sa.func.count())
+            .select_from(WorkQueue)
+            .where(WorkQueue.job_type == "batch-match")
+        )
+    ).scalar_one()
+    match_count = (
+        await db_session.execute(
+            sa.select(sa.func.count())
+            .select_from(WorkQueue)
+            .where(WorkQueue.job_type == "match")
+        )
+    ).scalar_one()
+
+    assert batch_match_count == 0
+    assert match_count == 1

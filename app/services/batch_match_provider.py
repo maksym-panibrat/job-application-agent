@@ -80,7 +80,5 @@ def get_batch_match_provider() -> BatchMatchProvider:
     ):
         return FakeBatchMatchProvider(ready=False)
     if settings.batch_match_provider == "gemini":
-        from app.services.gemini_batch_match_provider import GeminiBatchMatchProvider
-
-        return GeminiBatchMatchProvider()
+        raise ValueError("gemini batch match provider is not implemented")
     raise ValueError(f"unknown batch match provider: {settings.batch_match_provider}")
