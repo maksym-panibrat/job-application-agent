@@ -18,7 +18,8 @@ export interface Profile {
   search_keywords: string[]
   search_active: boolean
   search_expires_at: string | null
-  subscription: SubscriptionInfo
+  subscription: SubscriptionInfo | null
+  entitlements: EntitlementInfo
   limits: ProfileLimits
   target_companies?: { id: string; canonical_name: string }[]
   /** Write-side only; not surfaced from GET /api/profile. */
@@ -28,9 +29,14 @@ export interface Profile {
 }
 
 export interface SubscriptionInfo {
-  plan: string
-  status: string
-  paid_active: boolean
+  tier: string
+  status: 'active' | 'canceled' | 'expired' | 'refunded' | 'chargeback' | 'revoked'
+  current_period_end: string
+}
+
+export interface EntitlementInfo {
+  paid_access: boolean
+  search_auto_pause: boolean
 }
 
 export interface ProfileLimits {

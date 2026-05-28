@@ -18,6 +18,7 @@ FREE_TIER = "free"
 FREE_COMPANY_LIMIT = 5
 PAID_COMPANY_LIMIT = 100
 PAID_ENTITLEMENT_STATUSES = {"active", "canceled"}
+SEARCH_EXPIRY_EXTENSION_MIN_DELTA = timedelta(hours=12)
 
 
 @dataclass(frozen=True)
@@ -113,6 +114,15 @@ def next_search_expiry(now: datetime, settings: SearchSettings) -> datetime:
     return now + timedelta(days=settings.search_auto_pause_days)
 
 
+def should_extend_search_expiry(
+    current_expiry: datetime | None,
+    next_expiry: datetime,
+) -> bool:
+    if current_expiry is None:
+        return True
+    return next_expiry - current_expiry >= SEARCH_EXPIRY_EXTENSION_MIN_DELTA
+
+
 async def record_entitlement_decision(
     session: AsyncSession,
     *,
@@ -136,7 +146,6 @@ async def record_entitlement_decision(
         source_event_id=source_event_id,
     )
     session.add(decision)
-    await session.flush()
     return decision
 
 

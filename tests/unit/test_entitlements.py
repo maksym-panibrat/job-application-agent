@@ -15,6 +15,7 @@ from app.services.entitlements import (
     dedupe_company_ids,
     effective_entitlements,
     next_search_expiry,
+    should_extend_search_expiry,
     validate_company_follow_change,
 )
 
@@ -144,6 +145,14 @@ def test_next_search_expiry_adds_configured_pause_days():
     settings = SimpleNamespace(search_auto_pause_days=14)
 
     assert next_search_expiry(NOW, settings) == NOW + timedelta(days=14)
+
+
+def test_should_extend_search_expiry_only_for_material_changes():
+    next_expiry = NOW + timedelta(days=7)
+
+    assert should_extend_search_expiry(None, next_expiry) is True
+    assert should_extend_search_expiry(NOW + timedelta(days=6, hours=11), next_expiry) is True
+    assert should_extend_search_expiry(NOW + timedelta(days=6, hours=13), next_expiry) is False
 
 
 def test_dedupe_company_ids_preserves_order_and_normalizes_strings():

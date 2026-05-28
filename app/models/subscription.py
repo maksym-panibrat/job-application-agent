@@ -198,6 +198,11 @@ class EngagementEvent(SQLModel, table=True):
         sa.Index("ix_engagement_events_subject_id", "subject_id"),
         sa.Index("ix_engagement_events_source", "source"),
         sa.Index("ix_engagement_events_occurred_at", "occurred_at"),
+        sa.Index(
+            "ix_engagement_events_profile_occurred_at",
+            "profile_id",
+            "occurred_at",
+        ),
         CheckConstraint(
             _check_in("event_type", ENGAGEMENT_EVENT_TYPES),
             name="ck_engagement_events_event_type",

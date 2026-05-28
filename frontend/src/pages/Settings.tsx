@@ -27,7 +27,7 @@ export default function Settings() {
       <SearchToggleSection
         active={profile.search_active}
         expiresAt={profile.search_expires_at}
-        paidActive={profile.subscription.paid_active}
+        searchAutoPause={profile.entitlements.search_auto_pause}
       />
       <ResumeSection hasResume={!!profile.base_resume_md} />
       <FollowedCompaniesSection

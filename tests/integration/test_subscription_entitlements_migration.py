@@ -143,6 +143,7 @@ EXPECTED_INDEXES = {
     "ix_engagement_events_subject_id",
     "ix_engagement_events_source",
     "ix_engagement_events_occurred_at",
+    "ix_engagement_events_profile_occurred_at",
     "ix_entitlement_decisions_user_id",
     "ix_entitlement_decisions_profile_id",
     "ix_entitlement_decisions_decision_type",

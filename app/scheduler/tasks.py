@@ -36,6 +36,7 @@ async def run_daily_maintenance() -> dict:
         latest_engagement_since,
         next_search_expiry,
         record_entitlement_decision,
+        should_extend_search_expiry,
     )
     from app.services.job_service import mark_stale_jobs
 
@@ -54,7 +55,8 @@ async def run_daily_maintenance() -> dict:
         searches_paused = 0
         searches_extended = 0
         for profile in result.scalars().all():
-            subscription = await get_subscription_snapshot(profile.user_id, session)
+            with session.no_autoflush:
+                subscription = await get_subscription_snapshot(profile.user_id, session)
             entitlements = effective_entitlements(subscription, now=now)
             previous_value = {
                 "search_active": profile.search_active,
@@ -67,6 +69,8 @@ async def run_daily_maintenance() -> dict:
 
             if entitlements.paid_access:
                 next_expiry = next_search_expiry(now, settings)
+                if not should_extend_search_expiry(profile.search_expires_at, next_expiry):
+                    continue
                 profile.search_active = True
                 profile.search_expires_at = next_expiry
                 profile.updated_at = now
@@ -120,13 +124,16 @@ async def run_daily_maintenance() -> dict:
             window_start = profile.search_expires_at - timedelta(
                 days=settings.search_auto_pause_days
             )
-            engagement = await latest_engagement_since(
-                session,
-                profile_id=profile.id,
-                since=window_start,
-            )
+            with session.no_autoflush:
+                engagement = await latest_engagement_since(
+                    session,
+                    profile_id=profile.id,
+                    since=window_start,
+                )
             if engagement is not None:
                 next_expiry = next_search_expiry(now, settings)
+                if not should_extend_search_expiry(profile.search_expires_at, next_expiry):
+                    continue
                 profile.search_expires_at = next_expiry
                 profile.updated_at = now
                 session.add(profile)

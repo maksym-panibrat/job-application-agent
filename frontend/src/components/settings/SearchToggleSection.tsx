@@ -7,7 +7,7 @@ import { track } from '../../lib/track'
 export interface SearchToggleSectionProps {
   active: boolean
   expiresAt: string | null
-  paidActive?: boolean
+  searchAutoPause: boolean
 }
 
 function daysUntil(iso: string | null): number | null {
@@ -17,7 +17,11 @@ function daysUntil(iso: string | null): number | null {
   return Math.ceil(ms / 86_400_000)
 }
 
-export function SearchToggleSection({ active, expiresAt, paidActive = false }: SearchToggleSectionProps) {
+export function SearchToggleSection({
+  active,
+  expiresAt,
+  searchAutoPause,
+}: SearchToggleSectionProps) {
   const qc = useQueryClient()
   const { show } = useToast()
   const toggle = useMutation({
@@ -38,7 +42,7 @@ export function SearchToggleSection({ active, expiresAt, paidActive = false }: S
           <p className="text-sm font-semibold text-text">
             {active ? 'Search active' : 'Search paused'}
           </p>
-          {active && !paidActive && days != null && (
+          {active && searchAutoPause && days != null && (
             <p className="text-xs text-muted mt-0.5">Auto-pause in {days} day{days === 1 ? '' : 's'}</p>
           )}
         </div>

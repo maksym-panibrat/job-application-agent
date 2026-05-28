@@ -204,6 +204,31 @@ async def test_paid_active_expired_search_extended_by_maintenance(db_session):
 
 
 @pytest.mark.asyncio
+async def test_paid_active_future_expiry_rerun_does_not_duplicate_decision(db_session):
+    """Maintenance is idempotent for paid profiles whose expiry is already fresh."""
+    now = datetime.now(UTC)
+    user, profile = await _create_user_and_profile(
+        db_session,
+        search_active=True,
+        expires_at=now + timedelta(days=7),
+    )
+    await _seed_subscription(
+        db_session,
+        user.id,
+        status="active",
+        period_end=now + timedelta(days=30),
+    )
+
+    await run_daily_maintenance()
+
+    await db_session.refresh(profile)
+    assert profile.search_active is True
+    assert profile.search_expires_at is not None
+    assert profile.search_expires_at <= now + timedelta(days=7, minutes=1)
+    assert await _decisions_for_profile(db_session, profile.id) == []
+
+
+@pytest.mark.asyncio
 async def test_canceled_before_period_end_extends_by_maintenance(db_session):
     """Canceled users retain paid entitlement until current_period_end."""
     now = datetime.now(UTC)

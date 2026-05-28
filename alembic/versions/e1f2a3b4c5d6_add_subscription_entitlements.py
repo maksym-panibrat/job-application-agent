@@ -270,6 +270,12 @@ def upgrade() -> None:
     op.create_index(
         "ix_engagement_events_profile_id", "engagement_events", ["profile_id"], unique=False
     )
+    op.create_index(
+        "ix_engagement_events_profile_occurred_at",
+        "engagement_events",
+        ["profile_id", "occurred_at"],
+        unique=False,
+    )
 
     op.create_table(
         "entitlement_decisions",
@@ -345,6 +351,7 @@ def downgrade() -> None:
     op.drop_index("ix_entitlement_decisions_decision_type", table_name="entitlement_decisions")
     op.drop_index("ix_entitlement_decisions_user_id", table_name="entitlement_decisions")
     op.drop_table("entitlement_decisions")
+    op.drop_index("ix_engagement_events_profile_occurred_at", table_name="engagement_events")
     op.drop_index("ix_engagement_events_profile_id", table_name="engagement_events")
     op.drop_index("ix_engagement_events_occurred_at", table_name="engagement_events")
     op.drop_index("ix_engagement_events_source", table_name="engagement_events")
