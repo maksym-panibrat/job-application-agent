@@ -44,3 +44,11 @@ def test_maintenance_payload_optional_date():
 def test_batch_match_payload_requires_profile_id():
     with pytest.raises(ValidationError):
         BatchMatchPayload()
+
+
+def test_batch_match_payload_parses_profile_id():
+    profile_id = uuid.uuid4()
+
+    payload = BatchMatchPayload(profile_id=str(profile_id))
+
+    assert payload.profile_id == profile_id

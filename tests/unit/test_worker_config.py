@@ -99,6 +99,60 @@ def test_worker_settings_parses_lane_job_types(monkeypatch):
     ]
 
 
+def test_worker_settings_legacy_llm_env_populates_fast_lane(monkeypatch):
+    monkeypatch.setenv("WORKER_LLM_JOB_TYPES", " legacy-match, legacy-cover ")
+    monkeypatch.setenv("WORKER_LLM_CONCURRENCY", "2")
+    monkeypatch.setenv("WORKER_SLOW_JOB_TYPES", "")
+
+    from app.worker.config import WorkerLane, WorkerSettings
+
+    settings = WorkerSettings()
+
+    assert settings.fast_job_types == " legacy-match, legacy-cover "
+    assert settings.fast_concurrency == 2
+    assert settings.lane_configs() == [
+        WorkerLane(
+            name="fast",
+            job_types=("legacy-match", "legacy-cover"),
+            concurrency=2,
+        )
+    ]
+
+
+def test_worker_settings_fast_env_overrides_legacy_llm_env(monkeypatch):
+    monkeypatch.setenv("WORKER_FAST_JOB_TYPES", " fast-match ")
+    monkeypatch.setenv("WORKER_FAST_CONCURRENCY", "3")
+    monkeypatch.setenv("WORKER_LLM_JOB_TYPES", " legacy-match ")
+    monkeypatch.setenv("WORKER_LLM_CONCURRENCY", "2")
+    monkeypatch.setenv("WORKER_SLOW_JOB_TYPES", "")
+
+    from app.worker.config import WorkerLane, WorkerSettings
+
+    settings = WorkerSettings()
+
+    assert settings.fast_job_types == " fast-match "
+    assert settings.fast_concurrency == 3
+    assert settings.lane_configs() == [
+        WorkerLane(name="fast", job_types=("fast-match",), concurrency=3)
+    ]
+
+
+def test_worker_settings_legacy_llm_env_accepts_mixed_case_names(monkeypatch):
+    monkeypatch.setenv("WoRkEr_LlM_JoB_TyPeS", " mixed-legacy ")
+    monkeypatch.setenv("worker_llm_concurrency", "5")
+    monkeypatch.setenv("WORKER_SLOW_JOB_TYPES", "")
+
+    from app.worker.config import WorkerLane, WorkerSettings
+
+    settings = WorkerSettings()
+
+    assert settings.fast_job_types == " mixed-legacy "
+    assert settings.fast_concurrency == 5
+    assert settings.lane_configs() == [
+        WorkerLane(name="fast", job_types=("mixed-legacy",), concurrency=5)
+    ]
+
+
 def test_worker_settings_blank_lane_envs_disable_lanes(monkeypatch):
     monkeypatch.setenv("WORKER_FAST_JOB_TYPES", " , ")
     monkeypatch.setenv("WORKER_SLOW_JOB_TYPES", "")
