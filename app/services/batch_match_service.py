@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
@@ -391,10 +392,27 @@ async def _import_provider_output(
 ) -> _ImportCounters:
     counters = _ImportCounters()
     items = await _items_by_provider_key(session, batch.id)
+    batch_correlation_error, request_correlation_errors = (
+        _provider_output_correlation_errors(items, output)
+    )
+    if batch_correlation_error is not None:
+        counters.retryable_failed += _mark_items_retryable(
+            items.values(),
+            batch_correlation_error,
+        )
+        return counters
+    for request_key, error in request_correlation_errors.items():
+        counters.retryable_failed += _mark_items_retryable(
+            _items_by_request_key(items, request_key),
+            error,
+        )
+
     seen_item_ids: set[uuid.UUID] = set()
 
     for request in output.requests:
         request_items = _items_by_request_key(items, request.request_key)
+        if request.request_key in request_correlation_errors:
+            continue
         if request.error:
             for item in request_items:
                 if item.status == ITEM_STATUS_SUBMITTED:
@@ -442,6 +460,47 @@ def _items_by_request_key(
     request_key: str,
 ) -> list[LLMMatchBatchItem]:
     return [item for (key, _), item in items.items() if key == request_key]
+
+
+def _provider_output_correlation_errors(
+    items: dict[tuple[str, uuid.UUID], LLMMatchBatchItem],
+    output: ProviderBatchOutput,
+) -> tuple[str | None, dict[str, str]]:
+    request_application_ids: dict[str, set[uuid.UUID]] = {}
+    for request_key, application_id in items:
+        request_application_ids.setdefault(request_key, set()).add(application_id)
+
+    request_errors: dict[str, str] = {}
+    seen_results: set[tuple[str, uuid.UUID]] = set()
+    for request in output.requests:
+        expected_application_ids = request_application_ids.get(request.request_key)
+        if expected_application_ids is None:
+            return "provider returned unknown request_key", {}
+
+        for result in request.results:
+            try:
+                application_id = uuid.UUID(str(getattr(result, "application_id", "")))
+            except (TypeError, ValueError):
+                request_errors.setdefault(
+                    request.request_key,
+                    "provider returned unknown application_id",
+                )
+                continue
+            if application_id not in expected_application_ids:
+                request_errors.setdefault(
+                    request.request_key,
+                    "provider returned unknown application_id",
+                )
+                continue
+            seen_key = (request.request_key, application_id)
+            if seen_key in seen_results:
+                request_errors.setdefault(
+                    request.request_key,
+                    "provider returned duplicate application_id",
+                )
+                continue
+            seen_results.add(seen_key)
+    return None, request_errors
 
 
 def _request_correlation_error(
@@ -595,6 +654,18 @@ def _mark_item_retryable(item: LLMMatchBatchItem, error: str) -> None:
     item.status = ITEM_STATUS_RETRYABLE_FAILED
     item.error = error
     item.updated_at = datetime.now(UTC)
+
+
+def _mark_items_retryable(
+    items: Iterable[LLMMatchBatchItem],
+    error: str,
+) -> int:
+    count = 0
+    for item in items:
+        if item.status == ITEM_STATUS_SUBMITTED:
+            _mark_item_retryable(item, error)
+            count += 1
+    return count
 
 
 def _mark_item_terminal(item: LLMMatchBatchItem, error: str) -> None:
