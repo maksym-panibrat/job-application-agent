@@ -11,6 +11,7 @@ async def test_toggle_search(client):
     resp = await client.patch("/api/profile/search", json={"search_active": False})
     assert resp.status_code == 200
     assert resp.json()["search_active"] is False
+    assert resp.json()["search_expires_at"] is None
 
     # Resume — restores original state
     resp = await client.patch("/api/profile/search", json={"search_active": True})

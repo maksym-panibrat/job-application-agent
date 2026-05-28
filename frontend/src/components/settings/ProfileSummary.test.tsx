@@ -11,7 +11,11 @@ function fullProfile(over: Partial<Profile> = {}): Profile {
     base_resume_md: 'r', target_roles: ['Backend', 'Platform'],
     target_locations: ['Berlin', 'Remote-EU'], remote_ok: true,
     seniority: 'senior', search_keywords: ['python'], search_active: true,
-    search_expires_at: null, target_companies: [{ id: 'co-1', canonical_name: 'Stripe' }],
+    search_expires_at: null,
+    subscription: null,
+    entitlements: { paid_access: false, search_auto_pause: true },
+    limits: { followed_companies: 5 },
+    target_companies: [{ id: 'co-1', canonical_name: 'Stripe' }],
     skills: [
       { id: 's1', name: 'Go', category: null, proficiency: null, years: 5 },
       { id: 's2', name: 'Postgres', category: null, proficiency: null, years: 7 },

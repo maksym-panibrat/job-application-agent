@@ -2,6 +2,7 @@
 
 import pytest
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlmodel import SQLModel
 
@@ -70,10 +71,28 @@ async def test_mark_applied_transitions_status(
     await db_session.refresh(sample_application)
     assert sample_application.status == "applied"
     assert sample_application.applied_at is not None
+    event = (
+        await db_session.execute(
+            text(
+                """
+                SELECT event_type, subject_type, subject_id, source
+                FROM engagement_events
+                """
+            )
+        )
+    ).one()
+    assert dict(event._mapping) == {
+        "event_type": "application_applied",
+        "subject_type": "application",
+        "subject_id": sample_application.id,
+        "source": "api",
+    }
 
 
 @pytest.mark.asyncio
-async def test_mark_applied_idempotent(client, seeded_user, auth_headers, sample_application):
+async def test_mark_applied_idempotent(
+    client, seeded_user, auth_headers, sample_application, db_session
+):
     # First call
     r1 = await client.post(
         f"/api/applications/{sample_application.id}/mark-applied",
@@ -90,6 +109,20 @@ async def test_mark_applied_idempotent(client, seeded_user, auth_headers, sample
     assert r2.status_code == 200
     # applied_at should not change on subsequent calls
     assert r2.json()["applied_at"] == first_at
+    count = (
+        await db_session.execute(
+            text(
+                """
+                SELECT count(*)
+                FROM engagement_events
+                WHERE event_type = 'application_applied'
+                  AND subject_id = :application_id
+                """
+            ),
+            {"application_id": sample_application.id},
+        )
+    ).scalar_one()
+    assert count == 1
 
 
 @pytest.mark.asyncio

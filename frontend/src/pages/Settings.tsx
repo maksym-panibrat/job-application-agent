@@ -24,9 +24,16 @@ export default function Settings() {
   return (
     <div className="max-w-2xl mx-auto">
       <h1 className="text-xl font-bold text-text mb-6">Settings</h1>
-      <SearchToggleSection active={profile.search_active} expiresAt={profile.search_expires_at} />
+      <SearchToggleSection
+        active={profile.search_active}
+        expiresAt={profile.search_expires_at}
+        searchAutoPause={profile.entitlements.search_auto_pause}
+      />
       <ResumeSection hasResume={!!profile.base_resume_md} />
-      <FollowedCompaniesSection companies={profile.target_companies ?? []} />
+      <FollowedCompaniesSection
+        companies={profile.target_companies ?? []}
+        limit={profile.limits.followed_companies}
+      />
       <PrunedSlugsSection />
       <ProfileSummary profile={profile} />
       <AccountSection />

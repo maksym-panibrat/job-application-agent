@@ -29,6 +29,13 @@ from app.config import get_settings
 from app.models.company import Company
 from app.models.user_profile import UserProfile
 from app.services import company_resolver, profile_service
+from app.services.engagement_service import record_engagement
+from app.services.entitlements import (
+    CompanyFollowLimitError,
+    effective_entitlements,
+    get_subscription_snapshot,
+    validate_company_follow_change,
+)
 
 log = structlog.get_logger()
 
@@ -163,7 +170,8 @@ async def persist_inferred_companies(profile, names: list[str], session) -> list
     Names that fail to resolve are logged and skipped — onboarding does not
     block on them; the agent's transcript can mention which were dropped.
     """
-    resolved_ids: list[uuid.UUID] = list(profile.target_company_ids or [])
+    current_ids: list[uuid.UUID] = list(profile.target_company_ids or [])
+    resolved_ids: list[uuid.UUID] = list(current_ids)
     resolved_names: list[str] = []
     for name in names:
         try:
@@ -177,8 +185,26 @@ async def persist_inferred_companies(profile, names: list[str], session) -> list
         if company.id not in resolved_ids:
             resolved_ids.append(company.id)
             resolved_names.append(company.canonical_name)
+    subscription = await get_subscription_snapshot(profile.user_id, session)
+    entitlements = effective_entitlements(subscription)
+    resolved_ids = validate_company_follow_change(
+        entitlements,
+        profile.target_company_ids or [],
+        resolved_ids,
+    )
     profile.target_company_ids = resolved_ids
     session.add(profile)
+    current_set = set(current_ids)
+    for company_id in sorted(set(resolved_ids) - current_set, key=str):
+        await record_engagement(
+            session,
+            user_id=profile.user_id,
+            profile_id=profile.id,
+            event_type="company_followed",
+            subject_type="company",
+            subject_id=company_id,
+            source="agent",
+        )
     await session.commit()
     return resolved_names
 
@@ -296,6 +322,14 @@ def build_graph(checkpointer: AsyncPostgresSaver) -> StateGraph:
         if profile_data is not None:
             system_content += "\n\n" + _format_current_profile(profile_data)
 
+        persistence_errors = state.get("profile_updates", {}).get("errors", [])
+        if persistence_errors:
+            system_content += "\n\n## Persistence Errors\n"
+            system_content += "\n".join(f"- {err}" for err in persistence_errors)
+            system_content += (
+                "\nTell the user these changes were not saved and ask them to adjust."
+            )
+
         if resume_md:
             system_content += f"\n\n## User's Current Resume\n{resume_md}"
 
@@ -328,6 +362,7 @@ def build_graph(checkpointer: AsyncPostgresSaver) -> StateGraph:
             return {}
 
         profile_uuid = uuid.UUID(profile_id_str)
+        persistence_errors: list[str] = []
 
         async with db_factory() as session:
             for tc in ai_msg.tool_calls:
@@ -385,6 +420,12 @@ def build_graph(checkpointer: AsyncPostgresSaver) -> StateGraph:
                             if profile is not None:
                                 try:
                                     await persist_inferred_companies(profile, names, session)
+                                except CompanyFollowLimitError as exc:
+                                    persistence_errors.append(str(exc))
+                                    await log.awarning(
+                                        "onboarding.process_tool_results.company_limit_failed",
+                                        error=str(exc),
+                                    )
                                 except Exception as exc:
                                     await log.awarning(
                                         "onboarding.process_tool_results.company_resolve_failed",
@@ -431,7 +472,9 @@ def build_graph(checkpointer: AsyncPostgresSaver) -> StateGraph:
                             error=str(exc),
                         )
 
-        return {}
+        if persistence_errors:
+            return {"profile_updates": {"errors": persistence_errors}}
+        return {"profile_updates": {}}
 
     def should_continue(state: OnboardingState) -> str:
         last = state["messages"][-1]
