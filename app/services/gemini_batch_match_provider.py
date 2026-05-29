@@ -95,14 +95,61 @@ class GeminiBatchMatchProvider:
 
 
 def _inline_request(request: dict) -> dict:
+    jobs = list(request.get("jobs") or [])
     payload = build_gemini_batch_request(
         request_key=str(request["request_key"]),
         profile_text=str(request.get("profile_text") or ""),
-        jobs=list(request.get("jobs") or []),
+        jobs=jobs,
     )
     return {
         **payload["request"],
+        "config": {
+            "response_mime_type": "application/json",
+            "response_json_schema": _response_json_schema(
+                [str(job.get("application_id", "")) for job in jobs]
+            ),
+        },
         "metadata": {"request_key": payload["key"]},
+    }
+
+
+def _response_json_schema(application_ids: list[str]) -> dict:
+    return {
+        "type": "object",
+        "properties": {
+            "results": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "application_id": {
+                            "type": "string",
+                            "enum": application_ids,
+                        },
+                        "score": {"type": "number"},
+                        "summary": {"type": "string"},
+                        "rationale": {"type": "string"},
+                        "strengths": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                        },
+                        "gaps": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                        },
+                    },
+                    "required": [
+                        "application_id",
+                        "score",
+                        "summary",
+                        "rationale",
+                        "strengths",
+                        "gaps",
+                    ],
+                },
+            },
+        },
+        "required": ["results"],
     }
 
 
@@ -251,9 +298,28 @@ def _build_prompt(*, profile_text: str, jobs: list[dict]) -> str:
 
 Score the candidate profile against every job below.
 
-Return only a top-level JSON object with a "results" array. Include exactly one """
-        f"""result per application_id from this list:
-{application_ids_json}.
+Return only a top-level JSON object with this exact shape:
+{{
+  "results": [
+    {{
+      "application_id": "one value copied from allowed_application_ids",
+      "score": 0.0,
+      "summary": "short summary",
+      "rationale": "brief rationale",
+      "strengths": ["strength"],
+      "gaps": ["gap"]
+    }}
+  ]
+}}
+
+allowed_application_ids:
+{application_ids_json}
+
+Include exactly one result per application_id from allowed_application_ids.
+For application_id, treat the value as an opaque identifier. Copy it exactly from """
+        f"""allowed_application_ids. Do not invent, shorten, normalize, or replace """
+        f"""application_id. Do not use a job title, company name, array index, """
+        f"""or any other ID.
 
 Each result must include:
 - application_id

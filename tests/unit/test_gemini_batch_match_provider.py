@@ -63,6 +63,9 @@ def test_build_gemini_batch_request_prompt_contains_profile_and_application_ids(
     assert "Candidate profile text goes here." in prompt
     assert "app-alpha" in prompt
     assert "app-beta" in prompt
+    assert "allowed_application_ids" in prompt
+    assert "Copy it exactly" in prompt
+    assert "Do not invent, shorten, normalize, or replace application_id" in prompt
     assert "top-level JSON object" in prompt
     assert '"results"' in prompt
     assert "exactly one result per application_id" in prompt
@@ -111,6 +114,11 @@ async def test_gemini_batch_match_provider_submit_creates_inline_batch():
     assert created["model"] == "gemini-test-model"
     assert created["config"]["display_name"] == "batch-match-test"
     assert created["src"][0]["metadata"] == {"request_key": "request-0001"}
+    assert created["src"][0]["config"]["response_mime_type"] == "application/json"
+    schema = created["src"][0]["config"]["response_json_schema"]
+    assert schema["properties"]["results"]["items"]["properties"]["application_id"]["enum"] == [
+        "app-1"
+    ]
     prompt = created["src"][0]["contents"][0]["parts"][0]["text"]
     assert "Senior Python engineer." in prompt
     assert "app-1" in prompt
