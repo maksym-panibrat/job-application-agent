@@ -64,7 +64,9 @@ def _compute_backoff(attempts: int, settings: WorkerSettings) -> int:
 
 
 async def _terminal_failure(handler, session_factory, job_row, error: str) -> None:
-    await handler.on_terminal_failure(session_factory, job_row, error)
+    terminal_hook = getattr(handler, "on_terminal_failure", None)
+    if terminal_hook is not None:
+        await terminal_hook(session_factory, job_row, error)
     async with session_factory() as session:
         await mark_failed(session, job_row.id, error=error, worker_id=_worker_id)
         await session.commit()
