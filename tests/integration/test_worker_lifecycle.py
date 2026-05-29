@@ -151,6 +151,47 @@ async def test_worker_short_circuits_when_attempts_over_cap(db_session, monkeypa
 
 
 @pytest.mark.asyncio
+async def test_worker_marks_terminal_failure_when_handler_has_no_hook(db_session, monkeypatch):
+    from app.worker.handlers import HANDLERS
+
+    _disable_default_lanes(monkeypatch)
+
+    class NoTerminalHook:
+        max_attempts = 2
+        called = 0
+
+        async def __call__(self, session, row):
+            NoTerminalHook.called += 1
+
+    monkeypatch.setitem(HANDLERS, "test-no-terminal-hook", NoTerminalHook())
+
+    await enqueue(db_session, job_type="test-no-terminal-hook", payload={})
+    await db_session.execute(
+        text("UPDATE work_queue SET attempts=3 WHERE job_type='test-no-terminal-hook'")
+    )
+    await db_session.commit()
+
+    async def stop_soon():
+        await asyncio.sleep(1.5)
+        worker_main._shutdown.set()
+
+    await asyncio.gather(worker_main.run(), stop_soon())
+
+    row = (
+        await db_session.execute(
+            text(
+                "SELECT status, last_error, not_before "
+                "FROM work_queue WHERE job_type='test-no-terminal-hook'"
+            )
+        )
+    ).first()
+    assert row[0] == "failed"
+    assert "max_attempts" in (row[1] or "")
+    assert row[2] is None
+    assert NoTerminalHook.called == 0
+
+
+@pytest.mark.asyncio
 async def test_worker_runs_terminal_hook_on_generic_exception(db_session, monkeypatch):
     from app.worker.handlers import HANDLERS
 
