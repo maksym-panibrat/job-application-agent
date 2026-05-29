@@ -86,20 +86,20 @@ def test_get_batch_match_provider_rejects_unknown_provider(monkeypatch):
         _reset_settings()
 
 
-def test_get_batch_match_provider_rejects_gemini_until_api_is_wired(monkeypatch):
+def test_get_batch_match_provider_returns_gemini_when_configured(monkeypatch):
     from app.services.batch_match_provider import get_batch_match_provider
+    from app.services.gemini_batch_match_provider import GeminiBatchMatchProvider
 
     monkeypatch.setenv("DATABASE_URL", "postgresql://user:pass@localhost:5432/db")
     monkeypatch.setenv("ENVIRONMENT", "development")
+    monkeypatch.setenv("GOOGLE_API_KEY", "test-key")
     monkeypatch.setenv("BATCH_MATCH_PROVIDER", "gemini")
     monkeypatch.setenv("BATCH_MATCH_DRY_RUN", "false")
     _reset_settings()
 
     try:
-        with pytest.raises(
-            ValueError,
-            match="gemini batch match provider is not implemented",
-        ):
-            get_batch_match_provider()
+        provider = get_batch_match_provider()
     finally:
         _reset_settings()
+
+    assert isinstance(provider, GeminiBatchMatchProvider)
