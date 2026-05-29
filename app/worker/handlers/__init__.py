@@ -6,6 +6,7 @@ responsible for importing those concrete modules.
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any, Protocol
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -19,10 +20,22 @@ class TransientError(Exception):
         self.retry_after_seconds = retry_after_seconds
 
 
+@dataclass(frozen=True)
+class EnqueueAfterDone:
+    job_type: str
+    payload: dict[str, Any]
+    dedupe_key: str | None = None
+    not_before_seconds: int | None = None
+
+
 class Handler(Protocol):
     max_attempts: int
 
-    async def __call__(self, session: AsyncSession, row: WorkQueue) -> None: ...
+    async def __call__(
+        self,
+        session: AsyncSession,
+        row: WorkQueue,
+    ) -> EnqueueAfterDone | None: ...
 
     async def on_terminal_failure(
         self,

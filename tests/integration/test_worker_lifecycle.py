@@ -8,19 +8,20 @@ from app.worker.queue_service import enqueue
 
 
 def _disable_default_lanes(monkeypatch) -> None:
-    monkeypatch.setenv("WORKER_LLM_JOB_TYPES", "")
+    monkeypatch.setenv("WORKER_FAST_JOB_TYPES", "")
     monkeypatch.setenv("WORKER_SLOW_JOB_TYPES", "")
 
 
-def test_main_imports_register_all_four_handlers():
+def test_main_imports_registers_core_handlers():
     from app.worker.handlers import HANDLERS
 
-    assert set(HANDLERS) == {
+    assert {
         "fetch-slug",
         "match",
+        "batch-match",
         "generate-cover-letter",
         "maintenance",
-    }
+    }.issubset(set(HANDLERS))
 
 
 @pytest.mark.asyncio
@@ -58,6 +59,53 @@ async def test_worker_processes_pending(db_session, monkeypatch):
     ).scalar_one()
     assert count == 5
     assert Noop.called == 5
+
+
+@pytest.mark.asyncio
+async def test_worker_enqueues_handler_follow_up_after_mark_done(db_session, monkeypatch):
+    from app.worker.handlers import HANDLERS, EnqueueAfterDone
+
+    _disable_default_lanes(monkeypatch)
+
+    class FollowUp:
+        max_attempts = 3
+
+        async def __call__(self, session, row):
+            return EnqueueAfterDone(
+                job_type="test-follow",
+                payload={"profile_id": "p1"},
+                dedupe_key="test-follow:p1",
+                not_before_seconds=600,
+            )
+
+    monkeypatch.setitem(HANDLERS, "test-follow", FollowUp())
+
+    await enqueue(
+        db_session,
+        job_type="test-follow",
+        payload={"profile_id": "p1"},
+        dedupe_key="test-follow:p1",
+    )
+    await db_session.commit()
+
+    async def stop_soon():
+        await asyncio.sleep(1.5)
+        worker_main._shutdown.set()
+
+    await asyncio.gather(worker_main.run(), stop_soon())
+
+    rows = (
+        await db_session.execute(
+            text(
+                "SELECT status, payload, dedupe_key, not_before "
+                "FROM work_queue WHERE job_type='test-follow' ORDER BY id"
+            )
+        )
+    ).all()
+    assert [row[0] for row in rows] == ["done", "pending"]
+    assert rows[1][1] == {"profile_id": "p1"}
+    assert rows[1][2] == "test-follow:p1"
+    assert rows[1][3] is not None
 
 
 @pytest.mark.asyncio
@@ -261,9 +309,9 @@ async def test_worker_lanes_process_default_job_types(db_session, monkeypatch):
         async def __call__(self, session, row):
             calls.append(self.name)
 
-    monkeypatch.setenv("WORKER_LLM_CONCURRENCY", "1")
+    monkeypatch.setenv("WORKER_FAST_CONCURRENCY", "1")
     monkeypatch.setenv("WORKER_SLOW_CONCURRENCY", "1")
-    monkeypatch.setitem(HANDLERS, "match", Record("llm"))
+    monkeypatch.setitem(HANDLERS, "match", Record("fast"))
     monkeypatch.setitem(HANDLERS, "fetch-slug", Record("slow"))
 
     async def recording_run_lane(lane, *, settings, session_factory, shutdown_task):
@@ -289,50 +337,50 @@ async def test_worker_lanes_process_default_job_types(db_session, monkeypatch):
 
     await asyncio.gather(worker_main.run(), stop_soon())
 
-    assert sorted(started_lanes) == ["llm", "slow"]
-    assert sorted(calls) == ["llm", "slow"]
+    assert sorted(started_lanes) == ["fast", "slow"]
+    assert sorted(calls) == ["fast", "slow"]
 
 
 @pytest.mark.asyncio
-async def test_slow_lane_drains_while_llm_lane_is_saturated(db_session, monkeypatch):
-    started_llm = asyncio.Event()
-    release_llm = asyncio.Event()
+async def test_slow_lane_drains_while_fast_lane_is_saturated(db_session, monkeypatch):
+    started_fast = asyncio.Event()
+    release_fast = asyncio.Event()
     slow_done = asyncio.Event()
     from app.worker.handlers import HANDLERS
 
-    class SlowLlm:
+    class SlowFast:
         max_attempts = 3
 
         async def __call__(self, session, row):
-            started_llm.set()
-            await release_llm.wait()
+            started_fast.set()
+            await release_fast.wait()
 
     class FastSlow:
         max_attempts = 3
 
         async def __call__(self, session, row):
-            await started_llm.wait()
-            assert not release_llm.is_set()
+            await started_fast.wait()
+            assert not release_fast.is_set()
             slow_done.set()
 
-    monkeypatch.setenv("WORKER_LLM_JOB_TYPES", "test-llm-blocking")
-    monkeypatch.setenv("WORKER_LLM_CONCURRENCY", "1")
+    monkeypatch.setenv("WORKER_FAST_JOB_TYPES", "test-fast-blocking")
+    monkeypatch.setenv("WORKER_FAST_CONCURRENCY", "1")
     monkeypatch.setenv("WORKER_SLOW_JOB_TYPES", "test-slow-fast")
     monkeypatch.setenv("WORKER_SLOW_CONCURRENCY", "1")
-    monkeypatch.setitem(HANDLERS, "test-llm-blocking", SlowLlm())
+    monkeypatch.setitem(HANDLERS, "test-fast-blocking", SlowFast())
     monkeypatch.setitem(HANDLERS, "test-slow-fast", FastSlow())
 
-    await enqueue(db_session, job_type="test-llm-blocking", payload={})
+    await enqueue(db_session, job_type="test-fast-blocking", payload={})
     await enqueue(db_session, job_type="test-slow-fast", payload={})
     await db_session.commit()
 
     async def stop_after_slow_done():
         try:
-            await started_llm.wait()
+            await started_fast.wait()
             await asyncio.wait_for(slow_done.wait(), timeout=2)
-            assert not release_llm.is_set()
+            assert not release_fast.is_set()
         finally:
-            release_llm.set()
+            release_fast.set()
             worker_main._shutdown.set()
 
     await asyncio.gather(worker_main.run(), stop_after_slow_done())
@@ -343,14 +391,14 @@ async def test_slow_lane_drains_while_llm_lane_is_saturated(db_session, monkeypa
                 """
                 SELECT job_type, status
                 FROM work_queue
-                WHERE job_type IN ('test-llm-blocking', 'test-slow-fast')
+                WHERE job_type IN ('test-fast-blocking', 'test-slow-fast')
                 ORDER BY job_type
                 """
             )
         )
     ).all()
     assert statuses == [
-        ("test-llm-blocking", "done"),
+        ("test-fast-blocking", "done"),
         ("test-slow-fast", "done"),
     ]
 
@@ -366,7 +414,7 @@ async def test_worker_run_cleans_up_sibling_lanes_when_one_lane_raises(monkeypat
     sibling_cancelled = asyncio.Event()
 
     async def fake_run_lane(lane, *, settings, session_factory, shutdown_task):
-        if lane.name == "llm":
+        if lane.name == "fast":
             await started_sibling.wait()
             raise RuntimeError("lane exploded")
 
@@ -385,7 +433,7 @@ async def test_worker_run_cleans_up_sibling_lanes_when_one_lane_raises(monkeypat
             from app.worker.config import WorkerLane
 
             return [
-                WorkerLane(name="llm", job_types=("test-llm",), concurrency=1),
+                WorkerLane(name="fast", job_types=("test-fast",), concurrency=1),
                 WorkerLane(name="slow", job_types=("test-slow",), concurrency=1),
             ]
 

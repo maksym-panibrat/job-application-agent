@@ -307,6 +307,13 @@ async def fetch_one_slug(*, provider: str, slug: str, session_factory) -> dict:
             if created:
                 new_count += 1
             await _create_applications_for_interested_profiles(job, session)
+            batch_matches_enqueued = await _enqueue_batch_match_for_affected_profiles(
+                job.id,
+                session,
+            )
+            if batch_matches_enqueued:
+                matches_enqueued += batch_matches_enqueued
+                continue
             apps = (
                 (
                     await session.execute(
@@ -344,6 +351,40 @@ async def fetch_one_slug(*, provider: str, slug: str, session_factory) -> dict:
         "total_jobs": len(jobs),
         "matches_enqueued": matches_enqueued,
     }
+
+
+async def _enqueue_batch_match_for_affected_profiles(job_id, session) -> int:
+    from app.config import get_settings
+    from app.models.application import Application
+    from app.worker.queue_service import enqueue
+
+    settings = get_settings()
+    if not settings.batch_match_enabled or settings.batch_match_dry_run:
+        return 0
+
+    result = await session.execute(
+        select(Application.profile_id)
+        .distinct()
+        .where(
+            Application.job_id == job_id,
+            col(Application.match_score).is_(None),
+            col(Application.status).in_(("pending_review", "auto_rejected")),
+        )
+    )
+    profile_ids = result.scalars().all()
+
+    enqueued = 0
+    for profile_id in profile_ids:
+        row_id = await enqueue(
+            session,
+            job_type="batch-match",
+            payload={"profile_id": str(profile_id)},
+            dedupe_key=f"batch-match:{profile_id}",
+            on_conflict="upsert_reset_not_before",
+        )
+        if row_id is not None:
+            enqueued += 1
+    return enqueued
 
 
 async def _create_applications_for_interested_profiles(job, session) -> int:

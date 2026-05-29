@@ -18,6 +18,16 @@ from app.worker.handlers import HANDLERS
 from app.worker.handlers.fetch_slug import FetchSlugHandler
 
 
+@pytest.fixture(autouse=True)
+def disable_batch_match(monkeypatch):
+    import app.config as cfg
+
+    monkeypatch.setenv("BATCH_MATCH_ENABLED", "false")
+    cfg._settings = None
+    yield
+    cfg._settings = None
+
+
 async def _seed_interested_profile(db_session, slug: str) -> None:
     user = User(id=uuid.uuid4(), email=f"fetch-handler-{uuid.uuid4()}@test.com")
     db_session.add(user)

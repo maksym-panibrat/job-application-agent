@@ -139,6 +139,48 @@ async def test_claim_one_prioritizes_fetch_slug_ahead_of_older_match_backlog(db_
 
 
 @pytest.mark.asyncio
+async def test_claim_one_prioritizes_batch_match_after_maintenance_before_match(db_session):
+    older_match = await enqueue(
+        db_session,
+        job_type="match",
+        payload={"application_id": "older"},
+        dedupe_key="match:older-priority",
+    )
+    newer_batch = await enqueue(
+        db_session,
+        job_type="batch-match",
+        payload={"profile_id": "newer"},
+        dedupe_key="batch-match:newer-priority",
+    )
+    newer_maintenance = await enqueue(
+        db_session,
+        job_type="maintenance",
+        payload={},
+        dedupe_key="maintenance:newer-priority",
+    )
+    await db_session.execute(
+        text("UPDATE work_queue SET enqueued_at = now() - interval '2 hours' WHERE id = :id"),
+        {"id": older_match},
+    )
+    await db_session.execute(
+        text("UPDATE work_queue SET enqueued_at = now() - interval '1 hour' WHERE id = :id"),
+        {"id": newer_batch},
+    )
+    await db_session.commit()
+
+    first = await claim_one(db_session, worker_id="w1", visibility_timeout_s=600)
+    second = await claim_one(db_session, worker_id="w2", visibility_timeout_s=600)
+    await db_session.commit()
+
+    assert first is not None
+    assert first.id == newer_maintenance
+    assert first.job_type == "maintenance"
+    assert second is not None
+    assert second.id == newer_batch
+    assert second.job_type == "batch-match"
+
+
+@pytest.mark.asyncio
 async def test_claim_one_empty_returns_none(db_session):
     claimed = await claim_one(db_session, worker_id="w1", visibility_timeout_s=600)
 

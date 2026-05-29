@@ -4,8 +4,10 @@ import pytest
 from pydantic import ValidationError
 
 from app.worker.payloads import (
+    BatchMatchPayload,
     FetchSlugPayload,
     GenerateCoverLetterPayload,
+    MaintenancePayload,
     MatchPayload,
 )
 
@@ -30,3 +32,23 @@ def test_generate_cover_letter_payload():
     aid = uuid.uuid4()
     p = GenerateCoverLetterPayload(application_id=aid)
     assert p.application_id == aid
+
+
+def test_maintenance_payload_optional_date():
+    p = MaintenancePayload()
+    assert p.date is None
+    p2 = MaintenancePayload(date="2026-05-12")
+    assert p2.date == "2026-05-12"
+
+
+def test_batch_match_payload_requires_profile_id():
+    with pytest.raises(ValidationError):
+        BatchMatchPayload()
+
+
+def test_batch_match_payload_parses_profile_id():
+    profile_id = uuid.uuid4()
+
+    payload = BatchMatchPayload(profile_id=str(profile_id))
+
+    assert payload.profile_id == profile_id

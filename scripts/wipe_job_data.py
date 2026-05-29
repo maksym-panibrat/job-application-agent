@@ -27,6 +27,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 # Order matters for the printed report; TRUNCATE ... CASCADE handles FKs.
 WIPE_TABLES = (
     "generated_documents",
+    "llm_match_batch_items",
+    "llm_match_batches",
     "applications",
     "jobs",
     "work_queue",

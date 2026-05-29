@@ -30,6 +30,8 @@ async def _seed_reset_rows(db_session) -> None:
     company_id = uuid.uuid4()
     job_id = uuid.uuid4()
     app_id = uuid.uuid4()
+    batch_id = uuid.uuid4()
+    batch_item_id = uuid.uuid4()
     doc_id = uuid.uuid4()
     feedback_id = uuid.uuid4()
     oauth_id = uuid.uuid4()
@@ -182,6 +184,37 @@ async def _seed_reset_rows(db_session) -> None:
     )
     await db_session.execute(
         text("""
+            INSERT INTO llm_match_batches (id, profile_id, provider, model, prompt_version, status)
+            VALUES (:batch_id, :profile_id, :provider, :model, :prompt_version,
+                :status)
+        """),
+        {
+            "batch_id": batch_id,
+            "profile_id": profile_id,
+            "provider": "fake",
+            "model": "fake-model",
+            "prompt_version": "batch-match-v1",
+            "status": "submitted",
+        },
+    )
+    await db_session.execute(
+        text("""
+            INSERT INTO llm_match_batch_items (id, batch_id, application_id,
+                provider_request_key, request_hash, status)
+            VALUES (:batch_item_id, :batch_id, :app_id, :request_key,
+                :request_hash, :item_status)
+        """),
+        {
+            "batch_item_id": batch_item_id,
+            "batch_id": batch_id,
+            "app_id": app_id,
+            "request_key": "request-0001",
+            "request_hash": "hash-wipe",
+            "item_status": "submitted",
+        },
+    )
+    await db_session.execute(
+        text("""
             INSERT INTO generated_documents (id, application_id, doc_type, content_md, created_at)
             VALUES (:doc_id, :app_id, 'cover_letter', 'hello', now())
         """),
@@ -249,6 +282,8 @@ async def test_wipe_removes_user_owned_and_job_search_rows_but_preserves_compani
 
     for table in (
         "generated_documents",
+        "llm_match_batch_items",
+        "llm_match_batches",
         "applications",
         "jobs",
         "work_queue",

@@ -8,15 +8,11 @@ from app.models.application import Application
 from app.models.job import Job
 from app.models.user_profile import UserProfile
 from app.models.work_queue import WorkQueue
-from app.services.remote_policy import evaluate_remote_policy, evaluate_us_location_policy
+from app.services.match_service import deterministic_rejection_fields
 from app.worker.handlers import HANDLERS, TransientError
 from app.worker.payloads import MatchPayload
 
 log = structlog.get_logger()
-
-
-def _deterministic_rejection_score(threshold: float) -> float:
-    return max(0.0, min(0.29, threshold - 0.01))
 
 
 class MatchHandler:
@@ -61,48 +57,25 @@ class MatchHandler:
             )
             return
 
-        verdict = evaluate_us_location_policy(job)
-        if verdict.hard_mismatch:
-            settings = get_settings()
-            gap = verdict.gap or "Deterministic match policy mismatch"
-            app.match_score = _deterministic_rejection_score(
-                settings.match_score_threshold
-            )
-            app.match_summary = "Deterministic mismatch: non-US position"
-            app.match_rationale = gap
-            app.match_strengths = []
-            app.match_gaps = [gap]
+        settings = get_settings()
+        deterministic_fields = deterministic_rejection_fields(
+            profile,
+            job,
+            settings.match_score_threshold,
+        )
+        if deterministic_fields is not None:
+            app.match_score = deterministic_fields["score"]
+            app.match_summary = deterministic_fields["summary"]
+            app.match_rationale = deterministic_fields["rationale"]
+            app.match_strengths = deterministic_fields["strengths"]
+            app.match_gaps = deterministic_fields["gaps"]
             if app.status == "pending_review":
                 app.status = "auto_rejected"
             session.add(app)
             await log.ainfo(
                 "worker.match.deterministic_reject",
                 application_id=str(app.id),
-                policy="us_location",
-                score=app.match_score,
-            )
-            return
-
-        verdict = evaluate_remote_policy(profile, job)
-        if verdict.hard_mismatch:
-            settings = get_settings()
-            gap = verdict.gap or "Deterministic match policy mismatch"
-            app.match_score = _deterministic_rejection_score(
-                settings.match_score_threshold
-            )
-            app.match_summary = (
-                "Deterministic mismatch: recurring office attendance requirement"
-            )
-            app.match_rationale = gap
-            app.match_strengths = []
-            app.match_gaps = [gap]
-            if app.status == "pending_review":
-                app.status = "auto_rejected"
-            session.add(app)
-            await log.ainfo(
-                "worker.match.deterministic_reject",
-                application_id=str(app.id),
-                policy="remote_office",
+                policy=deterministic_fields["policy"],
                 score=app.match_score,
             )
             return

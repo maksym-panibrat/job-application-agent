@@ -15,3 +15,11 @@ class MatchPayload(BaseModel):
 
 class GenerateCoverLetterPayload(BaseModel):
     application_id: uuid.UUID
+
+
+class BatchMatchPayload(BaseModel):
+    profile_id: uuid.UUID
+
+
+class MaintenancePayload(BaseModel):
+    date: str | None = None

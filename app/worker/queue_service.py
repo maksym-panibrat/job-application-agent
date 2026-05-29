@@ -1,5 +1,6 @@
 """Plain-SQL work_queue operations. Caller controls commit boundaries."""
 import json
+from datetime import datetime
 from typing import Any, Literal
 
 from sqlalchemy import text
@@ -19,6 +20,7 @@ async def enqueue(
     payload: dict[str, Any],
     dedupe_key: str | None = None,
     on_conflict: Literal["do_nothing", "upsert_reset_not_before"] = "do_nothing",
+    not_before: datetime | None = None,
 ) -> int | None:
     """Insert a pending queue row, returning either the new row id or the live
     row id that blocked a deduped insert.
@@ -27,18 +29,24 @@ async def enqueue(
         "job_type": job_type,
         "payload": json.dumps(payload, default=str),
         "dedupe_key": dedupe_key,
+        "not_before": not_before,
     }
     if on_conflict == "upsert_reset_not_before":
         result = await session.execute(
             text(
                 """
-                INSERT INTO work_queue (job_type, payload, dedupe_key)
-                VALUES (:job_type, CAST(:payload AS jsonb), :dedupe_key)
+                INSERT INTO work_queue (job_type, payload, dedupe_key, not_before)
+                VALUES (
+                    :job_type,
+                    CAST(:payload AS jsonb),
+                    :dedupe_key,
+                    :not_before
+                )
                 ON CONFLICT (job_type, dedupe_key)
                     WHERE status IN ('pending', 'in_progress')
                       AND dedupe_key IS NOT NULL
                 DO UPDATE SET
-                    not_before = NULL,
+                    not_before = EXCLUDED.not_before,
                     payload = EXCLUDED.payload
                     WHERE work_queue.status = 'pending'
                 RETURNING id
@@ -50,8 +58,13 @@ async def enqueue(
         result = await session.execute(
             text(
                 """
-                INSERT INTO work_queue (job_type, payload, dedupe_key)
-                VALUES (:job_type, CAST(:payload AS jsonb), :dedupe_key)
+                INSERT INTO work_queue (job_type, payload, dedupe_key, not_before)
+                VALUES (
+                    :job_type,
+                    CAST(:payload AS jsonb),
+                    :dedupe_key,
+                    :not_before
+                )
                 ON CONFLICT (job_type, dedupe_key)
                     WHERE status IN ('pending', 'in_progress')
                       AND dedupe_key IS NOT NULL
@@ -125,8 +138,9 @@ async def claim_one(
                   WHEN 'generate-cover-letter' THEN 0
                   WHEN 'fetch-slug' THEN 1
                   WHEN 'maintenance' THEN 2
-                  WHEN 'match' THEN 3
-                  ELSE 4
+                  WHEN 'batch-match' THEN 3
+                  WHEN 'match' THEN 4
+                  ELSE 5
                 END ASC,
                 enqueued_at ASC
               FOR UPDATE SKIP LOCKED
