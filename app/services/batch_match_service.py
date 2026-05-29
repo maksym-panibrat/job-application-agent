@@ -5,6 +5,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
+from sqlalchemy import and_, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
@@ -62,6 +63,9 @@ class _ImportCounters:
     imported: int = 0
     retryable_failed: int = 0
     terminal_failed: int = 0
+
+
+_TERMINAL_PROVIDER_CORRELATION_ERRORS = {"provider returned unknown application_id"}
 
 
 async def run_batch_match_tick(
@@ -309,12 +313,17 @@ async def _select_unscored_application_rows(
     limit: int,
 ) -> list[tuple[Application, Job]]:
     posted_cutoff = datetime.now(UTC) - timedelta(days=DISPLAY_JOB_MAX_AGE_DAYS)
-    active_item_app_ids = (
+    blocked_item_app_ids = (
         select(LLMMatchBatchItem.application_id)
         .join(LLMMatchBatch, LLMMatchBatchItem.batch_id == LLMMatchBatch.id)
         .where(
-            LLMMatchBatchItem.status == ITEM_STATUS_SUBMITTED,
-            col(LLMMatchBatch.status).in_(ACTIVE_BATCH_STATUSES),
+            or_(
+                and_(
+                    LLMMatchBatchItem.status == ITEM_STATUS_SUBMITTED,
+                    col(LLMMatchBatch.status).in_(ACTIVE_BATCH_STATUSES),
+                ),
+                LLMMatchBatchItem.status == ITEM_STATUS_TERMINAL_FAILED,
+            )
         )
     )
     result = await session.execute(
@@ -326,7 +335,7 @@ async def _select_unscored_application_rows(
             col(Application.status).in_(("pending_review", "auto_rejected")),
             Job.is_active.is_(True),
             (col(Job.posted_at).is_(None)) | (Job.posted_at >= posted_cutoff),
-            col(Application.id).notin_(active_item_app_ids),
+            col(Application.id).notin_(blocked_item_app_ids),
         )
         .order_by(
             Job.posted_at.desc().nullslast(),
@@ -446,10 +455,11 @@ async def _import_provider_output(
         )
         return counters
     for request_key, error in request_correlation_errors.items():
-        counters.retryable_failed += _mark_items_retryable(
-            _items_by_request_key(items, request_key),
-            error,
-        )
+        request_items = _items_by_request_key(items, request_key)
+        if _is_terminal_provider_correlation_error(error):
+            counters.terminal_failed += _mark_items_terminal(request_items, error)
+        else:
+            counters.retryable_failed += _mark_items_retryable(request_items, error)
 
     seen_item_ids: set[uuid.UUID] = set()
 
@@ -466,10 +476,18 @@ async def _import_provider_output(
             continue
         correlation_error = _request_correlation_error(request_items, request.results)
         if correlation_error is not None:
+            mark_item = (
+                _mark_item_terminal
+                if _is_terminal_provider_correlation_error(correlation_error)
+                else _mark_item_retryable
+            )
             for item in request_items:
                 if item.status == ITEM_STATUS_SUBMITTED:
-                    _mark_item_retryable(item, correlation_error)
-                    counters.retryable_failed += 1
+                    mark_item(item, correlation_error)
+                    if _is_terminal_provider_correlation_error(correlation_error):
+                        counters.terminal_failed += 1
+                    else:
+                        counters.retryable_failed += 1
                     seen_item_ids.add(item.id)
             continue
         for result in request.results:
@@ -716,10 +734,26 @@ def _mark_items_retryable(
     return count
 
 
+def _is_terminal_provider_correlation_error(error: str) -> bool:
+    return error in _TERMINAL_PROVIDER_CORRELATION_ERRORS
+
+
 def _mark_item_terminal(item: LLMMatchBatchItem, error: str) -> None:
     item.status = ITEM_STATUS_TERMINAL_FAILED
     item.error = error
     item.updated_at = datetime.now(UTC)
+
+
+def _mark_items_terminal(
+    items: Iterable[LLMMatchBatchItem],
+    error: str,
+) -> int:
+    count = 0
+    for item in items:
+        if item.status == ITEM_STATUS_SUBMITTED:
+            _mark_item_terminal(item, error)
+            count += 1
+    return count
 
 
 async def _mark_submitted_items_retryable(

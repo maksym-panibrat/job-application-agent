@@ -477,7 +477,7 @@ async def test_duplicate_provider_result_ids_mark_request_retryable_without_part
 
 
 @pytest.mark.asyncio
-async def test_unknown_provider_result_id_marks_request_retryable_without_partial_import(
+async def test_unknown_provider_result_id_marks_request_terminal_without_retry_loop(
     db_session,
 ):
     from app.services.batch_match_provider import (
@@ -526,15 +526,27 @@ async def test_unknown_provider_result_id_marks_request_retryable_without_partia
     result = await run_batch_match_tick(db_session, profile_id=profile.id, provider=second_provider)
 
     assert result.imported == 0
-    assert result.retryable_failed == 2
+    assert result.retryable_failed == 0
+    assert result.terminal_failed == 2
     for app in apps:
         refreshed = await db_session.get(Application, app.id)
         assert refreshed is not None
         assert refreshed.match_score is None
 
     items = await _batch_items_for_batch(db_session, original_batch.id)
-    assert {item.status for item in items} == {"retryable_failed"}
+    assert {item.status for item in items} == {"terminal_failed"}
     assert {item.error for item in items} == {"provider returned unknown application_id"}
+
+    retry_provider = FakeBatchMatchProvider(ready=False, provider_batch_id="batch-2")
+    retry_result = await run_batch_match_tick(
+        db_session,
+        profile_id=profile.id,
+        provider=retry_provider,
+    )
+
+    assert retry_result.selected == 0
+    assert retry_result.submitted == 0
+    assert retry_provider.submitted_requests == []
 
 
 @pytest.mark.asyncio
