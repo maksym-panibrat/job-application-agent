@@ -168,6 +168,15 @@ def test_candidate_priority_scores_strong_engineering_jobs_above_weak_matches():
     assert candidate_priority_score(profile, strong) > candidate_priority_score(profile, weak)
 
 
+def test_provider_correlation_errors_are_terminal_to_prevent_paid_retry_loops():
+    from app.services.batch_match_service import _is_terminal_provider_correlation_error
+
+    assert _is_terminal_provider_correlation_error("provider returned unknown application_id")
+    assert _is_terminal_provider_correlation_error("provider returned duplicate application_id")
+    assert _is_terminal_provider_correlation_error("provider returned duplicate request_key")
+    assert _is_terminal_provider_correlation_error("provider returned unknown request_key")
+
+
 @pytest.mark.asyncio
 async def test_list_applications_filters_out_jobs_older_than_10_days():
     from app.services.match_service import list_applications

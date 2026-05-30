@@ -66,7 +66,12 @@ class _ImportCounters:
     terminal_failed: int = 0
 
 
-_TERMINAL_PROVIDER_CORRELATION_ERRORS = {"provider returned unknown application_id"}
+_TERMINAL_PROVIDER_CORRELATION_ERRORS = {
+    "provider returned unknown application_id",
+    "provider returned duplicate application_id",
+    "provider returned duplicate request_key",
+    "provider returned unknown request_key",
+}
 
 
 async def run_batch_match_tick(
@@ -481,10 +486,16 @@ async def _import_provider_output(
         _provider_output_correlation_errors(items, output)
     )
     if batch_correlation_error is not None:
-        counters.retryable_failed += _mark_items_retryable(
-            items.values(),
-            batch_correlation_error,
-        )
+        if _is_terminal_provider_correlation_error(batch_correlation_error):
+            counters.terminal_failed += _mark_items_terminal(
+                items.values(),
+                batch_correlation_error,
+            )
+        else:
+            counters.retryable_failed += _mark_items_retryable(
+                items.values(),
+                batch_correlation_error,
+            )
         return counters
     for request_key, error in request_correlation_errors.items():
         request_items = _items_by_request_key(items, request_key)

@@ -523,14 +523,15 @@ async def test_duplicate_provider_result_ids_mark_request_retryable_without_part
     result = await run_batch_match_tick(db_session, profile_id=profile.id, provider=second_provider)
 
     assert result.imported == 0
-    assert result.retryable_failed == 2
+    assert result.retryable_failed == 0
+    assert result.terminal_failed == 2
     for app in apps:
         refreshed = await db_session.get(Application, app.id)
         assert refreshed is not None
         assert refreshed.match_score is None
 
     items = await _batch_items_for_batch(db_session, original_batch.id)
-    assert {item.status for item in items} == {"retryable_failed"}
+    assert {item.status for item in items} == {"terminal_failed"}
     assert {item.error for item in items} == {"provider returned duplicate application_id"}
 
 
@@ -662,14 +663,15 @@ async def test_unknown_provider_request_key_marks_batch_retryable_without_partia
     result = await run_batch_match_tick(db_session, profile_id=profile.id, provider=second_provider)
 
     assert result.imported == 0
-    assert result.retryable_failed == 2
+    assert result.retryable_failed == 0
+    assert result.terminal_failed == 2
     for app in apps:
         refreshed = await db_session.get(Application, app.id)
         assert refreshed is not None
         assert refreshed.match_score is None
 
     items = await _batch_items_for_batch(db_session, original_batch.id)
-    assert {item.status for item in items} == {"retryable_failed"}
+    assert {item.status for item in items} == {"terminal_failed"}
     assert {item.error for item in items} == {"provider returned unknown request_key"}
 
 
@@ -728,14 +730,15 @@ async def test_duplicate_provider_result_ids_split_across_requests_mark_retryabl
     result = await run_batch_match_tick(db_session, profile_id=profile.id, provider=second_provider)
 
     assert result.imported == 0
-    assert result.retryable_failed == 2
+    assert result.retryable_failed == 0
+    assert result.terminal_failed == 2
     for app in apps:
         refreshed = await db_session.get(Application, app.id)
         assert refreshed is not None
         assert refreshed.match_score is None
 
     items = await _batch_items_for_batch(db_session, original_batch.id)
-    assert {item.status for item in items} == {"retryable_failed"}
+    assert {item.status for item in items} == {"terminal_failed"}
     assert {item.error for item in items} == {"provider returned duplicate application_id"}
 
 
@@ -794,14 +797,15 @@ async def test_duplicate_provider_request_blocks_mark_retryable_without_partial_
     result = await run_batch_match_tick(db_session, profile_id=profile.id, provider=second_provider)
 
     assert result.imported == 0
-    assert result.retryable_failed == 2
+    assert result.retryable_failed == 0
+    assert result.terminal_failed == 2
     for app in apps:
         refreshed = await db_session.get(Application, app.id)
         assert refreshed is not None
         assert refreshed.match_score is None
 
     items = await _batch_items_for_batch(db_session, original_batch.id)
-    assert {item.status for item in items} == {"retryable_failed"}
+    assert {item.status for item in items} == {"terminal_failed"}
     assert {item.error for item in items} == {"provider returned duplicate request_key"}
 
 
