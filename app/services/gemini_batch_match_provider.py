@@ -105,51 +105,13 @@ def _inline_request(request: dict) -> dict:
         **payload["request"],
         "config": {
             "response_mime_type": "application/json",
-            "response_json_schema": _response_json_schema(
-                [str(job.get("application_id", "")) for job in jobs]
-            ),
+            # Do not send response_json_schema here. In real Gemini batch canaries,
+            # constrained decoding turned the nested results schema into malformed
+            # JSON with repeated `results` keys and string field names instead of
+            # result objects. The prompt already carries the allowed IDs, and the
+            # importer validates/correlates every result before writing scores.
         },
         "metadata": {"request_key": payload["key"]},
-    }
-
-
-def _response_json_schema(application_ids: list[str]) -> dict:
-    return {
-        "type": "object",
-        "properties": {
-            "results": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "application_id": {
-                            "type": "string",
-                            "enum": application_ids,
-                        },
-                        "score": {"type": "number"},
-                        "summary": {"type": "string"},
-                        "rationale": {"type": "string"},
-                        "strengths": {
-                            "type": "array",
-                            "items": {"type": "string"},
-                        },
-                        "gaps": {
-                            "type": "array",
-                            "items": {"type": "string"},
-                        },
-                    },
-                    "required": [
-                        "application_id",
-                        "score",
-                        "summary",
-                        "rationale",
-                        "strengths",
-                        "gaps",
-                    ],
-                },
-            },
-        },
-        "required": ["results"],
     }
 
 

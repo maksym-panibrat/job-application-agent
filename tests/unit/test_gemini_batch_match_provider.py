@@ -115,10 +115,7 @@ async def test_gemini_batch_match_provider_submit_creates_inline_batch():
     assert created["config"]["display_name"] == "batch-match-test"
     assert created["src"][0]["metadata"] == {"request_key": "request-0001"}
     assert created["src"][0]["config"]["response_mime_type"] == "application/json"
-    schema = created["src"][0]["config"]["response_json_schema"]
-    assert schema["properties"]["results"]["items"]["properties"]["application_id"]["enum"] == [
-        "app-1"
-    ]
+    assert "response_json_schema" not in created["src"][0]["config"]
     prompt = created["src"][0]["contents"][0]["parts"][0]["text"]
     assert "Senior Python engineer." in prompt
     assert "app-1" in prompt
