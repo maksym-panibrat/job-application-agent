@@ -41,6 +41,7 @@ from app.services.batch_match_provider import (
 from app.services.match_service import (
     DISPLAY_JOB_MAX_AGE_DAYS,
     DeterministicRejectionFields,
+    candidate_priority_score,
     deterministic_rejection_fields,
     format_profile_text,
 )
@@ -161,10 +162,15 @@ async def _build_and_submit(
     if profile is None:
         return BatchMatchTickResult()
 
+    candidate_pool_limit = max(
+        settings.batch_match_max_items_per_batch,
+        settings.batch_match_max_items_per_batch
+        * max(1, settings.batch_match_candidate_pool_multiplier),
+    )
     rows = await _select_unscored_application_rows(
         session,
         profile_id=profile_id,
-        limit=settings.batch_match_max_items_per_batch,
+        limit=candidate_pool_limit,
     )
     selected = len(rows)
     if not rows:
@@ -177,6 +183,13 @@ async def _build_and_submit(
             deterministic_rejected += 1
             continue
         survivors.append(_job_context(app, job))
+
+    survivors = _prioritize_batch_jobs(
+        profile,
+        rows_by_application_id={app.id: job for app, job in rows},
+        survivors=survivors,
+        limit=settings.batch_match_max_items_per_batch,
+    )
 
     if not survivors:
         await session.commit()
@@ -379,6 +392,25 @@ async def _create_batch_with_items(
                 )
             )
     return batch
+
+
+def _prioritize_batch_jobs(
+    profile: UserProfile,
+    *,
+    rows_by_application_id: dict[uuid.UUID, Job],
+    survivors: list[BatchJobContext],
+    limit: int,
+) -> list[BatchJobContext]:
+    if limit < 1 or len(survivors) <= limit:
+        return survivors
+    return sorted(
+        survivors,
+        key=lambda survivor: candidate_priority_score(
+            profile,
+            rows_by_application_id[survivor.application_id],
+        ),
+        reverse=True,
+    )[:limit]
 
 
 def _apply_deterministic_reject_if_needed(

@@ -33,6 +33,7 @@ class Settings(BaseSettings):
     batch_match_max_request_chars: int = 60000
     batch_match_poll_interval_seconds: int = 60
     batch_match_max_items_per_batch: int = 100
+    batch_match_candidate_pool_multiplier: int = 3
 
     cors_allowed_origins: list[str] = ["http://localhost:5173", "http://localhost:3000"]
     # Absolute base URL Google sees as redirect_uri host. Cloud Run forwards HTTP to
