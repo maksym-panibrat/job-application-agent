@@ -240,7 +240,13 @@ async def run_daily_maintenance() -> dict:
     }
 
 
-async def fetch_one_slug(*, provider: str, slug: str, session_factory) -> dict:
+async def fetch_one_slug(
+    *,
+    provider: str,
+    slug: str,
+    session_factory,
+    batch_match_max_items: int | None = None,
+) -> dict:
     """Fetch one provider slug, upsert jobs, and enqueue match work_queue rows."""
     import httpx
 
@@ -310,6 +316,7 @@ async def fetch_one_slug(*, provider: str, slug: str, session_factory) -> dict:
             batch_matches_enqueued = await _enqueue_batch_match_for_affected_profiles(
                 job.id,
                 session,
+                max_items=batch_match_max_items,
             )
             if batch_matches_enqueued:
                 matches_enqueued += batch_matches_enqueued
@@ -353,7 +360,12 @@ async def fetch_one_slug(*, provider: str, slug: str, session_factory) -> dict:
     }
 
 
-async def _enqueue_batch_match_for_affected_profiles(job_id, session) -> int:
+async def _enqueue_batch_match_for_affected_profiles(
+    job_id,
+    session,
+    *,
+    max_items: int | None = None,
+) -> int:
     from app.config import get_settings
     from app.models.application import Application
     from app.worker.queue_service import enqueue
@@ -378,7 +390,14 @@ async def _enqueue_batch_match_for_affected_profiles(job_id, session) -> int:
         row_id = await enqueue(
             session,
             job_type="batch-match",
-            payload={"profile_id": str(profile_id)},
+            payload={
+                key: value
+                for key, value in {
+                    "profile_id": str(profile_id),
+                    "max_items": max_items,
+                }.items()
+                if value is not None
+            },
             dedupe_key=f"batch-match:{profile_id}",
             on_conflict="upsert_reset_not_before",
         )

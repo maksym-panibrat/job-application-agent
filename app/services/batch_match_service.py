@@ -79,6 +79,7 @@ async def run_batch_match_tick(
     *,
     profile_id: uuid.UUID,
     provider: BatchMatchProvider,
+    max_items: int | None = None,
 ) -> BatchMatchTickResult:
     active = await _get_active_batch(session, profile_id)
     if active is not None and active.status in (
@@ -94,6 +95,7 @@ async def run_batch_match_tick(
             session,
             profile_id=profile_id,
             provider=provider,
+            max_items=max_items,
         )
         return _combine_tick_results(import_result, build_result)
     if active is not None and active.status == BATCH_STATUS_BUILDING:
@@ -108,12 +110,18 @@ async def run_batch_match_tick(
                 session,
                 profile_id=profile_id,
                 provider=provider,
+                max_items=max_items,
             )
             return _combine_tick_results(fail_result, build_result)
         return BatchMatchTickResult(requeued=True)
     if active is not None:
         return BatchMatchTickResult(requeued=True)
-    return await _build_and_submit(session, profile_id=profile_id, provider=provider)
+    return await _build_and_submit(
+        session,
+        profile_id=profile_id,
+        provider=provider,
+        max_items=max_items,
+    )
 
 
 def _is_stale_building_batch(batch: LLMMatchBatch) -> bool:
@@ -161,16 +169,17 @@ async def _build_and_submit(
     *,
     profile_id: uuid.UUID,
     provider: BatchMatchProvider,
+    max_items: int | None = None,
 ) -> BatchMatchTickResult:
     settings = get_settings()
+    effective_max_items = max_items or settings.batch_match_max_items_per_batch
     profile = await session.get(UserProfile, profile_id)
     if profile is None:
         return BatchMatchTickResult()
 
     candidate_pool_limit = max(
-        settings.batch_match_max_items_per_batch,
-        settings.batch_match_max_items_per_batch
-        * max(1, settings.batch_match_candidate_pool_multiplier),
+        effective_max_items,
+        effective_max_items * max(1, settings.batch_match_candidate_pool_multiplier),
     )
     rows = await _select_unscored_application_rows(
         session,
@@ -193,7 +202,7 @@ async def _build_and_submit(
         profile,
         rows_by_application_id={app.id: job for app, job in rows},
         survivors=survivors,
-        limit=settings.batch_match_max_items_per_batch,
+        limit=effective_max_items,
     )
 
     if not survivors:

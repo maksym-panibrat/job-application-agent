@@ -46,3 +46,6 @@ def test_batch_matching_defaults(monkeypatch):
     assert settings.batch_match_max_request_chars == 60000
     assert settings.batch_match_poll_interval_seconds == 60
     assert settings.batch_match_max_items_per_batch == 100
+    assert settings.batch_match_candidate_pool_multiplier == 3
+    assert settings.batch_match_manual_sync_max_items == 50
+    assert settings.batch_match_cron_max_items == 100

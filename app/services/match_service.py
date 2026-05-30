@@ -161,7 +161,11 @@ def _contains_any(text: str, terms: tuple[str, ...]) -> bool:
     return any(term in text for term in terms)
 
 
-def _contract_type_rejection(profile: UserProfile, job: Job, threshold: float) -> DeterministicRejectionFields | None:
+def _contract_type_rejection(
+    profile: UserProfile,
+    job: Job,
+    threshold: float,
+) -> DeterministicRejectionFields | None:
     _ = profile
     text = _normalized_text(job.contract_type, job.title, job.description or job.description_raw)
     term = next((term for term in _HARD_MISMATCH_CONTRACT_TERMS if term in text), None)
@@ -178,9 +182,16 @@ def _contract_type_rejection(profile: UserProfile, job: Job, threshold: float) -
     }
 
 
-def _seniority_rejection(profile: UserProfile, job: Job, threshold: float) -> DeterministicRejectionFields | None:
+def _seniority_rejection(
+    profile: UserProfile,
+    job: Job,
+    threshold: float,
+) -> DeterministicRejectionFields | None:
     profile_seniority = (profile.seniority or "").lower()
-    if "senior" not in profile_seniority and "staff" not in profile_seniority and "principal" not in profile_seniority:
+    if not any(
+        seniority in profile_seniority
+        for seniority in ("senior", "staff", "principal")
+    ):
         return None
     match = _JUNIOR_TITLE_RE.search(job.title or "")
     if match is None:
@@ -209,7 +220,11 @@ def _profile_role_families(profile: UserProfile) -> set[str]:
     return role_families_for_text(" ".join(profile.target_roles or []))
 
 
-def _role_family_rejection(profile: UserProfile, job: Job, threshold: float) -> DeterministicRejectionFields | None:
+def _role_family_rejection(
+    profile: UserProfile,
+    job: Job,
+    threshold: float,
+) -> DeterministicRejectionFields | None:
     target_families = _profile_role_families(profile)
     if not target_families:
         return None
@@ -237,7 +252,9 @@ def candidate_priority_score(profile: UserProfile, job: Job) -> float:
     if target_families and job_families:
         score += 4.0 if target_families & job_families else -2.0
 
-    profile_tokens = set(re.findall(r"[a-z0-9+#.]{3,}", " ".join(profile.target_roles or []).lower()))
+    profile_tokens = set(
+        re.findall(r"[a-z0-9+#.]{3,}", " ".join(profile.target_roles or []).lower())
+    )
     title_tokens = set(re.findall(r"[a-z0-9+#.]{3,}", (job.title or "").lower()))
     score += min(2.0, len(profile_tokens & title_tokens) * 0.5)
 
@@ -248,7 +265,8 @@ def candidate_priority_score(profile: UserProfile, job: Job) -> float:
         score += 1.0
 
     description_text = (job.description or job.description_raw or "").lower()
-    score += min(2.0, sum(1 for term in _ENGINEERING_SKILL_TERMS if term in description_text) * 0.25)
+    skill_hits = sum(1 for term in _ENGINEERING_SKILL_TERMS if term in description_text)
+    score += min(2.0, skill_hits * 0.25)
     if job.contract_type and "full" in job.contract_type.lower():
         score += 0.5
     return score

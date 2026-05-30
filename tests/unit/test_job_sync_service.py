@@ -78,8 +78,8 @@ async def test_sync_active_profiles_aggregates_shared_enqueue_contract():
     mock_list_stale.assert_awaited_once_with(session, ttl_hours=6)
     assert mock_enqueue.await_count == 2
     assert [call.kwargs["payload"] for call in mock_enqueue.await_args_list] == [
-        {"provider": "greenhouse", "slug": "airbnb"},
-        {"provider": "greenhouse", "slug": "stripe"},
+        {"provider": "greenhouse", "slug": "airbnb", "batch_match_max_items": 100},
+        {"provider": "greenhouse", "slug": "stripe", "batch_match_max_items": 100},
     ]
     assert [call.kwargs["dedupe_key"] for call in mock_enqueue.await_args_list] == [
         "fetch-slug:greenhouse:airbnb",

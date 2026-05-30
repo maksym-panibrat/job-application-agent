@@ -198,15 +198,15 @@ async def test_build_prioritizes_high_signal_survivors_before_newer_weak_matches
     weak_newer = await add_unscored_app_for_profile(
         db_session,
         profile,
-        title="Operations Analyst",
-        description="Coordinate spreadsheets and internal process reporting.",
+        title="Backend Developer",
+        description="Maintain internal tools and update operational dashboards.",
         created_at=datetime.now(UTC),
     )
     weak_second = await add_unscored_app_for_profile(
         db_session,
         profile,
-        title="Program Coordinator",
-        description="Track internal projects and organize status meetings.",
+        title="Software Engineer",
+        description="Support legacy services and handle routine maintenance requests.",
         created_at=datetime.now(UTC) - timedelta(hours=1),
     )
     strong_older = await add_unscored_app_for_profile(

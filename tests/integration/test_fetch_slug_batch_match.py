@@ -115,11 +115,19 @@ def _greenhouse_fixture(slug: str, external_id: int = 9001) -> dict:
     }
 
 
-def _fetch_row(slug: str) -> WorkQueue:
+def _fetch_row(slug: str, *, batch_match_max_items: int | None = None) -> WorkQueue:
     return WorkQueue(
         id=1,
         job_type="fetch-slug",
-        payload={"provider": "greenhouse", "slug": slug},
+        payload={
+            key: value
+            for key, value in {
+                "provider": "greenhouse",
+                "slug": slug,
+                "batch_match_max_items": batch_match_max_items,
+            }.items()
+            if value is not None
+        },
         status=WorkQueueStatus.IN_PROGRESS,
         attempts=1,
         claimed_by="w1",
@@ -163,7 +171,11 @@ async def test_enqueue_batch_match_for_affected_profiles_when_enabled(db_session
     )
     await _seed_application(db_session, job_id=other_job.id, profile_id=other_job_profile.id)
 
-    enqueued = await _enqueue_batch_match_for_affected_profiles(job.id, db_session)
+    enqueued = await _enqueue_batch_match_for_affected_profiles(
+        job.id,
+        db_session,
+        max_items=50,
+    )
     await db_session.commit()
 
     rows = (
@@ -173,9 +185,12 @@ async def test_enqueue_batch_match_for_affected_profiles_when_enabled(db_session
     ).scalars().all()
 
     assert enqueued == 2
-    assert {(row.payload["profile_id"], row.dedupe_key) for row in rows} == {
-        (str(first_profile.id), f"batch-match:{first_profile.id}"),
-        (str(second_profile.id), f"batch-match:{second_profile.id}"),
+    assert {
+        (row.payload["profile_id"], row.payload["max_items"], row.dedupe_key)
+        for row in rows
+    } == {
+        (str(first_profile.id), 50, f"batch-match:{first_profile.id}"),
+        (str(second_profile.id), 50, f"batch-match:{second_profile.id}"),
     }
 
 
@@ -250,7 +265,10 @@ async def test_fetch_slug_enqueues_batch_match_instead_of_match_when_enabled(
         respx.get(f"{GREENHOUSE_BOARDS_BASE}/{slug}/jobs").mock(
             return_value=httpx.Response(200, json=_greenhouse_fixture(slug))
         )
-        await FetchSlugHandler()(db_session, _fetch_row(slug))
+        await FetchSlugHandler()(
+            db_session,
+            _fetch_row(slug, batch_match_max_items=50),
+        )
 
     batch_match_rows = (
         await db_session.execute(
@@ -267,7 +285,7 @@ async def test_fetch_slug_enqueues_batch_match_instead_of_match_when_enabled(
 
     assert match_count == 0
     assert [(row.payload, row.dedupe_key) for row in batch_match_rows] == [
-        ({"profile_id": str(profile.id)}, f"batch-match:{profile.id}")
+        ({"profile_id": str(profile.id), "max_items": 50}, f"batch-match:{profile.id}")
     ]
 
 

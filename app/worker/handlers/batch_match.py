@@ -31,6 +31,7 @@ class BatchMatchHandler:
             session,
             profile_id=payload.profile_id,
             provider=provider,
+            max_items=payload.max_items,
         )
         await log.ainfo(
             "worker.batch_match.done",
@@ -47,7 +48,14 @@ class BatchMatchHandler:
             settings = get_settings()
             return EnqueueAfterDone(
                 job_type="batch-match",
-                payload={"profile_id": str(payload.profile_id)},
+                payload={
+                    key: value
+                    for key, value in {
+                        "profile_id": str(payload.profile_id),
+                        "max_items": payload.max_items,
+                    }.items()
+                    if value is not None
+                },
                 dedupe_key=f"batch-match:{payload.profile_id}",
                 not_before_seconds=settings.batch_match_poll_interval_seconds,
             )

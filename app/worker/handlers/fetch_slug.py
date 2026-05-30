@@ -23,6 +23,7 @@ class FetchSlugHandler:
             counts = await fetch_one_slug(
                 provider=payload.provider,
                 slug=payload.slug,
+                batch_match_max_items=payload.batch_match_max_items,
                 session_factory=get_session_factory(),
             )
         except TransientFetchError as exc:

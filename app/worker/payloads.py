@@ -7,6 +7,7 @@ from pydantic import BaseModel
 class FetchSlugPayload(BaseModel):
     provider: str
     slug: str
+    batch_match_max_items: int | None = None
 
 
 class MatchPayload(BaseModel):
@@ -19,6 +20,7 @@ class GenerateCoverLetterPayload(BaseModel):
 
 class BatchMatchPayload(BaseModel):
     profile_id: uuid.UUID
+    max_items: int | None = None
 
 
 class MaintenancePayload(BaseModel):

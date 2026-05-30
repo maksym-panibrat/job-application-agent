@@ -74,4 +74,8 @@ async def test_cron_sync_enqueues_fetch_slug_work_rows(db_session):
     )
     assert len(rows) == 1
     assert rows[0].dedupe_key == "fetch-slug:greenhouse:co"
-    assert rows[0].payload == {"provider": "greenhouse", "slug": "co"}
+    assert rows[0].payload == {
+        "provider": "greenhouse",
+        "slug": "co",
+        "batch_match_max_items": 100,
+    }
