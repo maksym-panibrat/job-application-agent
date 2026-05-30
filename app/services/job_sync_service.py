@@ -23,6 +23,7 @@ from sqlalchemy import and_, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
+from app.config import get_settings
 from app.models.company import Company
 from app.models.slug_fetch import SlugFetch
 from app.models.user_profile import UserProfile
@@ -87,6 +88,7 @@ async def prune_and_enqueue(profile: UserProfile, session: AsyncSession) -> dict
     Returns the same summary shape as `sync_profile` but with `matched_now=0`,
     so callers can treat the two functions interchangeably for telemetry.
     """
+    settings = get_settings()
     pruned = await _prune_invalid_provider_slugs(profile, session)
 
     stale = await slug_registry_service.list_stale_for_profile(profile, session, ttl_hours=6)
@@ -95,7 +97,11 @@ async def prune_and_enqueue(profile: UserProfile, session: AsyncSession) -> dict
         row_id = await enqueue(
             session,
             job_type="fetch-slug",
-            payload=FetchSlugPayload(provider=provider, slug=slug).model_dump(),
+            payload=FetchSlugPayload(
+                provider=provider,
+                slug=slug,
+                batch_match_max_items=settings.batch_match_manual_sync_max_items,
+            ).model_dump(exclude_none=True),
             dedupe_key=f"fetch-slug:{provider}:{slug}",
         )
         if row_id is not None:
@@ -117,6 +123,7 @@ async def prune_and_enqueue(profile: UserProfile, session: AsyncSession) -> dict
 
 async def sync_active_profiles(session: AsyncSession) -> dict:
     """Cron/scheduler sweep: enqueue distinct stale provider slugs for active profiles."""
+    settings = get_settings()
     active_profiles = (
         (
             await session.execute(
@@ -148,7 +155,11 @@ async def sync_active_profiles(session: AsyncSession) -> dict:
         row_id = await enqueue(
             session,
             job_type="fetch-slug",
-            payload=FetchSlugPayload(provider=provider, slug=slug).model_dump(),
+            payload=FetchSlugPayload(
+                provider=provider,
+                slug=slug,
+                batch_match_max_items=settings.batch_match_cron_max_items,
+            ).model_dump(exclude_none=True),
             dedupe_key=f"fetch-slug:{provider}:{slug}",
         )
         if row_id is not None:

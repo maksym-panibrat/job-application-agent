@@ -1,5 +1,6 @@
 """Match service helpers for profile formatting and application listing."""
 
+import re
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, TypedDict
@@ -54,6 +55,223 @@ def deterministic_rejection_score(threshold: float) -> float:
     return max(0.0, min(0.29, threshold - 0.01))
 
 
+_HARD_MISMATCH_CONTRACT_TERMS = (
+    "internship",
+    "intern",
+    "temporary",
+    "temp",
+    "part-time",
+    "part time",
+    "contract",
+    "1099",
+    "commission-only",
+    "commission only",
+    "volunteer",
+    "unpaid",
+)
+
+_JUNIOR_TITLE_RE = re.compile(
+    r"\b(intern(ship)?|new grad|new-grad|graduate|campus|entry[- ]level|junior|jr\.?|associate)\b",
+    re.IGNORECASE,
+)
+
+_ROLE_FAMILY_TERMS: dict[str, tuple[str, ...]] = {
+    "engineering": (
+        "engineer",
+        "developer",
+        "software",
+        "backend",
+        "front end",
+        "frontend",
+        "full stack",
+        "fullstack",
+        "platform",
+        "infrastructure",
+        "sre",
+        "devops",
+        "data engineer",
+        "machine learning",
+        "ml engineer",
+        "ai engineer",
+        "security engineer",
+        "architect",
+    ),
+    "product": ("product manager", "product lead", "product owner"),
+    "design": ("designer", "design", "ux", "ui"),
+    "data": ("data scientist", "analyst", "analytics", "bi "),
+    "sales": (
+        "account executive",
+        "sales",
+        "business development",
+        "bdr",
+        "sdr",
+        "enterprise account",
+        "strategic account",
+        "revenue",
+        "quota",
+    ),
+    "customer_success": (
+        "customer success",
+        "solutions consultant",
+        "implementation consultant",
+        "support specialist",
+    ),
+    "recruiting": ("recruiter", "talent acquisition", "sourcer"),
+    "marketing": ("marketing", "growth manager", "content", "brand"),
+    "finance": ("finance", "accounting", "controller", "fp&a"),
+    "legal": ("counsel", "legal", "attorney", "paralegal"),
+    "operations": ("operations", "chief of staff", "program manager"),
+}
+
+_NON_TECH_ROLE_FAMILIES = {
+    "sales",
+    "customer_success",
+    "recruiting",
+    "marketing",
+    "finance",
+    "legal",
+}
+
+_ENGINEERING_SKILL_TERMS = (
+    "python",
+    "typescript",
+    "javascript",
+    "java",
+    "go",
+    "rust",
+    "postgres",
+    "kubernetes",
+    "docker",
+    "api",
+    "distributed",
+    "platform",
+    "backend",
+    "infrastructure",
+    "aws",
+    "gcp",
+    "azure",
+)
+
+
+def _normalized_text(*parts: str | None) -> str:
+    return " ".join(part or "" for part in parts).lower()
+
+
+def _contains_any(text: str, terms: tuple[str, ...]) -> bool:
+    return any(term in text for term in terms)
+
+
+def _contract_type_rejection(
+    profile: UserProfile,
+    job: Job,
+    threshold: float,
+) -> DeterministicRejectionFields | None:
+    _ = profile
+    text = _normalized_text(job.contract_type, job.title, job.description or job.description_raw)
+    term = next((term for term in _HARD_MISMATCH_CONTRACT_TERMS if term in text), None)
+    if term is None:
+        return None
+    gap = f"Non-target employment type: {term}"
+    return {
+        "score": deterministic_rejection_score(threshold),
+        "summary": "Deterministic mismatch: employment type",
+        "rationale": gap,
+        "strengths": [],
+        "gaps": [gap],
+        "policy": "contract_type",
+    }
+
+
+def _seniority_rejection(
+    profile: UserProfile,
+    job: Job,
+    threshold: float,
+) -> DeterministicRejectionFields | None:
+    profile_seniority = (profile.seniority or "").lower()
+    if not any(
+        seniority in profile_seniority
+        for seniority in ("senior", "staff", "principal")
+    ):
+        return None
+    match = _JUNIOR_TITLE_RE.search(job.title or "")
+    if match is None:
+        return None
+    gap = f"Role seniority is {match.group(0).lower()}, below target seniority"
+    return {
+        "score": deterministic_rejection_score(threshold),
+        "summary": "Deterministic mismatch: seniority",
+        "rationale": gap,
+        "strengths": [],
+        "gaps": [gap],
+        "policy": "seniority",
+    }
+
+
+def role_families_for_text(text: str) -> set[str]:
+    lowered = text.lower()
+    return {
+        family
+        for family, terms in _ROLE_FAMILY_TERMS.items()
+        if _contains_any(lowered, terms)
+    }
+
+
+def _profile_role_families(profile: UserProfile) -> set[str]:
+    return role_families_for_text(" ".join(profile.target_roles or []))
+
+
+def _role_family_rejection(
+    profile: UserProfile,
+    job: Job,
+    threshold: float,
+) -> DeterministicRejectionFields | None:
+    target_families = _profile_role_families(profile)
+    if not target_families:
+        return None
+    job_families = role_families_for_text(job.title or "")
+    if not job_families:
+        return None
+    if "engineering" in target_families and job_families <= _NON_TECH_ROLE_FAMILIES:
+        gap = "Job title is outside target role families"
+        return {
+            "score": deterministic_rejection_score(threshold),
+            "summary": "Deterministic mismatch: role family",
+            "rationale": gap,
+            "strengths": [],
+            "gaps": [gap],
+            "policy": "role_family",
+        }
+    return None
+
+
+def candidate_priority_score(profile: UserProfile, job: Job) -> float:
+    """Cheap ordering score for deciding which uncertain jobs deserve LLM spend first."""
+    score = 0.0
+    target_families = _profile_role_families(profile)
+    job_families = role_families_for_text(job.title or "")
+    if target_families and job_families:
+        score += 4.0 if target_families & job_families else -2.0
+
+    profile_tokens = set(
+        re.findall(r"[a-z0-9+#.]{3,}", " ".join(profile.target_roles or []).lower())
+    )
+    title_tokens = set(re.findall(r"[a-z0-9+#.]{3,}", (job.title or "").lower()))
+    score += min(2.0, len(profile_tokens & title_tokens) * 0.5)
+
+    if (job.workplace_type or "").lower() == "remote" and profile.remote_ok:
+        score += 1.0
+    location_text = (job.location or "").lower()
+    if any((loc or "").lower() in location_text for loc in profile.target_locations or []):
+        score += 1.0
+
+    description_text = (job.description or job.description_raw or "").lower()
+    skill_hits = sum(1 for term in _ENGINEERING_SKILL_TERMS if term in description_text)
+    score += min(2.0, skill_hits * 0.25)
+    if job.contract_type and "full" in job.contract_type.lower():
+        score += 0.5
+    return score
+
+
 def deterministic_rejection_fields(
     profile: UserProfile,
     job: Job,
@@ -82,6 +300,18 @@ def deterministic_rejection_fields(
             "gaps": [gap],
             "policy": "remote_office",
         }
+
+    contract_verdict = _contract_type_rejection(profile, job, threshold)
+    if contract_verdict is not None:
+        return contract_verdict
+
+    seniority_verdict = _seniority_rejection(profile, job, threshold)
+    if seniority_verdict is not None:
+        return seniority_verdict
+
+    role_family_verdict = _role_family_rejection(profile, job, threshold)
+    if role_family_verdict is not None:
+        return role_family_verdict
 
     return None
 

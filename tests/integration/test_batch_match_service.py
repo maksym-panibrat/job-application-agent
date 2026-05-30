@@ -97,6 +97,8 @@ async def add_unscored_app_for_profile(
     profile: UserProfile,
     *,
     title: str = "Backend Engineer",
+    description: str = "Build Python APIs for marketplace systems.",
+    created_at: datetime | None = None,
 ) -> Application:
     company_id = profile.target_company_ids[0]
     job = Job(
@@ -107,7 +109,7 @@ async def add_unscored_app_for_profile(
         company_id=company_id,
         location="Remote - United States",
         workplace_type="remote",
-        description="Build Python APIs for marketplace systems.",
+        description=description,
         apply_url=f"https://example.com/job/{uuid.uuid4()}",
         is_active=True,
     )
@@ -122,6 +124,7 @@ async def add_unscored_app_for_profile(
         match_score=None,
         match_strengths=[],
         match_gaps=[],
+        created_at=created_at or datetime.now(UTC),
     )
     db_session.add(app)
     await db_session.commit()
@@ -173,6 +176,61 @@ async def test_build_submits_batch_for_profile_unscored_apps(db_session):
     items = await _batch_items(db_session)
     assert len(items) == 3
     assert {item.application_id for item in items} == {app.id for app in apps}
+
+
+@pytest.mark.asyncio
+async def test_build_prioritizes_high_signal_survivors_before_newer_weak_matches(
+    db_session,
+    monkeypatch,
+):
+    import app.config as cfg
+    from app.services.batch_match_provider import FakeBatchMatchProvider
+    from app.services.batch_match_service import run_batch_match_tick
+
+    monkeypatch.setenv("BATCH_MATCH_MAX_ITEMS_PER_BATCH", "2")
+    monkeypatch.setattr(cfg, "_settings", None)
+    profile, _ = await seed_profile_with_unscored_apps(db_session, count=0)
+    profile.target_roles = ["Senior Backend Engineer"]
+    profile.seniority = "senior"
+    db_session.add(profile)
+    await db_session.commit()
+
+    weak_newer = await add_unscored_app_for_profile(
+        db_session,
+        profile,
+        title="Backend Developer",
+        description="Maintain internal tools and update operational dashboards.",
+        created_at=datetime.now(UTC),
+    )
+    weak_second = await add_unscored_app_for_profile(
+        db_session,
+        profile,
+        title="Software Engineer",
+        description="Support legacy services and handle routine maintenance requests.",
+        created_at=datetime.now(UTC) - timedelta(hours=1),
+    )
+    strong_older = await add_unscored_app_for_profile(
+        db_session,
+        profile,
+        title="Senior Backend Engineer",
+        description="Build Python APIs, PostgreSQL services, and distributed platform systems.",
+        created_at=datetime.now(UTC) - timedelta(days=1),
+    )
+
+    provider = FakeBatchMatchProvider(ready=False)
+
+    result = await run_batch_match_tick(db_session, profile_id=profile.id, provider=provider)
+
+    assert result.selected == 3
+    assert result.submitted == 2
+    submitted_ids = [
+        job["application_id"]
+        for request in provider.submitted_requests
+        for job in request["jobs"]
+    ]
+    assert str(strong_older.id) in submitted_ids
+    assert len(submitted_ids) == 2
+    assert str(weak_newer.id) not in submitted_ids or str(weak_second.id) not in submitted_ids
 
 
 @pytest.mark.asyncio
@@ -465,14 +523,15 @@ async def test_duplicate_provider_result_ids_mark_request_retryable_without_part
     result = await run_batch_match_tick(db_session, profile_id=profile.id, provider=second_provider)
 
     assert result.imported == 0
-    assert result.retryable_failed == 2
+    assert result.retryable_failed == 0
+    assert result.terminal_failed == 2
     for app in apps:
         refreshed = await db_session.get(Application, app.id)
         assert refreshed is not None
         assert refreshed.match_score is None
 
     items = await _batch_items_for_batch(db_session, original_batch.id)
-    assert {item.status for item in items} == {"retryable_failed"}
+    assert {item.status for item in items} == {"terminal_failed"}
     assert {item.error for item in items} == {"provider returned duplicate application_id"}
 
 
@@ -604,14 +663,15 @@ async def test_unknown_provider_request_key_marks_batch_retryable_without_partia
     result = await run_batch_match_tick(db_session, profile_id=profile.id, provider=second_provider)
 
     assert result.imported == 0
-    assert result.retryable_failed == 2
+    assert result.retryable_failed == 0
+    assert result.terminal_failed == 2
     for app in apps:
         refreshed = await db_session.get(Application, app.id)
         assert refreshed is not None
         assert refreshed.match_score is None
 
     items = await _batch_items_for_batch(db_session, original_batch.id)
-    assert {item.status for item in items} == {"retryable_failed"}
+    assert {item.status for item in items} == {"terminal_failed"}
     assert {item.error for item in items} == {"provider returned unknown request_key"}
 
 
@@ -670,14 +730,15 @@ async def test_duplicate_provider_result_ids_split_across_requests_mark_retryabl
     result = await run_batch_match_tick(db_session, profile_id=profile.id, provider=second_provider)
 
     assert result.imported == 0
-    assert result.retryable_failed == 2
+    assert result.retryable_failed == 0
+    assert result.terminal_failed == 2
     for app in apps:
         refreshed = await db_session.get(Application, app.id)
         assert refreshed is not None
         assert refreshed.match_score is None
 
     items = await _batch_items_for_batch(db_session, original_batch.id)
-    assert {item.status for item in items} == {"retryable_failed"}
+    assert {item.status for item in items} == {"terminal_failed"}
     assert {item.error for item in items} == {"provider returned duplicate application_id"}
 
 
@@ -736,14 +797,15 @@ async def test_duplicate_provider_request_blocks_mark_retryable_without_partial_
     result = await run_batch_match_tick(db_session, profile_id=profile.id, provider=second_provider)
 
     assert result.imported == 0
-    assert result.retryable_failed == 2
+    assert result.retryable_failed == 0
+    assert result.terminal_failed == 2
     for app in apps:
         refreshed = await db_session.get(Application, app.id)
         assert refreshed is not None
         assert refreshed.match_score is None
 
     items = await _batch_items_for_batch(db_session, original_batch.id)
-    assert {item.status for item in items} == {"retryable_failed"}
+    assert {item.status for item in items} == {"terminal_failed"}
     assert {item.error for item in items} == {"provider returned duplicate request_key"}
 
 

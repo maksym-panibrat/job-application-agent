@@ -24,20 +24,23 @@ def _make_profile() -> UserProfile:
 def _make_job(
     job_id: uuid.UUID | None = None,
     *,
+    title: str = "Software Engineer",
     description: str = "A great job.",
     location: str | None = "Remote",
     workplace_type: str | None = "remote",
+    contract_type: str | None = None,
 ) -> Job:
     return Job(
         id=job_id or uuid.uuid4(),
         source="adzuna",
         external_id=str(uuid.uuid4()),
-        title="Software Engineer",
+        title=title,
         company_name="Acme Corp",
         apply_url="https://example.com/apply",
         location=location,
         workplace_type=workplace_type,
         description=description,
+        contract_type=contract_type,
     )
 
 
@@ -90,6 +93,88 @@ def test_remote_policy_does_not_cap_matching_target_location():
 
     assert adjusted.score == 0.92
     assert adjusted.gaps == original_gaps
+
+
+def test_contract_type_hard_rejects_internship_for_senior_profile():
+    from app.services.match_service import deterministic_rejection_fields
+
+    profile = _make_profile()
+    job = _make_job(
+        title="Software Engineering Intern",
+        contract_type="internship",
+        location="Remote - United States",
+    )
+
+    fields = deterministic_rejection_fields(profile, job, 0.65)
+
+    assert fields is not None
+    assert fields["policy"] == "contract_type"
+    assert fields["score"] < 0.65
+    assert "internship" in fields["gaps"][0].lower()
+
+
+def test_seniority_hard_rejects_new_grad_for_senior_profile():
+    from app.services.match_service import deterministic_rejection_fields
+
+    profile = _make_profile()
+    job = _make_job(title="New Grad Software Engineer", location="Remote - United States")
+
+    fields = deterministic_rejection_fields(profile, job, 0.65)
+
+    assert fields is not None
+    assert fields["policy"] == "seniority"
+    assert fields["score"] < 0.65
+    assert "new grad" in fields["gaps"][0].lower()
+
+
+def test_role_family_hard_rejects_sales_role_for_engineering_profile():
+    from app.services.match_service import deterministic_rejection_fields
+
+    profile = _make_profile()
+    profile.target_roles = ["Senior Backend Engineer", "Platform Engineer"]
+    job = _make_job(
+        title="Enterprise Account Executive",
+        description="Own quota and close enterprise SaaS deals.",
+        location="Remote - United States",
+    )
+
+    fields = deterministic_rejection_fields(profile, job, 0.65)
+
+    assert fields is not None
+    assert fields["policy"] == "role_family"
+    assert fields["score"] < 0.65
+    assert "outside target role families" in fields["gaps"][0]
+
+
+def test_candidate_priority_scores_strong_engineering_jobs_above_weak_matches():
+    from app.services.match_service import candidate_priority_score
+
+    profile = _make_profile()
+    profile.target_roles = ["Senior Backend Engineer"]
+    profile.target_locations = ["San Francisco"]
+    strong = _make_job(
+        title="Senior Backend Engineer",
+        description="Build Python APIs, distributed systems, PostgreSQL, and platform services.",
+        location="Remote - United States",
+        workplace_type="remote",
+    )
+    weak = _make_job(
+        title="Operations Analyst",
+        description="Coordinate internal processes and produce spreadsheets.",
+        location="Remote - United States",
+        workplace_type="remote",
+    )
+
+    assert candidate_priority_score(profile, strong) > candidate_priority_score(profile, weak)
+
+
+def test_provider_correlation_errors_are_terminal_to_prevent_paid_retry_loops():
+    from app.services.batch_match_service import _is_terminal_provider_correlation_error
+
+    assert _is_terminal_provider_correlation_error("provider returned unknown application_id")
+    assert _is_terminal_provider_correlation_error("provider returned duplicate application_id")
+    assert _is_terminal_provider_correlation_error("provider returned duplicate request_key")
+    assert _is_terminal_provider_correlation_error("provider returned unknown request_key")
 
 
 @pytest.mark.asyncio

@@ -41,6 +41,7 @@ from app.services.batch_match_provider import (
 from app.services.match_service import (
     DISPLAY_JOB_MAX_AGE_DAYS,
     DeterministicRejectionFields,
+    candidate_priority_score,
     deterministic_rejection_fields,
     format_profile_text,
 )
@@ -65,7 +66,12 @@ class _ImportCounters:
     terminal_failed: int = 0
 
 
-_TERMINAL_PROVIDER_CORRELATION_ERRORS = {"provider returned unknown application_id"}
+_TERMINAL_PROVIDER_CORRELATION_ERRORS = {
+    "provider returned unknown application_id",
+    "provider returned duplicate application_id",
+    "provider returned duplicate request_key",
+    "provider returned unknown request_key",
+}
 
 
 async def run_batch_match_tick(
@@ -73,6 +79,7 @@ async def run_batch_match_tick(
     *,
     profile_id: uuid.UUID,
     provider: BatchMatchProvider,
+    max_items: int | None = None,
 ) -> BatchMatchTickResult:
     active = await _get_active_batch(session, profile_id)
     if active is not None and active.status in (
@@ -88,6 +95,7 @@ async def run_batch_match_tick(
             session,
             profile_id=profile_id,
             provider=provider,
+            max_items=max_items,
         )
         return _combine_tick_results(import_result, build_result)
     if active is not None and active.status == BATCH_STATUS_BUILDING:
@@ -102,12 +110,18 @@ async def run_batch_match_tick(
                 session,
                 profile_id=profile_id,
                 provider=provider,
+                max_items=max_items,
             )
             return _combine_tick_results(fail_result, build_result)
         return BatchMatchTickResult(requeued=True)
     if active is not None:
         return BatchMatchTickResult(requeued=True)
-    return await _build_and_submit(session, profile_id=profile_id, provider=provider)
+    return await _build_and_submit(
+        session,
+        profile_id=profile_id,
+        provider=provider,
+        max_items=max_items,
+    )
 
 
 def _is_stale_building_batch(batch: LLMMatchBatch) -> bool:
@@ -155,16 +169,22 @@ async def _build_and_submit(
     *,
     profile_id: uuid.UUID,
     provider: BatchMatchProvider,
+    max_items: int | None = None,
 ) -> BatchMatchTickResult:
     settings = get_settings()
+    effective_max_items = max_items or settings.batch_match_max_items_per_batch
     profile = await session.get(UserProfile, profile_id)
     if profile is None:
         return BatchMatchTickResult()
 
+    candidate_pool_limit = max(
+        effective_max_items,
+        effective_max_items * max(1, settings.batch_match_candidate_pool_multiplier),
+    )
     rows = await _select_unscored_application_rows(
         session,
         profile_id=profile_id,
-        limit=settings.batch_match_max_items_per_batch,
+        limit=candidate_pool_limit,
     )
     selected = len(rows)
     if not rows:
@@ -177,6 +197,13 @@ async def _build_and_submit(
             deterministic_rejected += 1
             continue
         survivors.append(_job_context(app, job))
+
+    survivors = _prioritize_batch_jobs(
+        profile,
+        rows_by_application_id={app.id: job for app, job in rows},
+        survivors=survivors,
+        limit=effective_max_items,
+    )
 
     if not survivors:
         await session.commit()
@@ -381,6 +408,25 @@ async def _create_batch_with_items(
     return batch
 
 
+def _prioritize_batch_jobs(
+    profile: UserProfile,
+    *,
+    rows_by_application_id: dict[uuid.UUID, Job],
+    survivors: list[BatchJobContext],
+    limit: int,
+) -> list[BatchJobContext]:
+    if limit < 1 or len(survivors) <= limit:
+        return survivors
+    return sorted(
+        survivors,
+        key=lambda survivor: candidate_priority_score(
+            profile,
+            rows_by_application_id[survivor.application_id],
+        ),
+        reverse=True,
+    )[:limit]
+
+
 def _apply_deterministic_reject_if_needed(
     app: Application,
     profile: UserProfile,
@@ -449,10 +495,16 @@ async def _import_provider_output(
         _provider_output_correlation_errors(items, output)
     )
     if batch_correlation_error is not None:
-        counters.retryable_failed += _mark_items_retryable(
-            items.values(),
-            batch_correlation_error,
-        )
+        if _is_terminal_provider_correlation_error(batch_correlation_error):
+            counters.terminal_failed += _mark_items_terminal(
+                items.values(),
+                batch_correlation_error,
+            )
+        else:
+            counters.retryable_failed += _mark_items_retryable(
+                items.values(),
+                batch_correlation_error,
+            )
         return counters
     for request_key, error in request_correlation_errors.items():
         request_items = _items_by_request_key(items, request_key)
