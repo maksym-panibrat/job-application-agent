@@ -38,8 +38,8 @@ def test_batch_matching_defaults(monkeypatch):
     cfg._settings = None
     settings = cfg.get_settings()
 
-    assert settings.batch_match_enabled is False
-    assert settings.batch_match_dry_run is True
+    assert settings.batch_match_enabled is True
+    assert settings.batch_match_dry_run is False
     assert settings.batch_match_provider == "fake"
     assert settings.batch_match_prompt_version == "batch-match-v1"
     assert settings.batch_match_max_apps_per_request == 10

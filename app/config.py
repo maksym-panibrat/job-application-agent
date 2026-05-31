@@ -25,8 +25,8 @@ class Settings(BaseSettings):
     feedback_webhook_url: SecretStr | None = None
     feedback_webhook_timeout_seconds: float = 3.0
     queue_depth_emit_interval_s: int = 60
-    batch_match_enabled: bool = False
-    batch_match_dry_run: bool = True
+    batch_match_enabled: bool = True
+    batch_match_dry_run: bool = False
     batch_match_provider: str = "fake"
     batch_match_prompt_version: str = "batch-match-v1"
     batch_match_max_apps_per_request: int = 10
