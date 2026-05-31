@@ -136,6 +136,14 @@ async def _batch_items(db_session) -> list[LLMMatchBatchItem]:
     return list((await db_session.execute(select(LLMMatchBatchItem))).scalars().all())
 
 
+def _submitted_app_ids(provider) -> list[uuid.UUID]:
+    return [
+        uuid.UUID(job["application_id"])
+        for request in provider.submitted_requests
+        for job in request["jobs"]
+    ]
+
+
 async def _batch_items_for_batch(
     db_session,
     batch_id: uuid.UUID,
@@ -403,13 +411,13 @@ async def test_import_partial_provider_output(db_session):
     assert result.imported == 1
     assert result.retryable_failed == 1
 
-    imported = await db_session.get(Application, apps[0].id)
-    retryable = await db_session.get(Application, apps[1].id)
-    assert imported is not None
-    assert retryable is not None
-    assert imported.match_score == 0.8
-    assert imported.match_summary == "Backend API role"
-    assert retryable.match_score is None
+    imported_app = await db_session.get(Application, _submitted_app_ids(first_provider)[0])
+    retryable_app = await db_session.get(Application, _submitted_app_ids(first_provider)[1])
+    assert imported_app is not None
+    assert retryable_app is not None
+    assert imported_app.match_score == 0.8
+    assert imported_app.match_summary == "Backend API role"
+    assert retryable_app.match_score is None
 
 
 @pytest.mark.asyncio
@@ -474,7 +482,7 @@ async def test_ready_import_submits_remaining_unscored_apps_in_same_tick(db_sess
 
 
 @pytest.mark.asyncio
-async def test_duplicate_provider_result_ids_mark_request_retryable_without_partial_import(
+async def test_duplicate_provider_result_ids_import_by_request_position(
     db_session,
 ):
     from app.services.batch_match_provider import (
@@ -488,8 +496,6 @@ async def test_duplicate_provider_result_ids_mark_request_retryable_without_part
     profile, apps = await seed_profile_with_unscored_apps(db_session, count=2)
     first_provider = FakeBatchMatchProvider(ready=False, provider_batch_id="batch-1")
     await run_batch_match_tick(db_session, profile_id=profile.id, provider=first_provider)
-    original_batch = (await db_session.execute(select(LLMMatchBatch))).scalar_one()
-
     second_provider = FakeBatchMatchProvider(
         ready=True,
         provider_batch_id="batch-1",
@@ -522,21 +528,95 @@ async def test_duplicate_provider_result_ids_mark_request_retryable_without_part
 
     result = await run_batch_match_tick(db_session, profile_id=profile.id, provider=second_provider)
 
-    assert result.imported == 0
+    assert result.imported == 2
     assert result.retryable_failed == 0
-    assert result.terminal_failed == 2
+    assert result.terminal_failed == 0
+    expected_scores_by_app_id = dict(
+        zip(_submitted_app_ids(first_provider), (0.8, 0.7), strict=True)
+    )
     for app in apps:
         refreshed = await db_session.get(Application, app.id)
         assert refreshed is not None
-        assert refreshed.match_score is None
-
-    items = await _batch_items_for_batch(db_session, original_batch.id)
-    assert {item.status for item in items} == {"terminal_failed"}
-    assert {item.error for item in items} == {"provider returned duplicate application_id"}
+        assert refreshed.match_score == expected_scores_by_app_id[app.id]
 
 
 @pytest.mark.asyncio
-async def test_unknown_provider_result_id_marks_request_terminal_without_retry_loop(
+async def test_corrupted_provider_result_ids_import_by_request_position(db_session):
+    from app.services.batch_match_provider import (
+        FakeBatchMatchProvider,
+        ProviderBatchOutput,
+        ProviderJobResult,
+        ProviderRequestResult,
+    )
+    from app.services.batch_match_service import run_batch_match_tick
+
+    profile, apps = await seed_profile_with_unscored_apps(db_session, count=3)
+    first_provider = FakeBatchMatchProvider(ready=False, provider_batch_id="batch-1")
+    await run_batch_match_tick(db_session, profile_id=profile.id, provider=first_provider)
+
+    second_provider = FakeBatchMatchProvider(
+        ready=True,
+        provider_batch_id="batch-1",
+        output=ProviderBatchOutput(
+            requests=[
+                ProviderRequestResult(
+                    request_key="request-0001",
+                    results=[
+                        ProviderJobResult(
+                            application_id=str(uuid.uuid4()),
+                            score=0.8,
+                            summary="First result",
+                            rationale="First by position",
+                            strengths=["Python"],
+                            gaps=[],
+                        ),
+                        ProviderJobResult(
+                            application_id=str(uuid.uuid4()),
+                            score=0.7,
+                            summary="Second result",
+                            rationale="Second by position",
+                            strengths=["APIs"],
+                            gaps=[],
+                        ),
+                        ProviderJobResult(
+                            application_id="not-a-uuid",
+                            score=0.6,
+                            summary="Third result",
+                            rationale="Third by position",
+                            strengths=["Platform"],
+                            gaps=[],
+                        ),
+                    ],
+                )
+            ]
+        ),
+    )
+
+    result = await run_batch_match_tick(db_session, profile_id=profile.id, provider=second_provider)
+
+    assert result.imported == 3
+    assert result.retryable_failed == 0
+    assert result.terminal_failed == 0
+    expected_by_app_id = {
+        uuid.UUID(job["application_id"]): (0.8 - index * 0.1, summary)
+        for index, (job, summary) in enumerate(
+            zip(
+                first_provider.submitted_requests[0]["jobs"],
+                ["First result", "Second result", "Third result"],
+                strict=True,
+            )
+        )
+    }
+    for app in apps:
+        refreshed = await db_session.get(Application, app.id)
+        assert refreshed is not None
+        expected_score, expected_summary = expected_by_app_id[app.id]
+        assert refreshed.match_score == pytest.approx(expected_score)
+        assert refreshed.match_summary == expected_summary
+
+
+@pytest.mark.asyncio
+async def test_unknown_provider_result_id_imports_by_request_position(
     db_session,
 ):
     from app.services.batch_match_provider import (
@@ -550,8 +630,6 @@ async def test_unknown_provider_result_id_marks_request_terminal_without_retry_l
     profile, apps = await seed_profile_with_unscored_apps(db_session, count=2)
     first_provider = FakeBatchMatchProvider(ready=False, provider_batch_id="batch-1")
     await run_batch_match_tick(db_session, profile_id=profile.id, provider=first_provider)
-    original_batch = (await db_session.execute(select(LLMMatchBatch))).scalar_one()
-
     second_provider = FakeBatchMatchProvider(
         ready=True,
         provider_batch_id="batch-1",
@@ -584,28 +662,16 @@ async def test_unknown_provider_result_id_marks_request_terminal_without_retry_l
 
     result = await run_batch_match_tick(db_session, profile_id=profile.id, provider=second_provider)
 
-    assert result.imported == 0
+    assert result.imported == 2
     assert result.retryable_failed == 0
-    assert result.terminal_failed == 2
+    assert result.terminal_failed == 0
+    expected_scores_by_app_id = dict(
+        zip(_submitted_app_ids(first_provider), (0.8, 0.7), strict=True)
+    )
     for app in apps:
         refreshed = await db_session.get(Application, app.id)
         assert refreshed is not None
-        assert refreshed.match_score is None
-
-    items = await _batch_items_for_batch(db_session, original_batch.id)
-    assert {item.status for item in items} == {"terminal_failed"}
-    assert {item.error for item in items} == {"provider returned unknown application_id"}
-
-    retry_provider = FakeBatchMatchProvider(ready=False, provider_batch_id="batch-2")
-    retry_result = await run_batch_match_tick(
-        db_session,
-        profile_id=profile.id,
-        provider=retry_provider,
-    )
-
-    assert retry_result.selected == 0
-    assert retry_result.submitted == 0
-    assert retry_provider.submitted_requests == []
+        assert refreshed.match_score == expected_scores_by_app_id[app.id]
 
 
 @pytest.mark.asyncio
@@ -739,7 +805,7 @@ async def test_duplicate_provider_result_ids_split_across_requests_mark_retryabl
 
     items = await _batch_items_for_batch(db_session, original_batch.id)
     assert {item.status for item in items} == {"terminal_failed"}
-    assert {item.error for item in items} == {"provider returned duplicate application_id"}
+    assert {item.error for item in items} == {"provider returned duplicate request_key"}
 
 
 @pytest.mark.asyncio

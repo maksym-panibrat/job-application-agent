@@ -62,6 +62,7 @@ async def test_llm_match_batch_items_table_exists(db_session):
         "batch_id": ("uuid", "NO"),
         "application_id": ("uuid", "NO"),
         "provider_request_key": ("text", "NO"),
+        "provider_request_position": ("integer", "NO"),
         "request_hash": ("text", "NO"),
         "status": ("text", "NO"),
         "score": ("double precision", "YES"),
@@ -95,6 +96,7 @@ async def test_llm_match_batch_indexes_exist(db_session):
     assert "ix_llm_match_batches_next_poll_at" in by_name
     assert "uq_llm_match_batch_items_active_attempt" in by_name
     assert "ix_llm_match_batch_items_batch_status" in by_name
+    assert "ix_llm_match_batch_items_request_position" in by_name
 
     batch_unique_index = by_name["uq_llm_match_batches_one_active_per_profile"].upper()
     assert "CREATE UNIQUE INDEX" in batch_unique_index
@@ -139,6 +141,31 @@ def test_llm_match_batch_migration_file_matches_schema_contract():
     assert "ix_llm_match_batch_items_batch_status" in source
     assert 'server_default=sa.text("now()")' in source
     assert 'server_default=sa.text("\'{}\'::text[]")' in source
+
+
+def test_llm_match_batch_request_position_migration_file_matches_schema_contract():
+    migration_path = (
+        Path(__file__).parents[2]
+        / "alembic"
+        / "versions"
+        / "c9d0e1f2a3b4_add_batch_item_request_position.py"
+    )
+    spec = importlib.util.spec_from_file_location(
+        "c9d0e1f2a3b4_add_batch_item_request_position",
+        migration_path,
+    )
+    assert spec is not None
+    assert spec.loader is not None
+    migration = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(migration)
+
+    assert migration.revision == "c9d0e1f2a3b4"
+    assert migration.down_revision == "b7c8d9e0f1a2"
+
+    source = migration_path.read_text()
+    assert "provider_request_position" in source
+    assert "row_number() OVER" in source
+    assert "ix_llm_match_batch_items_request_position" in source
 
 
 def test_llm_match_batch_model_timestamp_defaults_match_migration():

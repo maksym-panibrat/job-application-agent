@@ -391,12 +391,13 @@ async def _create_batch_with_items(
     session.add(batch)
     await session.flush()
     for group in groups:
-        for job in group.jobs:
+        for position, job in enumerate(group.jobs):
             session.add(
                 LLMMatchBatchItem(
                     batch_id=batch.id,
                     application_id=job.application_id,
                     provider_request_key=group.request_key,
+                    provider_request_position=position,
                     request_hash=build_request_hash(
                         prompt_version=settings.batch_match_prompt_version,
                         model=settings.llm_matching_model,
@@ -542,9 +543,8 @@ async def _import_provider_output(
                         counters.retryable_failed += 1
                     seen_item_ids.add(item.id)
             continue
-        for result in request.results:
-            item = _find_result_item(items, request.request_key, result)
-            if item is None or item.status != ITEM_STATUS_SUBMITTED:
+        for item, result in zip(request_items, request.results, strict=True):
+            if item.status != ITEM_STATUS_SUBMITTED:
                 continue
             seen_item_ids.add(item.id)
             await _import_result_for_item(session, item, result, counters)
@@ -561,7 +561,13 @@ async def _items_by_provider_key(
     batch_id: uuid.UUID,
 ) -> dict[tuple[str, uuid.UUID], LLMMatchBatchItem]:
     result = await session.execute(
-        select(LLMMatchBatchItem).where(LLMMatchBatchItem.batch_id == batch_id)
+        select(LLMMatchBatchItem)
+        .where(LLMMatchBatchItem.batch_id == batch_id)
+        .order_by(
+            col(LLMMatchBatchItem.provider_request_key).asc(),
+            col(LLMMatchBatchItem.provider_request_position).asc(),
+            col(LLMMatchBatchItem.created_at).asc(),
+        )
     )
     return {
         (item.provider_request_key, item.application_id): item
@@ -573,7 +579,10 @@ def _items_by_request_key(
     items: dict[tuple[str, uuid.UUID], LLMMatchBatchItem],
     request_key: str,
 ) -> list[LLMMatchBatchItem]:
-    return [item for (key, _), item in items.items() if key == request_key]
+    return sorted(
+        [item for (key, _), item in items.items() if key == request_key],
+        key=lambda item: (item.provider_request_position, item.created_at),
+    )
 
 
 def _provider_output_correlation_errors(
@@ -586,7 +595,6 @@ def _provider_output_correlation_errors(
 
     request_errors: dict[str, str] = {}
     seen_request_keys: set[str] = set()
-    seen_results: set[tuple[str, uuid.UUID]] = set()
     for request in output.requests:
         expected_application_ids = request_application_ids.get(request.request_key)
         if expected_application_ids is None:
@@ -594,29 +602,6 @@ def _provider_output_correlation_errors(
         repeated_request_key = request.request_key in seen_request_keys
         seen_request_keys.add(request.request_key)
 
-        for result in request.results:
-            try:
-                application_id = uuid.UUID(str(getattr(result, "application_id", "")))
-            except (TypeError, ValueError):
-                request_errors.setdefault(
-                    request.request_key,
-                    "provider returned unknown application_id",
-                )
-                continue
-            if application_id not in expected_application_ids:
-                request_errors.setdefault(
-                    request.request_key,
-                    "provider returned unknown application_id",
-                )
-                continue
-            seen_key = (request.request_key, application_id)
-            if seen_key in seen_results:
-                request_errors.setdefault(
-                    request.request_key,
-                    "provider returned duplicate application_id",
-                )
-                continue
-            seen_results.add(seen_key)
         if repeated_request_key and request.request_key not in request_errors:
             request_errors[request.request_key] = "provider returned duplicate request_key"
     return None, request_errors
@@ -626,31 +611,9 @@ def _request_correlation_error(
     request_items: list[LLMMatchBatchItem],
     results: list[ProviderJobResult],
 ) -> str | None:
-    request_application_ids = {item.application_id for item in request_items}
-    seen_application_ids: set[uuid.UUID] = set()
-    for result in results:
-        try:
-            application_id = uuid.UUID(str(getattr(result, "application_id", "")))
-        except (TypeError, ValueError):
-            return "provider returned unknown application_id"
-        if application_id not in request_application_ids:
-            return "provider returned unknown application_id"
-        if application_id in seen_application_ids:
-            return "provider returned duplicate application_id"
-        seen_application_ids.add(application_id)
+    if len(results) != len(request_items):
+        return "provider result count mismatch"
     return None
-
-
-def _find_result_item(
-    items: dict[tuple[str, uuid.UUID], LLMMatchBatchItem],
-    request_key: str,
-    result: ProviderJobResult,
-) -> LLMMatchBatchItem | None:
-    try:
-        application_id = uuid.UUID(str(getattr(result, "application_id", "")))
-    except (TypeError, ValueError):
-        return None
-    return items.get((request_key, application_id))
 
 
 async def _import_result_for_item(

@@ -66,6 +66,8 @@ def test_build_gemini_batch_request_prompt_contains_profile_and_application_ids(
     assert "allowed_application_ids" in prompt
     assert "Copy it exactly" in prompt
     assert "Do not invent, shorten, normalize, or replace application_id" in prompt
+    assert "same order as the JOBS array" in prompt
+    assert "maps results to applications by array position" in prompt
     assert "top-level JSON object" in prompt
     assert '"results"' in prompt
     assert "exactly one result per application_id" in prompt

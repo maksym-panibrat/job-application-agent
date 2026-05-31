@@ -90,6 +90,10 @@ class LLMMatchBatchItem(SQLModel, table=True):
     batch_id: uuid.UUID = Field(foreign_key="llm_match_batches.id")
     application_id: uuid.UUID = Field(foreign_key="applications.id")
     provider_request_key: str = Field(sa_column=Column(sa.Text, nullable=False))
+    provider_request_position: int = Field(
+        default=0,
+        sa_column=Column(sa.Integer, nullable=False, server_default=sa.text("0")),
+    )
     request_hash: str = Field(sa_column=Column(sa.Text, nullable=False))
     status: str = Field(
         default=ITEM_STATUS_SUBMITTED,
@@ -145,4 +149,10 @@ class LLMMatchBatchItem(SQLModel, table=True):
             postgresql_where=sa.text("status = 'submitted'"),
         ),
         sa.Index("ix_llm_match_batch_items_batch_status", "batch_id", "status"),
+        sa.Index(
+            "ix_llm_match_batch_items_request_position",
+            "batch_id",
+            "provider_request_key",
+            "provider_request_position",
+        ),
     )

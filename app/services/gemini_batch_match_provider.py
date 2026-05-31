@@ -108,8 +108,9 @@ def _inline_request(request: dict) -> dict:
             # Do not send response_json_schema here. In real Gemini batch canaries,
             # constrained decoding turned the nested results schema into malformed
             # JSON with repeated `results` keys and string field names instead of
-            # result objects. The prompt already carries the allowed IDs, and the
-            # importer validates/correlates every result before writing scores.
+            # result objects. The prompt asks for one result per input job in
+            # order; the importer correlates by result index instead of trusting
+            # model-copied application IDs.
         },
         "metadata": {"request_key": payload["key"]},
     }
@@ -277,7 +278,11 @@ Return only a top-level JSON object with this exact shape:
 allowed_application_ids:
 {application_ids_json}
 
-Include exactly one result per application_id from allowed_application_ids.
+Include exactly one result per input job, in the same order as the JOBS array.
+The importer maps results to applications by array position, so do not reorder,
+sort, skip, or add results. application_id is retained only for diagnostics and
+may be ignored by the importer.
+Also include exactly one result per application_id from allowed_application_ids.
 For application_id, treat the value as an opaque identifier. Copy it exactly from """
         f"""allowed_application_ids. Do not invent, shorten, normalize, or replace """
         f"""application_id. Do not use a job title, company name, array index, """
