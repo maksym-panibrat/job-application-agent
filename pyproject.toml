@@ -39,7 +39,7 @@ dev = [
     "respx>=0.21",
     "testcontainers[postgres]>=4.0",
     "ruff>=0.6",
-    "mypy>=1.11",
+    "mypy>=2.1.0",
     "pre-commit>=4.6.0",
     "asgi-lifespan>=2.1.0",
 ]
