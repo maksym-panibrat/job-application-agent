@@ -29,7 +29,7 @@ class Settings(BaseSettings):
     batch_match_dry_run: bool = False
     batch_match_provider: str = "fake"
     batch_match_prompt_version: str = "batch-match-v1"
-    batch_match_max_apps_per_request: int = 10
+    batch_match_max_apps_per_request: int = 1
     batch_match_max_request_chars: int = 60000
     batch_match_poll_interval_seconds: int = 60
     batch_match_max_items_per_batch: int = 100

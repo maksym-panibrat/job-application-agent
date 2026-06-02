@@ -42,7 +42,7 @@ def test_batch_matching_defaults(monkeypatch):
     assert settings.batch_match_dry_run is False
     assert settings.batch_match_provider == "fake"
     assert settings.batch_match_prompt_version == "batch-match-v1"
-    assert settings.batch_match_max_apps_per_request == 10
+    assert settings.batch_match_max_apps_per_request == 1
     assert settings.batch_match_max_request_chars == 60000
     assert settings.batch_match_poll_interval_seconds == 60
     assert settings.batch_match_max_items_per_batch == 100

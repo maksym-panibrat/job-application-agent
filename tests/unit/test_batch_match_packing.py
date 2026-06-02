@@ -21,17 +21,20 @@ def _job(index: int, description: str = "Build APIs") -> BatchJobContext:
     )
 
 
-def test_pack_provider_requests_caps_at_ten_apps():
+def test_pack_provider_requests_sends_one_job_per_provider_request():
     groups = pack_provider_requests(
         profile_text="Python backend engineer",
-        jobs=[_job(i) for i in range(1, 12)],
+        jobs=[_job(i) for i in range(1, 4)],
         max_apps_per_request=10,
         max_request_chars=100000,
     )
 
-    assert [len(group.jobs) for group in groups] == [10, 1]
-    assert groups[0].request_key == "request-0001"
-    assert groups[1].request_key == "request-0002"
+    assert [len(group.jobs) for group in groups] == [1, 1, 1]
+    assert [group.request_key for group in groups] == [
+        "request-0001",
+        "request-0002",
+        "request-0003",
+    ]
 
 
 def test_pack_provider_requests_respects_char_budget():
@@ -48,7 +51,7 @@ def test_pack_provider_requests_respects_char_budget():
     )
 
     assert two_job_budget < three_job_estimate
-    assert [len(group.jobs) for group in groups] == [2, 1]
+    assert [len(group.jobs) for group in groups] == [1, 1, 1]
 
 
 def test_estimate_request_chars_includes_request_and_job_overhead():
