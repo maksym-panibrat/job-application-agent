@@ -1,5 +1,5 @@
 """
-Smoke test: golden-path assertions against the deployed Cloud Run URL.
+Smoke test: golden-path assertions against a deployed app URL.
 
 Usage:
     # Minimal — uses defaults
@@ -17,7 +17,7 @@ Usage:
 
 Environment variables:
     SMOKE_BASE_URL        Base URL of the deployed app (required unless --base-url is given).
-                          Defaults to the Cloud Run service URL from CI secrets.
+                          No default; set it to the public app URL.
     SMOKE_BEARER_TOKEN    JWT for smoke@panibrat.com (required).  Generate with `make smoke-token`.
     SMOKE_CRON_SECRET     Value of the CRON_SHARED_SECRET prod secret (required for step 6).
                           Passed as X-Cron-Secret header to POST /internal/cron/sync.
@@ -28,7 +28,7 @@ Exit codes:
     2  Configuration error (missing env vars / bad args)
 
 Step mapping (matches stabilisation plan):
-    Step 1  GET /auth/google/authorize     → redirect_uri param matches expected Cloud Run callback
+    Step 1  GET /auth/google/authorize     → redirect_uri param matches expected callback
     Step 2  GET /health                     → {"status": "ok"}
     Step 3  GET /api/profile               → 200 with smoke user's profile
     Step 4  PATCH /api/profile             → update full_name, assert round-trip
@@ -80,7 +80,7 @@ SYNC_TIMEOUT_S = 240
 CHAT_TIMEOUT_S = 60
 DEFAULT_TIMEOUT_S = 20
 GENERATION_POLL_INTERVAL_S = 3
-GENERATION_AWAITING_REVIEW_TIMEOUT_S = 180
+GENERATION_STATUS_TIMEOUT_S = 180
 GENERATION_READY_TIMEOUT_S = 60
 
 StepResult = tuple[bool, dict[str, Any]]
@@ -539,7 +539,7 @@ async def step8a_regenerate(
     }
 
 
-async def step8b_poll_awaiting_review(
+async def step8b_poll_cover_letter_status(
     client: httpx.AsyncClient,
     base_url: str,
     token: str,
@@ -549,7 +549,7 @@ async def step8b_poll_awaiting_review(
     """Poll GET /api/applications/{id}/cover-letter/status until work is visible."""
     url = f"{base_url}/api/applications/{app_id}/cover-letter/status"
     label = "step8b_poll_cover_letter_status"
-    deadline = time.monotonic() + GENERATION_AWAITING_REVIEW_TIMEOUT_S
+    deadline = time.monotonic() + GENERATION_STATUS_TIMEOUT_S
     last_status: str | None = None
 
     while time.monotonic() < deadline:
@@ -591,7 +591,7 @@ async def step8b_poll_awaiting_review(
     return False, {
         "step": "8b",
         "error": (
-            f"Timed out after {GENERATION_AWAITING_REVIEW_TIMEOUT_S}s waiting for "
+            f"Timed out after {GENERATION_STATUS_TIMEOUT_S}s waiting for "
             f"queued/running generation; last status: {last_status!r}"
         ),
         "app_id": app_id,
@@ -956,7 +956,7 @@ async def run(base_url: str, token: str, cron_secret: str, verbose: bool) -> int
         else:
             gen_steps: list[tuple[str, Any]] = [
                 ("8a POST /cover-letter", step8a_regenerate),
-                ("8b Poll cover-letter status", step8b_poll_awaiting_review),
+                ("8b Poll cover-letter status", step8b_poll_cover_letter_status),
                 ("8c PATCH approved", step8c_approve),
                 ("8d Poll ready", step8d_poll_ready),
             ]

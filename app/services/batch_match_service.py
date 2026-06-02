@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import uuid
-from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
@@ -66,12 +65,15 @@ class _ImportCounters:
     terminal_failed: int = 0
 
 
-_TERMINAL_PROVIDER_CORRELATION_ERRORS = {
-    "provider returned unknown application_id",
-    "provider returned duplicate application_id",
+_TERMINAL_PROVIDER_REQUEST_KEY_ERRORS = {
     "provider returned duplicate request_key",
     "provider returned unknown request_key",
 }
+
+
+def _is_terminal_provider_request_key_error(error: str) -> bool:
+    return error in _TERMINAL_PROVIDER_REQUEST_KEY_ERRORS
+
 
 
 async def run_batch_match_tick(
@@ -220,7 +222,6 @@ async def _build_and_submit(
     groups = pack_provider_requests(
         profile_text=profile_text,
         jobs=survivors,
-        max_apps_per_request=settings.batch_match_max_apps_per_request,
         max_request_chars=settings.batch_match_max_request_chars,
     )
     requests = [_provider_request(group, profile_text=profile_text) for group in groups]
@@ -491,129 +492,62 @@ async def _import_provider_output(
     output: ProviderBatchOutput,
 ) -> _ImportCounters:
     counters = _ImportCounters()
-    items = await _items_by_provider_key(session, batch.id)
-    batch_correlation_error, request_correlation_errors = (
-        _provider_output_correlation_errors(items, output)
-    )
-    if batch_correlation_error is not None:
-        if _is_terminal_provider_correlation_error(batch_correlation_error):
-            counters.terminal_failed += _mark_items_terminal(
-                items.values(),
-                batch_correlation_error,
-            )
-        else:
-            counters.retryable_failed += _mark_items_retryable(
-                items.values(),
-                batch_correlation_error,
-            )
+    items = await _submitted_items_by_request_key(session, batch.id)
+    request_keys = [request.request_key for request in output.requests]
+    duplicate_key_error = "provider returned duplicate request_key"
+    if len(request_keys) != len(set(request_keys)):
+        counters.terminal_failed += _mark_all_submitted_terminal(
+            items,
+            duplicate_key_error,
+        )
         return counters
-    for request_key, error in request_correlation_errors.items():
-        request_items = _items_by_request_key(items, request_key)
-        if _is_terminal_provider_correlation_error(error):
-            counters.terminal_failed += _mark_items_terminal(request_items, error)
-        else:
-            counters.retryable_failed += _mark_items_retryable(request_items, error)
 
-    seen_item_ids: set[uuid.UUID] = set()
+    seen_request_keys: set[str] = set()
 
     for request in output.requests:
-        request_items = _items_by_request_key(items, request.request_key)
-        if request.request_key in request_correlation_errors:
-            continue
-        if request.error:
-            for item in request_items:
-                if item.status == ITEM_STATUS_SUBMITTED:
-                    _mark_item_retryable(item, request.error)
-                    counters.retryable_failed += 1
-                    seen_item_ids.add(item.id)
-            continue
-        correlation_error = _request_correlation_error(request_items, request.results)
-        if correlation_error is not None:
-            mark_item = (
-                _mark_item_terminal
-                if _is_terminal_provider_correlation_error(correlation_error)
-                else _mark_item_retryable
+        item = items.get(request.request_key)
+        if item is None:
+            counters.terminal_failed += _mark_all_submitted_terminal(
+                items,
+                "provider returned unknown request_key",
             )
-            for item in request_items:
-                if item.status == ITEM_STATUS_SUBMITTED:
-                    mark_item(item, correlation_error)
-                    if _is_terminal_provider_correlation_error(correlation_error):
-                        counters.terminal_failed += 1
-                    else:
-                        counters.retryable_failed += 1
-                    seen_item_ids.add(item.id)
+            return counters
+        if request.request_key in seen_request_keys:
+            _mark_item_terminal(item, "provider returned duplicate request_key")
+            counters.terminal_failed += 1
             continue
-        for item, result in zip(request_items, request.results, strict=True):
-            if item.status != ITEM_STATUS_SUBMITTED:
-                continue
-            seen_item_ids.add(item.id)
-            await _import_result_for_item(session, item, result, counters)
+        seen_request_keys.add(request.request_key)
 
-    for item in items.values():
-        if item.status == ITEM_STATUS_SUBMITTED and item.id not in seen_item_ids:
+        if request.error:
+            _mark_item_retryable(item, request.error)
+            counters.retryable_failed += 1
+            continue
+        if len(request.results) != 1:
+            _mark_item_retryable(item, "provider result count mismatch")
+            counters.retryable_failed += 1
+            continue
+        await _import_result_for_item(session, item, request.results[0], counters)
+
+    for request_key, item in items.items():
+        if request_key not in seen_request_keys and item.status == ITEM_STATUS_SUBMITTED:
             _mark_item_retryable(item, "provider result missing")
             counters.retryable_failed += 1
     return counters
 
 
-async def _items_by_provider_key(
+async def _submitted_items_by_request_key(
     session: AsyncSession,
     batch_id: uuid.UUID,
-) -> dict[tuple[str, uuid.UUID], LLMMatchBatchItem]:
+) -> dict[str, LLMMatchBatchItem]:
     result = await session.execute(
         select(LLMMatchBatchItem)
-        .where(LLMMatchBatchItem.batch_id == batch_id)
-        .order_by(
-            col(LLMMatchBatchItem.provider_request_key).asc(),
-            col(LLMMatchBatchItem.provider_request_position).asc(),
-            col(LLMMatchBatchItem.created_at).asc(),
+        .where(
+            LLMMatchBatchItem.batch_id == batch_id,
+            LLMMatchBatchItem.status == ITEM_STATUS_SUBMITTED,
         )
+        .order_by(col(LLMMatchBatchItem.provider_request_key).asc())
     )
-    return {
-        (item.provider_request_key, item.application_id): item
-        for item in result.scalars().all()
-    }
-
-
-def _items_by_request_key(
-    items: dict[tuple[str, uuid.UUID], LLMMatchBatchItem],
-    request_key: str,
-) -> list[LLMMatchBatchItem]:
-    return sorted(
-        [item for (key, _), item in items.items() if key == request_key],
-        key=lambda item: (item.provider_request_position, item.created_at),
-    )
-
-
-def _provider_output_correlation_errors(
-    items: dict[tuple[str, uuid.UUID], LLMMatchBatchItem],
-    output: ProviderBatchOutput,
-) -> tuple[str | None, dict[str, str]]:
-    request_application_ids: dict[str, set[uuid.UUID]] = {}
-    for request_key, application_id in items:
-        request_application_ids.setdefault(request_key, set()).add(application_id)
-
-    request_errors: dict[str, str] = {}
-    seen_request_keys: set[str] = set()
-    for request in output.requests:
-        expected_application_ids = request_application_ids.get(request.request_key)
-        if expected_application_ids is None:
-            return "provider returned unknown request_key", {}
-        repeated_request_key = request.request_key in seen_request_keys
-        seen_request_keys.add(request.request_key)
-
-        if repeated_request_key:
-            return "provider returned duplicate request_key", {}
-    return None, request_errors
-
-
-def _request_correlation_error(
-    request_items: list[LLMMatchBatchItem],
-    results: list[ProviderJobResult],
-) -> str | None:
-    if len(results) != len(request_items):
-        return "provider result count mismatch"
-    return None
+    return {item.provider_request_key: item for item in result.scalars().all()}
 
 
 async def _import_result_for_item(
@@ -622,13 +556,14 @@ async def _import_result_for_item(
     result: ProviderJobResult,
     counters: _ImportCounters,
 ) -> None:
-    result_error = _result_validation_error(result)
-    provider_error = getattr(result, "error", None)
-    if provider_error or result_error:
-        _mark_item_retryable(
-            item,
-            str(provider_error or result_error or "provider result invalid"),
-        )
+    if result.error:
+        _mark_item_retryable(item, result.error)
+        counters.retryable_failed += 1
+        return
+
+    validation_error = _result_validation_error(result)
+    if validation_error is not None:
+        _mark_item_retryable(item, validation_error)
         counters.retryable_failed += 1
         return
 
@@ -638,45 +573,7 @@ async def _import_result_for_item(
         counters.terminal_failed += 1
         return
 
-    job = await session.get(Job, app.job_id)
-    profile = await session.get(UserProfile, app.profile_id)
-    if job is None or profile is None:
-        _mark_item_terminal(item, "domain row missing")
-        counters.terminal_failed += 1
-        return
-    if app.match_score is not None:
-        _apply_item_imported(item, result)
-        counters.imported += 1
-        return
-
-    deterministic_fields = deterministic_rejection_fields(
-        profile,
-        job,
-        get_settings().match_score_threshold,
-    )
-    if deterministic_fields is not None:
-        _apply_score_fields(app, deterministic_fields)
-        _apply_item_fields(item, deterministic_fields)
-        counters.imported += 1
-        session.add(app)
-        return
-
-    _apply_item_imported(item, result)
-    counters.imported += 1
-    app.match_score = item.score
-    app.match_summary = result.summary
-    app.match_rationale = result.rationale
-    app.match_strengths = list(result.strengths)
-    app.match_gaps = list(result.gaps)
-    app.updated_at = datetime.now(UTC)
-    settings = get_settings()
-    if item.score < settings.match_score_threshold and app.status == "pending_review":
-        app.status = "auto_rejected"
-    session.add(app)
-
-
-def _apply_item_imported(item: LLMMatchBatchItem, result: ProviderJobResult) -> None:
-    item.score = float(result.score)
+    item.score = float(result.score)  # type: ignore[arg-type]
     item.summary = result.summary
     item.rationale = result.rationale
     item.strengths = list(result.strengths)
@@ -685,19 +582,19 @@ def _apply_item_imported(item: LLMMatchBatchItem, result: ProviderJobResult) -> 
     item.error = None
     item.updated_at = datetime.now(UTC)
 
+    if app.match_score is None:
+        app.match_score = item.score
+        app.match_summary = item.summary
+        app.match_rationale = item.rationale
+        app.match_strengths = item.strengths
+        app.match_gaps = item.gaps
+        below_threshold = app.match_score < get_settings().match_score_threshold
+        if below_threshold and app.status == "pending_review":
+            app.status = "auto_rejected"
+        app.updated_at = datetime.now(UTC)
+        session.add(app)
 
-def _apply_item_fields(
-    item: LLMMatchBatchItem,
-    fields: DeterministicRejectionFields,
-) -> None:
-    item.score = fields["score"]
-    item.summary = fields["summary"]
-    item.rationale = fields["rationale"]
-    item.strengths = list(fields["strengths"])
-    item.gaps = list(fields["gaps"])
-    item.status = ITEM_STATUS_IMPORTED
-    item.error = None
-    item.updated_at = datetime.now(UTC)
+    counters.imported += 1
 
 
 def _result_validation_error(result: ProviderJobResult) -> str | None:
@@ -737,38 +634,22 @@ def _mark_item_retryable(item: LLMMatchBatchItem, error: str) -> None:
     item.updated_at = datetime.now(UTC)
 
 
-def _mark_items_retryable(
-    items: Iterable[LLMMatchBatchItem],
+def _mark_all_submitted_terminal(
+    items: dict[str, LLMMatchBatchItem],
     error: str,
 ) -> int:
     count = 0
-    for item in items:
+    for item in items.values():
         if item.status == ITEM_STATUS_SUBMITTED:
-            _mark_item_retryable(item, error)
+            _mark_item_terminal(item, error)
             count += 1
     return count
-
-
-def _is_terminal_provider_correlation_error(error: str) -> bool:
-    return error in _TERMINAL_PROVIDER_CORRELATION_ERRORS
 
 
 def _mark_item_terminal(item: LLMMatchBatchItem, error: str) -> None:
     item.status = ITEM_STATUS_TERMINAL_FAILED
     item.error = error
     item.updated_at = datetime.now(UTC)
-
-
-def _mark_items_terminal(
-    items: Iterable[LLMMatchBatchItem],
-    error: str,
-) -> int:
-    count = 0
-    for item in items:
-        if item.status == ITEM_STATUS_SUBMITTED:
-            _mark_item_terminal(item, error)
-            count += 1
-    return count
 
 
 async def _mark_submitted_items_retryable(

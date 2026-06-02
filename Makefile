@@ -14,8 +14,8 @@
 #
 # Thin wrapper over alembic that refuses to run write migrations against a
 # non-local database unless you pass I_KNOW_ITS_PROD=1.  Prevents the foot-gun
-# of running `alembic upgrade head` from a dev laptop while DATABASE_URL still
-# points at prod Neon (the exact cause of commit 28e5ce5's outage).
+# of running a write migration from a dev laptop while DATABASE_URL still
+# points at production.
 #
 # Usage:
 #   make migrate ARGS="upgrade head"

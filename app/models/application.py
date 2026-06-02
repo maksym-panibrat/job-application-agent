@@ -18,7 +18,7 @@ class Application(SQLModel, table=True):
     #   dismissed      — user dismissed via PATCH
     #   applied        — user marked applied via PATCH
     status: str = "pending_review"
-    # Values: none, pending, generating, awaiting_review, ready, failed
+    # Values: none, pending, generating, ready, failed
     generation_status: str = "none"
     generation_attempts: int = 0
     match_score: float | None = None

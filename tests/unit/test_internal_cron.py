@@ -153,9 +153,8 @@ def test_maintenance_correct_secret_calls_task():
 def test_sync_unexpected_exception_returns_500():
     # TestClient with raise_server_exceptions=False mirrors prod behavior: FastAPI
     # converts the unhandled exception into a 500 instead of re-raising into the test.
-    # The handler logs the exception with exc_info=True; Cloud Run's stdout capture
-    # plus the @type marker in _add_cloud_run_severity are what surface it to GCP
-    # Error Reporting — that path is covered separately in test_logging.py.
+    # The handler logs the exception with exc_info=True; stdout/log capture
+    # The logging path is covered separately in test_logging.py.
     client = make_app(secret="real-secret", raise_server_exceptions=False)
     with (
         patch("app.api.internal_cron.get_session_factory", return_value=lambda: _FakeSession()),

@@ -25,7 +25,6 @@ def test_pack_provider_requests_sends_one_job_per_provider_request():
     groups = pack_provider_requests(
         profile_text="Python backend engineer",
         jobs=[_job(i) for i in range(1, 4)],
-        max_apps_per_request=10,
         max_request_chars=100000,
     )
 
@@ -46,7 +45,6 @@ def test_pack_provider_requests_respects_char_budget():
     groups = pack_provider_requests(
         profile_text=profile_text,
         jobs=jobs,
-        max_apps_per_request=10,
         max_request_chars=two_job_budget,
     )
 
@@ -77,7 +75,6 @@ def test_pack_provider_requests_truncates_single_oversized_job_to_budget():
     groups = pack_provider_requests(
         profile_text="Python",
         jobs=[_job(1, "A" * 5000)],
-        max_apps_per_request=10,
         max_request_chars=max_request_chars,
     )
 
@@ -97,22 +94,11 @@ def test_pack_provider_requests_handles_tight_budget_smaller_than_truncation_mar
     groups = pack_provider_requests(
         profile_text="Python",
         jobs=[job],
-        max_apps_per_request=10,
         max_request_chars=max_request_chars,
     )
 
     assert len(groups) == 1
     assert groups[0].estimated_chars <= max_request_chars
-
-
-def test_pack_provider_requests_rejects_zero_max_apps_per_request():
-    with pytest.raises(ValueError):
-        pack_provider_requests(
-            profile_text="Python",
-            jobs=[_job(1)],
-            max_apps_per_request=0,
-            max_request_chars=100000,
-        )
 
 
 def test_pack_provider_requests_rejects_budget_too_small_for_single_job_metadata():
@@ -125,7 +111,6 @@ def test_pack_provider_requests_rejects_budget_too_small_for_single_job_metadata
         pack_provider_requests(
             profile_text="Python",
             jobs=[_job(1, "A" * 5000)],
-            max_apps_per_request=10,
             max_request_chars=max_request_chars,
         )
 

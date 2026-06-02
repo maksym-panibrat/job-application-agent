@@ -7,9 +7,9 @@ pipeline.
 Run against local dev DB:
     uv run python scripts/wipe_job_data.py
 
-Run against prod Neon (requires explicit confirmation):
-    DATABASE_URL=$(gcloud secrets versions access latest --secret=database-url) \\
-        uv run python scripts/wipe_job_data.py --yes-i-mean-prod
+Run against production (requires explicit confirmation):
+    export DATABASE_URL=postgresql+asyncpg://...
+    uv run python scripts/wipe_job_data.py --yes-i-mean-prod
 
 Prints row counts before and after so you can verify the wipe.
 """

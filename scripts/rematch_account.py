@@ -15,7 +15,7 @@ that prod will reject. Pass the prod secret explicitly:
 
 pydantic-settings prefers env vars over .env, so the inline JWT_SECRET wins.
 
-Defaults to the configured user's email; --host is required (varies per Cloud Run deploy).
+Defaults to the configured user's email; --host is required.
 """
 
 import argparse

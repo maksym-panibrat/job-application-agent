@@ -23,8 +23,13 @@ class BatchJobContext:
 @dataclass(frozen=True)
 class PackedProviderRequest:
     request_key: str
-    jobs: list[BatchJobContext]
+    job: BatchJobContext
     estimated_chars: int
+
+    @property
+    def jobs(self) -> list[BatchJobContext]:
+        """Compatibility shim for provider payload code/tests."""
+        return [self.job]
 
 
 def build_request_hash(
@@ -101,35 +106,33 @@ def _truncate_job_to_request_budget(
     )
     if non_description_chars > max_request_chars:
         raise ValueError("max_request_chars cannot fit a single job without description")
-    max_description_chars = max_request_chars - non_description_chars
-    if len(job.description) > max_description_chars:
-        max_description_chars = max(0, max_description_chars)
-    return _truncate_to_budget(job, max_description_chars)
+    return _truncate_to_budget(job, max_request_chars - non_description_chars)
 
 
 def pack_provider_requests(
     *,
     profile_text: str,
     jobs: list[BatchJobContext],
-    max_apps_per_request: int,
     max_request_chars: int,
 ) -> list[PackedProviderRequest]:
-    if max_apps_per_request < 1:
-        raise ValueError("max_apps_per_request must be at least 1")
+    """Create one provider request per application/job.
 
-    groups: list[PackedProviderRequest] = []
-
-    for original_job in jobs:
+    The provider batch API is used for async transport only. We intentionally do
+    not combine multiple jobs into one prompt; one local request maps to one
+    provider result, which keeps correlation predictable.
+    """
+    requests: list[PackedProviderRequest] = []
+    for index, original_job in enumerate(jobs, start=1):
         job = _truncate_job_to_request_budget(
             profile_text=profile_text,
             job=original_job,
             max_request_chars=max_request_chars,
         )
-        groups.append(
+        requests.append(
             PackedProviderRequest(
-                request_key=f"request-{len(groups) + 1:04d}",
-                jobs=[job],
+                request_key=f"request-{index:04d}",
+                job=job,
                 estimated_chars=estimate_request_chars(profile_text=profile_text, jobs=[job]),
             )
         )
-    return groups
+    return requests

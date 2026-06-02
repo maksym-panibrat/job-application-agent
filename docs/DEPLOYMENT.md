@@ -12,7 +12,7 @@ supercronic, Vector, release migrations, rollback, and host secrets.
   `work_queue`.
 - `alembic-upgrade`: release-profile compose service run during deploy.
 - `supercronic`: external scheduler that calls thin internal cron enqueuers.
-- Neon Postgres remains external.
+- Self-hosted Postgres runs on the Hetzner host.
 - Logs ship through Vector to Axiom.
 
 ## Normal Deploy Flow
@@ -45,71 +45,7 @@ infra repo procedures.
 
 ## Worker Queue Contract
 
-The public API avoids long-running LLM/fetch work:
-
-- `POST /api/jobs/sync` returns `202`, prunes invalid followed companies,
-  and enqueues stale provider slugs. Fetching and matching run in workers.
-- `POST /api/applications/{id}/cover-letter` returns `202`, flips the
-  application to `pending`, and enqueues `generate-cover-letter`.
-- Clients poll `GET /api/applications/{id}/cover-letter/status` while the
-  worker moves generation through `pending -> generating -> ready/failed`.
-
-Cron endpoints are protected by `X-Cron-Secret` and enqueue work only:
-
-- `POST /internal/cron/sync` enqueues stale `fetch-slug` jobs.
-- `POST /internal/cron/generation-reconcile` re-enqueues orphaned pending cover
-  letters.
-- `POST /internal/cron/maintenance` enqueues one daily maintenance job.
-
-### Cron Cadence
-
-The job-search API expects these production trigger cadences:
-
-| Endpoint | Cadence | Reason |
-|---|---|---|
-| `POST /internal/cron/sync` | every 6 hours | provider slug freshness TTL is 6 hours |
-| `POST /internal/cron/generation-reconcile` | every 30 minutes | repairs stuck cover-letter generation requests |
-| `POST /internal/cron/maintenance` | daily | stale-job marking and retention cleanup |
-
-Do not run `/internal/cron/sync` every 15 minutes. That cadence repeatedly scans
-active profiles, companies, and slug freshness while producing no new work
-inside the 6-hour TTL.
-
-`app.worker` owns queue claiming, lease timeouts, retries, terminal failure
-handling, and finalization.
-
-## Neon Egress Measurement
-
-Neon network transfer is data sent from Postgres through Neon's proxy to clients.
-The database can be small at rest while still exhausting transfer allowance when
-hot paths repeatedly fetch wide rows.
-
-Before a measurement window:
-
-```sql
-CREATE EXTENSION IF NOT EXISTS pg_stat_statements;
-SELECT pg_stat_statements_reset();
-```
-
-After at least 24 hours of representative traffic:
-
-```bash
-psql "$DATABASE_URL" -f scripts/neon_egress_diagnostics.sql
-```
-
-Interpretation:
-
-- high `rows` plus wide tables such as `jobs` means likely high transfer
-- high `calls` means polling, cron, or auth loops may dominate even with small rows
-- `pg_stat_statements` does not report exact bytes; compare rows, calls, and table stats before and after changes
-
-Expected healthy production cadence:
-
-- `/internal/cron/sync`: about 4/day
-- `/internal/cron/generation-reconcile`: about 48/day
-- `/internal/cron/maintenance`: about 1/day
-- `/api/sync/status`: only while an authenticated user has live sync/match work
-- `/api/status`: cached on the frontend, not a per-component minute loop
+The queue contract is documented in [`ARCHITECTURE.md`](ARCHITECTURE.md). In short: public API and cron routes enqueue work, and `app.worker` owns claiming, retries, lease timeouts, terminal failure handling, and finalization.
 
 ## Local Verification Before Merge
 

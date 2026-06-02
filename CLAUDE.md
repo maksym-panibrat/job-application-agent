@@ -14,7 +14,7 @@ cd frontend && npm install && npm run dev   # :5173, proxies /api + /health to :
 
 Required env: `DATABASE_URL`, `GOOGLE_API_KEY`. Full list: `app/config.py::Settings`.
 
-**Migrations**: always use `make migrate ARGS="..."` (or `uv run python scripts/alembic_safe.py ...`), never plain `alembic`. The wrapper blocks write commands (`upgrade` / `downgrade` / `stamp` / `merge` / `revision --autogenerate`) against non-local hosts unless `I_KNOW_ITS_PROD=1` is set. Running `alembic upgrade head` against Neon from a dev laptop is the exact outage mode of commit 28e5ce5 (schema ahead of deployed code → every `select(Application)` 500s). Production migrations run on the Hetzner box through the `alembic-upgrade` compose release profile during `panibrat-infra` deploys.
+**Migrations**: always use `make migrate ARGS="..."` (or `uv run python scripts/alembic_safe.py ...`), never plain `alembic`. The wrapper blocks write commands (`upgrade` / `downgrade` / `stamp` / `merge` / `revision --autogenerate`) against non-local hosts unless `I_KNOW_ITS_PROD=1` is set. The guard exists because running local migrations against production can put schema ahead of deployed code and break every request. Production migrations run on the Hetzner box through the `alembic-upgrade` compose release profile during `panibrat-infra` deploys.
 
 ## Tests
 
@@ -33,11 +33,11 @@ Each agent module's `get_llm()` returns `FakeListChatModel` when `ENVIRONMENT=te
 
 Onboarding (`app/agents/onboarding.py`) is the only agent that uses `AsyncPostgresSaver` — on a **separate psycopg v3 pool** from the SQLAlchemy asyncpg pool. `setup()` must run on a plain (non-pipeline) connection — it issues `CREATE INDEX CONCURRENTLY`. `checkpoint_*` tables are owned by the saver; **do not add them to Alembic migrations**. Generation and matching agents do not checkpoint. All LLM calls go through `safe_ainvoke()` (`app/agents/llm_safe.py`) to catch `ResourceExhausted`.
 
-### SQLModel / Alembic / Neon
+### SQLModel / Alembic / Postgres
 
 - SQLModel does NOT auto-detect ARRAY/JSONB — use explicit `sa_column=Column(ARRAY(...))` / `sa_column=Column(JSONB)`.
 - Register new models in `app/models/__init__.py` so `alembic/env.py` sees them.
-- Neon: `sslmode` / `channel_binding` are stripped from `DATABASE_URL` in `alembic/env.py` and `app/database.py`; `ssl=True` is passed as a `connect_arg` instead.
+- URL query params such as `sslmode` / `channel_binding` are stripped from `DATABASE_URL` in `alembic/env.py` and `app/database.py`; TLS is passed through driver-specific connect args instead.
 
 ### Rate limiting
 
@@ -45,13 +45,13 @@ Onboarding (`app/agents/onboarding.py`) is the only agent that uses `AsyncPostgr
 
 ### Matching
 
-Matching runs through the worker queue (`match` jobs). The matching agent scores one `Application` at a time; `safe_ainvoke()` handles quota/rate-limit exceptions before the worker retry policy decides whether to retry. `ScoreResult.strengths/gaps` coerces prose to lists.
+Matching runs through the worker queue. `match` jobs score one `Application` directly; `batch-match` jobs use the provider batch API as an async transport while still sending one application/job per provider request. `safe_ainvoke()` handles quota/rate-limit exceptions before the worker retry policy decides whether to retry. `ScoreResult.strengths/gaps` coerces prose to lists.
 
 ### Worker queue and cron
 
 No in-process scheduler. Cron endpoints are thin enqueuers protected by `X-Cron-Secret`: `POST /internal/cron/sync`, `POST /internal/cron/generation-reconcile`, and `POST /internal/cron/maintenance`. They are triggered by `supercronic` on the Hetzner box (`panibrat-infra/supercronic.crontab`). Long-running work is processed by the always-on `python -m app.worker` process through Postgres `work_queue`.
 
-`work_queue` job types are `fetch-slug`, `match`, `generate-cover-letter`, and `maintenance`. The worker owns claiming, lease timeouts, transient retry/backoff, terminal failure handling, and lease-checked finalization.
+`work_queue` job types are `fetch-slug`, `match`, `batch-match`, `generate-cover-letter`, and `maintenance`. The worker owns claiming, lease timeouts, transient retry/backoff, terminal failure handling, and lease-checked finalization.
 
 ### Generation contract
 

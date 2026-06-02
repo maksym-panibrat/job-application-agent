@@ -9,7 +9,7 @@ log = structlog.get_logger()
 
 
 async def run_daily_maintenance() -> dict:
-    """Mark stale jobs + auto-pause expired searches + trim excess matched applications."""
+    """Mark stale jobs, reconcile search expiry, and trim excess applications."""
     from sqlalchemy import text
 
     from app.config import get_settings
@@ -176,15 +176,15 @@ async def run_daily_maintenance() -> dict:
                 extended=searches_extended,
             )
 
-        # Trim matched applications to 500 most recent per user
+        # Keep the newest 500 reviewable/scored applications per profile.
         trim_result = await session.execute(
             text("""
                 DELETE FROM applications
-                WHERE status = 'matched'
+                WHERE status IN ('pending_review', 'auto_rejected')
                   AND id NOT IN (
                     SELECT id FROM applications a2
                     WHERE a2.profile_id = applications.profile_id
-                      AND a2.status = 'matched'
+                      AND a2.status IN ('pending_review', 'auto_rejected')
                     ORDER BY a2.created_at DESC
                     LIMIT 500
                   )

@@ -3,7 +3,7 @@ redirect back to the SPA, so browser users land in the app instead of staring
 at a raw {"access_token": ...} JSON page.
 
 The token rides in the URL fragment rather than the query string: fragments
-are never sent over HTTP, so the JWT doesn't end up in Cloud Run access logs,
+are never sent over HTTP, so the JWT doesn't end up in access logs,
 the Referer header, or our own structured logs.
 """
 

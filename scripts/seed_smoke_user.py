@@ -4,7 +4,7 @@ Idempotently seed the smoke-test user (smoke@panibrat.com) into the database.
 Run against local dev DB:
     uv run python scripts/seed_smoke_user.py
 
-Run against prod Neon (in a local shell with DATABASE_URL exported):
+Run against production (in a local shell with DATABASE_URL exported):
     DATABASE_URL=postgresql+asyncpg://... uv run python scripts/seed_smoke_user.py
 
 Safe to re-run — uses INSERT ... ON CONFLICT DO UPDATE so it is fully idempotent.

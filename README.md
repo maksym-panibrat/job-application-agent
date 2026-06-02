@@ -20,7 +20,7 @@ Resume upload + onboarding chat
 
 ## Tech stack
 
-FastAPI · SQLModel · LangGraph · Google Gemini · React + Vite · Postgres (Neon) · Docker on Hetzner (managed by [panibrat-infra](https://github.com/maksym-panibrat/panibrat-infra)) · GitHub Actions.
+FastAPI · SQLModel · LangGraph · Google Gemini · React + Vite · Postgres · Docker on Hetzner (managed by [panibrat-infra](https://github.com/maksym-panibrat/panibrat-infra)) · GitHub Actions.
 
 ## Quickstart
 
@@ -50,25 +50,12 @@ cd frontend && npm test                 # component tests
 cd frontend && npm run build            # build to app/static/
 ```
 
-### Production data repair
+## Docs
 
-The destructive full reset is for pre-launch data repairs only. It wipes users, profiles, resumes, applications, generated documents, jobs, queues, usage state, and LangGraph checkpoints. It preserves companies and invalid slug evidence, and resets non-invalid slug freshness so the recreated owner profile can fetch fresh jobs.
-
-Run against production only after workers and cron drainers are paused:
-
-```bash
-export DATABASE_URL=postgresql+asyncpg://...
-uv run python scripts/wipe_job_data.py --yes-i-mean-prod
-make seed-smoke-user
-```
-
-Afterward, sign in again, recreate the owner profile, resume, and followed companies, verify `target_company_ids` is non-empty, and trigger sync.
-
-`CLAUDE.md` documents the non-obvious behaviours; the directory layout is best read from the source.
-
-## Deployment
-
-See [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) for the current GHCR + Hetzner deployment flow.
+- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) explains the current runtime, queue, LLM, and data-flow shape.
+- [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) covers the GHCR + Hetzner deployment flow.
+- [`docs/runbooks/`](docs/runbooks/) contains operational procedures.
+- `CLAUDE.md` documents non-obvious agent/development guardrails.
 
 ## License
 

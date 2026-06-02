@@ -27,9 +27,8 @@ class Settings(BaseSettings):
     queue_depth_emit_interval_s: int = 60
     batch_match_enabled: bool = True
     batch_match_dry_run: bool = False
-    batch_match_provider: str = "fake"
+    batch_match_provider: str = "gemini"
     batch_match_prompt_version: str = "batch-match-v1"
-    batch_match_max_apps_per_request: int = 1
     batch_match_max_request_chars: int = 60000
     batch_match_poll_interval_seconds: int = 60
     batch_match_max_items_per_batch: int = 100
@@ -38,9 +37,8 @@ class Settings(BaseSettings):
     batch_match_cron_max_items: int = 100
 
     cors_allowed_origins: list[str] = ["http://localhost:5173", "http://localhost:3000"]
-    # Absolute base URL Google sees as redirect_uri host. Cloud Run forwards HTTP to
-    # the container, so request-derived URLs would arrive as http:// — Google rejects
-    # those. Setting this explicitly avoids depending on proxy-header forwarding.
+    # Absolute base URL Google sees as redirect_uri host. Set this explicitly in
+    # production so OAuth callback URLs do not depend on reverse-proxy headers.
     public_base_url: str | None = None
 
     @model_validator(mode="after")
