@@ -4,33 +4,23 @@ Use this when investigating database transfer, hot queries, or polling loops.
 
 Postgres can be small at rest while hot paths repeatedly fetch wide rows. Measure query shape before changing code.
 
-## Reset stats before a measurement window
+## Why this exists
 
-```sql
-CREATE EXTENSION IF NOT EXISTS pg_stat_statements;
-SELECT pg_stat_statements_reset();
-```
+The app has background sync, worker polling, auth/session checks, and frontend polling for user-visible async work. A small mistake in any of those paths can create noisy database traffic without obvious product symptoms.
 
-## Collect diagnostics
+## Measurement approach
 
-After at least 24 hours of representative traffic:
+1. Enable or confirm `pg_stat_statements` for the database being measured.
+2. Reset stats at the start of a known measurement window.
+3. Let representative traffic run long enough to include cron, worker, and frontend behavior.
+4. Run the diagnostics script in `scripts/` against the target database.
+5. Compare rows, calls, and table/query shape before and after code changes.
 
-```bash
-psql "$DATABASE_URL" -f scripts/neon_egress_diagnostics.sql
-```
-
-The script name is historical; use it for any Postgres deployment where `pg_stat_statements` is available.
+The diagnostics script name may be historical; the script content is the source of truth for what it measures.
 
 ## Interpret
 
-- High `rows` plus wide tables such as `jobs` usually means high transfer.
-- High `calls` means polling, cron, or auth loops may dominate even with small rows.
-- `pg_stat_statements` does not report exact bytes. Compare rows, calls, and table stats before and after changes.
-
-Expected healthy production cadence:
-
-- `/internal/cron/sync`: about 4/day.
-- `/internal/cron/generation-reconcile`: about 48/day.
-- `/internal/cron/maintenance`: about 1/day.
-- `/api/sync/status`: only while an authenticated user has live sync/match work.
-- `/api/status`: cached on the frontend, not a per-component minute loop.
+- High row counts on wide tables usually point to transfer-heavy queries.
+- High call counts usually point to polling, cron cadence, auth/session checks, or worker loops.
+- `pg_stat_statements` does not report exact bytes. Treat it as a guide to where to inspect code and logs next.
+- Prefer fixing query shape and polling behavior over adding more documentation about expected counts.

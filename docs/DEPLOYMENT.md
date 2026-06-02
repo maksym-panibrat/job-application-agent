@@ -1,62 +1,34 @@
 # Deployment Reference
 
-Production runs on the Hetzner host managed by
-[`panibrat-infra`](https://github.com/maksym-panibrat/panibrat-infra). This app
-repo builds and publishes the image; the infra repo owns compose, Caddy,
-supercronic, Vector, release migrations, rollback, and host secrets.
+Production runtime is owned jointly by this app repo and the `panibrat-infra` repo.
 
-## Runtime Shape
+This repo owns application code, tests, migrations, and the Docker image. The infra repo owns the host runtime: compose services, Caddy, cron wiring, release migration execution, rollback, secrets, and observability.
 
-- `job-search-api`: FastAPI serving `job-search.panibrat.com`.
-- `job-search-worker`: same image, `python -m app.worker`, consuming Postgres
-  `work_queue`.
-- `alembic-upgrade`: release-profile compose service run during deploy.
-- `supercronic`: external scheduler that calls thin internal cron enqueuers.
-- Self-hosted Postgres runs on the Hetzner host.
-- Logs ship through Vector to Axiom.
+## Why deployment is split this way
 
-## Normal Deploy Flow
+- The app repo can stay focused on product behavior and schema changes.
+- The infra repo can make host-level changes without mixing them into application PRs.
+- Deploy and rollback procedures stay next to the compose files and secrets model they operate on.
+- Production verification can use the real host, proxy, scheduler, and logging context.
 
-1. Push to `main`.
-2. `ci.yml` runs backend, frontend, browser E2E, then builds the Docker image.
-3. The image is pushed to GHCR as both `:<commit-sha>` and `:main`.
-4. CI sends a `bump-app-image` repository dispatch to `panibrat-infra` with
-   `app=job-search` and the commit SHA.
-5. `panibrat-infra/.github/workflows/bump.yml` opens a one-line `compose.yml`
-   bump PR.
-6. Merging that PR triggers `panibrat-infra/.github/workflows/deploy.yml`.
-7. The deploy script SSHes to the host, pulls the image, pauses supercronic,
-   runs Alembic through the release profile, starts API and worker, verifies
-   health, reloads Caddy, and resumes supercronic unless it was operator-paused.
+## Normal release shape
 
-The active operational runbooks live in `panibrat-infra/docs/runbooks/`,
-especially `deploy.md`, `rollback.md`, `cron.md`, and `observability.md`.
+At a high level:
 
-## Required GitHub Secrets
+1. This repo builds and publishes an application image from `main`.
+2. The infra repo updates the image tag used by production.
+3. The infra deploy runs migrations through the guarded release path, starts the app services, checks health, and restores scheduled work.
 
-| Secret | Used by | Purpose |
-|---|---|---|
-| `INFRA_DISPATCH_TOKEN` | `ci.yml` | Allows this repo to dispatch the image bump into `panibrat-infra`. |
-| `GITHUB_TOKEN` | GitHub Actions | Publishes package images to GHCR. |
+Exact workflow names, compose service names, host paths, and rollback commands are intentionally not duplicated here. Use `panibrat-infra/docs/runbooks/` and the workflow files in both repos as the current source of truth.
 
-Application runtime secrets are not stored in this repo. They live on the
-Hetzner box under `/srv/job-search/.env` and are restored/rotated through the
-infra repo procedures.
+## Application guarantees expected by infra
 
-## Worker Queue Contract
+- The API exposes a cheap health check.
+- Long-running work is handled by the worker, not inline web requests.
+- Cron endpoints enqueue work only; they do not perform the full job synchronously.
+- Migrations can run before the new API/worker image starts.
+- Runtime secrets are read from environment variables defined in `app/config.py`.
 
-The queue contract is documented in [`ARCHITECTURE.md`](ARCHITECTURE.md). In short: public API and cron routes enqueue work, and `app.worker` owns claiming, retries, lease timeouts, terminal failure handling, and finalization.
+## Local checks before merge
 
-## Local Verification Before Merge
-
-```bash
-uv run ruff check app/ tests/
-uv run pytest tests/unit/
-uv run pytest tests/integration/
-cd frontend && npm test && npm run build
-```
-
-For a full local stack, run the frontend dev server and API separately as shown
-in the README. Production verification after deploy belongs in
-`panibrat-infra` because that repo has the host, compose, Caddy, and Axiom
-context.
+Run the relevant backend and frontend tests for the code touched. Common checks are documented in the README; exact test coverage should come from the changed code and CI, not from a stale checklist here.

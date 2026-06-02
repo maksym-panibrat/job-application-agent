@@ -52,10 +52,12 @@ cd frontend && npm run build            # build to app/static/
 
 ## Docs
 
-- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) explains the current runtime, queue, LLM, and data-flow shape.
-- [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) covers the GHCR + Hetzner deployment flow.
-- [`docs/runbooks/`](docs/runbooks/) contains operational procedures.
-- `CLAUDE.md` documents non-obvious agent/development guardrails.
+- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) explains why the app is split across API, worker, queue, LLM, and infra boundaries.
+- [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) explains deployment ownership between this repo and `panibrat-infra`.
+- [`docs/runbooks/`](docs/runbooks/) contains narrow operational procedures.
+- `CLAUDE.md` documents non-obvious development guardrails.
+
+Docs are intentionally high level. For exact endpoints, statuses, schemas, prompts, and config names, read the code.
 
 ## License
 

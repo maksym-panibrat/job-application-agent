@@ -1,32 +1,22 @@
 # Production Data Repair
 
-This destructive reset is for pre-launch production data repair only. It wipes users, profiles, resumes, applications, generated documents, jobs, queues, usage state, and LangGraph checkpoints.
+Use this only when intentionally repairing or resetting production-like application data.
 
-It preserves companies and invalid slug evidence, and resets non-invalid slug freshness so the recreated owner profile can fetch fresh jobs.
+This procedure is destructive. It exists because pre-launch or owner-only production data can sometimes be cheaper to recreate than migrate by hand. Do not use it for normal cleanup, user support, or reversible operations.
 
 ## Preconditions
 
-1. Confirm the target database is production.
-2. Pause workers and cron drainers on the host.
-3. Confirm you intend to delete user/application/job data.
-4. Keep a backup or snapshot if the data might still matter.
+- Confirm the exact target database and environment.
+- Pause workers and scheduled enqueuers so deleted state is not recreated mid-repair.
+- Decide whether a backup/snapshot is needed before deleting data.
+- Read the wipe script before running it; the script is the source of truth for what is deleted or preserved.
 
 ## Run
 
-```bash
-export DATABASE_URL=postgresql+asyncpg://...
-uv run python scripts/wipe_job_data.py --yes-i-mean-prod
-make seed-smoke-user
-```
+Use `scripts/wipe_job_data.py` through `uv run` with the explicit production-confirmation flag required by the script.
 
-## Restore user state
+If smoke/seed data is needed afterward, use the current make target or script in the repo rather than copying commands from an old runbook.
 
-After the wipe:
+## Restore application state
 
-1. Sign in again.
-2. Recreate the owner profile.
-3. Upload resume.
-4. Follow target companies.
-5. Verify `target_company_ids` is non-empty.
-6. Trigger sync.
-7. Resume workers and cron.
+After the wipe, recreate state through the product flows: sign in, create the owner profile, upload a resume, follow companies, trigger sync, and verify the UI before resuming scheduled work.

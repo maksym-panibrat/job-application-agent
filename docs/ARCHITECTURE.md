@@ -2,93 +2,71 @@
 
 This app helps a user follow target companies, fetch open roles from supported ATS boards, score those roles against a profile, and generate a cover letter on demand.
 
-## Runtime
+Docs should explain why the system is shaped this way. Code is the source of truth for exact routes, statuses, config names, schemas, prompts, and job payloads.
 
-Production is split across this app repo and the `panibrat-infra` repo.
+## Design principles
 
-- `job-search-api`: FastAPI app serving the API and built frontend.
-- `job-search-worker`: same image, running `python -m app.worker`.
-- Postgres: self-hosted on the Hetzner host.
-- `supercronic`: external scheduler that calls internal cron endpoints.
-- Vector ships container logs to Axiom.
+- Keep request handlers quick. Public APIs should validate, persist intent, enqueue work when needed, and return.
+- Put slow or failure-prone work behind the durable Postgres queue: ATS fetches, LLM matching, cover-letter generation, reconciliation, and maintenance.
+- Prefer deterministic filtering before LLM calls. Spend model tokens only when the app has enough structured context to make the call useful.
+- Keep LLM correlation boring. Local IDs and provider request keys should drive imports; never rely on a model copying identifiers correctly.
+- Avoid hidden schedulers. Cron lives outside the app process and calls thin internal endpoints that enqueue work.
+- Treat production operations as infrastructure concerns. Host runtime, Caddy, secrets, rollback, cron schedules, and observability live in `panibrat-infra`.
 
-There is no in-process scheduler. Cron endpoints enqueue work only; workers do the long-running fetch, match, generation, and maintenance tasks.
+## Runtime boundary
+
+Production is split into:
+
+- API process: FastAPI serving JSON APIs and the built frontend.
+- Worker process: same image, consuming the Postgres-backed work queue.
+- Postgres: durable application state and queue state.
+- External scheduler: calls internal cron enqueue endpoints.
+- Infrastructure repo: compose, deploy/rollback, host secrets, proxying, and log shipping.
+
+There is intentionally no in-process scheduler. If a task can outlive a web request or can fail independently, enqueue it and let the worker own retries and finalization.
 
 ## Product flow
 
 ```text
-Google sign-in
-  -> profile/resume/onboarding chat
-  -> followed companies
-  -> job sync fetches ATS postings
-  -> worker creates Application rows
-  -> async matching scores each Application
-  -> user reviews matches
-  -> user requests cover letter
-  -> worker generates document
-  -> user opens ATS form and marks applied
+Sign in
+  -> create/update profile from resume and onboarding chat
+  -> choose companies to follow
+  -> sync jobs from supported ATS providers
+  -> create application candidates
+  -> match each candidate against the profile
+  -> review matches
+  -> generate a cover letter on demand
+  -> apply on the ATS and mark the app state locally
 ```
 
-## Backend layout
+## Code map
 
-- `app/api/`: FastAPI routes. Public endpoints should stay quick and return `202` for long-running work.
-- `app/services/`: deterministic business logic, database orchestration, provider wrappers.
-- `app/agents/`: LLM prompt/response code. Onboarding is the only graph with checkpointing.
-- `app/sources/`: ATS provider adapters.
-- `app/models/`: SQLModel table definitions. Alembic owns schema changes.
-- `app/worker/`: Postgres-backed queue processor and job handlers.
-- `app/scheduler/tasks.py`: cron-triggered enqueue and maintenance helpers.
+Use these paths to answer “what exactly does it do today?”
 
-## Work queue
+- `app/main.py`: app setup and route registration.
+- `app/config.py`: environment-backed settings.
+- `app/api/`: HTTP route contracts.
+- `app/models/`: database tables and persisted enums.
+- `app/services/`: business logic, provider wrappers, orchestration.
+- `app/agents/`: LLM prompts, structured outputs, and invocation safety.
+- `app/sources/`: ATS adapters.
+- `app/worker/`: queue claiming, retries, leases, handlers, finalization.
+- `app/scheduler/tasks.py`: cron-triggered enqueue helpers.
+- `frontend/src/api/`: frontend API client/types.
+- `frontend/src/pages/` and `frontend/src/components/`: user-facing flows.
 
-`work_queue` is the durable async boundary. Rows are claimed with Postgres locks, leases, retry backoff, and dedupe keys.
+## LLM boundaries
 
-Current job types:
+Matching and generation are intentionally asynchronous because provider calls are slow, expensive, and quota-limited. The app should record user intent first, then let the worker run the model call and persist the result.
 
-- `fetch-slug`: fetch one provider slug and upsert jobs/applications.
-- `match`: score one application synchronously through the normal matching path.
-- `batch-match`: submit/poll/import async provider-batch matching for one application per provider request.
-- `generate-cover-letter`: create or regenerate a cover letter for one application.
-- `maintenance`: run daily cleanup/search-expiry tasks.
-
-The public API and cron routes enqueue these jobs. They should not do provider fetches or LLM calls inline.
-
-## Matching
-
-Matching has two layers:
-
-1. Deterministic filters reject obvious mismatches before spending LLM tokens.
-2. The LLM scores one application/job against the profile and returns structured score fields.
-
-The batch API is used as an async transport, not as a multi-job prompt. Each provider request contains one local application/job pair so response correlation stays boring and predictable.
-
-## Generation
-
-Cover-letter generation is asynchronous:
-
-- `POST /api/applications/{id}/cover-letter` sets `generation_status=pending`, enqueues work, and returns `202`.
-- Worker moves status through `pending -> generating -> ready` or `failed`.
-- Clients poll `GET /api/applications/{id}/cover-letter/status`.
-
-Valid generation statuses are `none`, `pending`, `generating`, `ready`, and `failed`.
-
-## Onboarding and checkpoints
-
-Onboarding uses LangGraph plus `AsyncPostgresSaver` because chat state needs checkpointing. The checkpointer uses a separate psycopg v3 pool from the SQLAlchemy asyncpg pool. The `checkpoint_*` tables are owned by LangGraph and must not be added to Alembic migrations.
-
-Generation and matching do not need checkpoints.
+Onboarding is the exception that keeps conversational state: it uses LangGraph checkpointing because a profile-building chat needs resumable state. Matching and generation do not need graph checkpoints; their durable state is normal application data plus queue rows.
 
 ## Database and migrations
 
-Use `make migrate ARGS="..."` or `uv run python scripts/alembic_safe.py ...`; never run raw `alembic` for write migrations. The wrapper blocks accidental writes against non-local production-like databases unless explicitly overridden.
+Use the migration wrapper (`make migrate ARGS="..."` or `scripts/alembic_safe.py`) instead of raw Alembic for write operations. The wrapper exists to reduce the chance of accidentally advancing a production-like database from a local checkout.
 
-SQLModel does not infer every Postgres type. ARRAY and JSONB fields should use explicit `sa_column=Column(...)`. New models must be imported from `app/models/__init__.py` so Alembic sees them.
+SQLModel does not infer every Postgres type. When using Postgres-specific columns such as arrays or JSONB, define the SQLAlchemy column explicitly and ensure new models are imported from `app/models/__init__.py` so Alembic can see them.
 
-## Frontend layout
+## Documentation rule
 
-- `frontend/src/pages/`: page-level routes.
-- `frontend/src/components/`: reusable UI and page sections.
-- `frontend/src/api/`: API client/types.
-- `frontend/src/test/`: MSW and test setup.
-
-The frontend polls only while user-visible async work is active. Avoid background minute loops per component.
+Keep this file durable. Do not list every endpoint, enum value, queue type, prompt field, or deployment step here unless the detail explains an architectural decision. Link to code for current mechanics and to runbooks for operational procedures.
