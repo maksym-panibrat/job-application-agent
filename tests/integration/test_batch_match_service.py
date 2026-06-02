@@ -172,8 +172,8 @@ async def test_build_submits_batch_for_profile_unscored_apps(db_session):
     assert result.selected == 3
     assert result.submitted == 3
     assert result.imported == 0
-    assert len(provider.submitted_requests) == 1
-    assert len(provider.submitted_requests[0]["jobs"]) == 3
+    assert len(provider.submitted_requests) == 3
+    assert [len(request["jobs"]) for request in provider.submitted_requests] == [1, 1, 1]
 
     batch = (await db_session.execute(select(LLMMatchBatch))).scalar_one()
     assert batch.status == "submitted"
@@ -391,7 +391,12 @@ async def test_import_partial_provider_output(db_session):
                             rationale="Strong Python match",
                             strengths=["Python"],
                             gaps=[],
-                        ),
+                        )
+                    ],
+                ),
+                ProviderRequestResult(
+                    request_key="request-0002",
+                    results=[
                         ProviderJobResult(
                             application_id=str(apps[1].id),
                             score=None,
@@ -399,7 +404,7 @@ async def test_import_partial_provider_output(db_session):
                             rationale="Provider returned null score",
                             strengths=[],
                             gaps=[],
-                        ),
+                        )
                     ],
                 )
             ]
@@ -511,7 +516,12 @@ async def test_duplicate_provider_result_ids_import_by_request_position(
                             rationale="Strong Python match",
                             strengths=["Python"],
                             gaps=[],
-                        ),
+                        )
+                    ],
+                ),
+                ProviderRequestResult(
+                    request_key="request-0002",
+                    results=[
                         ProviderJobResult(
                             application_id=str(apps[0].id),
                             score=0.7,
@@ -519,7 +529,7 @@ async def test_duplicate_provider_result_ids_import_by_request_position(
                             rationale="Duplicate result",
                             strengths=["APIs"],
                             gaps=[],
-                        ),
+                        )
                     ],
                 )
             ]
@@ -569,7 +579,12 @@ async def test_corrupted_provider_result_ids_import_by_request_position(db_sessi
                             rationale="First by position",
                             strengths=["Python"],
                             gaps=[],
-                        ),
+                        )
+                    ],
+                ),
+                ProviderRequestResult(
+                    request_key="request-0002",
+                    results=[
                         ProviderJobResult(
                             application_id=str(uuid.uuid4()),
                             score=0.7,
@@ -577,7 +592,12 @@ async def test_corrupted_provider_result_ids_import_by_request_position(db_sessi
                             rationale="Second by position",
                             strengths=["APIs"],
                             gaps=[],
-                        ),
+                        )
+                    ],
+                ),
+                ProviderRequestResult(
+                    request_key="request-0003",
+                    results=[
                         ProviderJobResult(
                             application_id="not-a-uuid",
                             score=0.6,
@@ -585,7 +605,7 @@ async def test_corrupted_provider_result_ids_import_by_request_position(db_sessi
                             rationale="Third by position",
                             strengths=["Platform"],
                             gaps=[],
-                        ),
+                        )
                     ],
                 )
             ]
@@ -601,7 +621,10 @@ async def test_corrupted_provider_result_ids_import_by_request_position(db_sessi
         uuid.UUID(job["application_id"]): (0.8 - index * 0.1, summary)
         for index, (job, summary) in enumerate(
             zip(
-                first_provider.submitted_requests[0]["jobs"],
+                [
+                    request["jobs"][0]
+                    for request in first_provider.submitted_requests
+                ],
                 ["First result", "Second result", "Third result"],
                 strict=True,
             )
@@ -645,7 +668,12 @@ async def test_unknown_provider_result_id_imports_by_request_position(
                             rationale="Strong Python match",
                             strengths=["Python"],
                             gaps=[],
-                        ),
+                        )
+                    ],
+                ),
+                ProviderRequestResult(
+                    request_key="request-0002",
+                    results=[
                         ProviderJobResult(
                             application_id=str(uuid.uuid4()),
                             score=0.7,
@@ -653,7 +681,7 @@ async def test_unknown_provider_result_id_imports_by_request_position(
                             rationale="Not from this request",
                             strengths=["APIs"],
                             gaps=[],
-                        ),
+                        )
                     ],
                 )
             ]
@@ -1080,3 +1108,4 @@ async def test_below_threshold_import_preserves_user_owned_status(db_session):
     assert refreshed is not None
     assert refreshed.match_score == 0.2
     assert refreshed.status == "applied"
+

@@ -602,8 +602,8 @@ def _provider_output_correlation_errors(
         repeated_request_key = request.request_key in seen_request_keys
         seen_request_keys.add(request.request_key)
 
-        if repeated_request_key and request.request_key not in request_errors:
-            request_errors[request.request_key] = "provider returned duplicate request_key"
+        if repeated_request_key:
+            return "provider returned duplicate request_key", {}
     return None, request_errors
 
 

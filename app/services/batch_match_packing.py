@@ -118,19 +118,6 @@ def pack_provider_requests(
         raise ValueError("max_apps_per_request must be at least 1")
 
     groups: list[PackedProviderRequest] = []
-    current: list[BatchJobContext] = []
-
-    def flush() -> None:
-        if not current:
-            return
-        groups.append(
-            PackedProviderRequest(
-                request_key=f"request-{len(groups) + 1:04d}",
-                jobs=list(current),
-                estimated_chars=estimate_request_chars(profile_text=profile_text, jobs=current),
-            )
-        )
-        current.clear()
 
     for original_job in jobs:
         job = _truncate_job_to_request_budget(
@@ -138,13 +125,11 @@ def pack_provider_requests(
             job=original_job,
             max_request_chars=max_request_chars,
         )
-        candidate = [*current, job]
-        if current and (
-            len(candidate) > max_apps_per_request
-            or estimate_request_chars(profile_text=profile_text, jobs=candidate)
-            > max_request_chars
-        ):
-            flush()
-        current.append(job)
-    flush()
+        groups.append(
+            PackedProviderRequest(
+                request_key=f"request-{len(groups) + 1:04d}",
+                jobs=[job],
+                estimated_chars=estimate_request_chars(profile_text=profile_text, jobs=[job]),
+            )
+        )
     return groups
