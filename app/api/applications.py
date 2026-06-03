@@ -1,20 +1,27 @@
 """Applications endpoints — list, review, generate cover letter, mark applied."""
 
 import uuid
-from datetime import UTC, datetime
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy import func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
 from app.api.deps import get_current_profile
+from app.contracts.workflow import (
+    ApplicationStatus,
+    GenerationStatus,
+    JobType,
+    cover_letter_dedupe_key,
+)
 from app.database import get_db, get_session_factory
 from app.models.application import Application, GeneratedDocument
 from app.models.job import Job
 from app.models.user_profile import UserProfile
 from app.models.work_queue import WorkQueue, WorkQueueStatus
 from app.services import application_service, match_service
+from app.services.application_workflow import mark_user_decision
 from app.services.engagement_service import record_engagement
 
 log = structlog.get_logger()
@@ -45,6 +52,7 @@ async def list_applications(
         match_strengths,
         match_gaps,
         created_at,
+        applied_at,
         job_id,
         title,
         company_name,
@@ -66,6 +74,7 @@ async def list_applications(
                 "match_strengths": match_strengths,
                 "match_gaps": match_gaps,
                 "created_at": created_at,
+                "applied_at": applied_at,
                 "job": {
                     "id": str(job_id),
                     "title": title,
@@ -80,6 +89,27 @@ async def list_applications(
             }
         )
     return result
+
+
+@router.get("/summary")
+async def application_summary(
+    profile: UserProfile = Depends(get_current_profile),
+    session: AsyncSession = Depends(get_db),
+):
+    rows = (
+        await session.execute(
+            select(Application.status, func.count())
+            .where(Application.profile_id == profile.id)
+            .group_by(Application.status)
+        )
+    ).all()
+    counts = {status: int(count) for status, count in rows}
+    return {
+        ApplicationStatus.PENDING_REVIEW: counts.get(ApplicationStatus.PENDING_REVIEW, 0),
+        ApplicationStatus.AUTO_REJECTED: counts.get(ApplicationStatus.AUTO_REJECTED, 0),
+        ApplicationStatus.DISMISSED: counts.get(ApplicationStatus.DISMISSED, 0),
+        ApplicationStatus.APPLIED: counts.get(ApplicationStatus.APPLIED, 0),
+    }
 
 
 @router.get("/{app_id}")
@@ -161,28 +191,26 @@ async def review_application(
     profile: UserProfile = Depends(get_current_profile),
     session: AsyncSession = Depends(get_db),
 ):
-    """Status transitions only: dismissed, applied. (Cover-letter generation
-    is a separate endpoint, /cover-letter.)"""
+    """User decision transitions. Cover-letter generation is a separate endpoint."""
     app = await session.get(Application, uuid.UUID(app_id))
     if not app or app.profile_id != profile.id:
         raise HTTPException(status_code=404, detail="Application not found")
 
     action = data.get("status")
-    if action not in ("dismissed", "applied", "pending_review"):
+    if action not in {
+        ApplicationStatus.DISMISSED,
+        ApplicationStatus.APPLIED,
+        ApplicationStatus.PENDING_REVIEW,
+    }:
         raise HTTPException(
             status_code=400, detail="status must be dismissed, applied, or pending_review"
         )
 
     previous_status = app.status
-    if action == "applied" and previous_status != "applied":
-        app.applied_at = datetime.now(UTC)
-    if action == "pending_review":
-        # Undo path: clear applied_at so the UI's "applied" status doesn't linger.
-        app.applied_at = None
-    app.status = action
-    app.updated_at = datetime.now(UTC)
+    decision = ApplicationStatus(action)
+    mark_user_decision(app, decision)
     session.add(app)
-    if action == "dismissed" and previous_status != "dismissed":
+    if decision == ApplicationStatus.DISMISSED and previous_status != ApplicationStatus.DISMISSED:
         await record_engagement(
             session,
             user_id=profile.user_id,
@@ -192,7 +220,7 @@ async def review_application(
             subject_id=app.id,
             source="api",
         )
-    if action == "applied" and previous_status != "applied":
+    if decision == ApplicationStatus.APPLIED and previous_status != ApplicationStatus.APPLIED:
         await record_engagement(
             session,
             user_id=profile.user_id,
@@ -276,8 +304,8 @@ async def get_cover_letter_status(
             await session.execute(
                 select(WorkQueue)
                 .where(
-                    WorkQueue.job_type == "generate-cover-letter",
-                    WorkQueue.dedupe_key == f"generate-cover-letter:{app.id}",
+                    WorkQueue.job_type == JobType.GENERATE_COVER_LETTER,
+                    WorkQueue.dedupe_key == cover_letter_dedupe_key(app.id),
                 )
                 .order_by(WorkQueue.enqueued_at.desc(), WorkQueue.id.desc())
                 .limit(1)
@@ -286,7 +314,7 @@ async def get_cover_letter_status(
         .scalars()
         .first()
     )
-    if app.generation_status == "none" and queue_row is None:
+    if app.generation_status == GenerationStatus.NONE and queue_row is None:
         raise HTTPException(status_code=404, detail="No generation requested")
 
     body = {
@@ -296,15 +324,15 @@ async def get_cover_letter_status(
     if queue_row is not None:
         body["queued_at"] = queue_row.enqueued_at
 
-    if app.generation_status == "ready":
-        body["status"] = "ready"
+    if app.generation_status == GenerationStatus.READY:
+        body["status"] = GenerationStatus.READY
         body["completed_at"] = app.generated_at or (
             queue_row.completed_at if queue_row is not None else None
         )
         return body
 
-    if app.generation_status == "failed":
-        body["status"] = "failed"
+    if app.generation_status == GenerationStatus.FAILED:
+        body["status"] = GenerationStatus.FAILED
         if queue_row is not None and queue_row.last_error:
             body["error"] = queue_row.last_error
         if queue_row is not None:
@@ -312,15 +340,15 @@ async def get_cover_letter_status(
         return body
 
     if queue_row is not None and queue_row.status == WorkQueueStatus.IN_PROGRESS:
-        body["status"] = "generating"
+        body["status"] = GenerationStatus.GENERATING
         body["claimed_at"] = queue_row.claimed_at
         return body
 
-    if app.generation_status == "generating":
-        body["status"] = "generating"
+    if app.generation_status == GenerationStatus.GENERATING:
+        body["status"] = GenerationStatus.GENERATING
         return body
 
-    body["status"] = "pending"
+    body["status"] = GenerationStatus.PENDING
     return body
 
 
@@ -332,20 +360,18 @@ async def mark_applied(
 ):
     """Manually mark an application as applied.
 
-    Transitions status from pending_review or open to applied and records
+    Transitions status from pending_review to applied and records
     the applied_at timestamp. Idempotent — calling again when already applied
     returns the existing applied_at without modifying it.
     """
     app = await session.get(Application, uuid.UUID(app_id))
     if not app or app.profile_id != profile.id:
         raise HTTPException(status_code=404, detail="Application not found")
-    if app.status == "applied":
+    if app.status == ApplicationStatus.APPLIED:
         return {"id": str(app.id), "status": app.status, "applied_at": app.applied_at}
-    if app.status not in ("pending_review", "open"):
+    if app.status != ApplicationStatus.PENDING_REVIEW:
         raise HTTPException(status_code=409, detail=f"Cannot mark applied from status {app.status}")
-    app.status = "applied"
-    app.applied_at = datetime.now(UTC)
-    app.updated_at = datetime.now(UTC)
+    mark_user_decision(app, ApplicationStatus.APPLIED)
     session.add(app)
     await record_engagement(
         session,

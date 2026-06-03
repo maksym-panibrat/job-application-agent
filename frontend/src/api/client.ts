@@ -74,10 +74,14 @@ export interface Job {
   posted_at: string | null
 }
 
+export type ApplicationStatus = 'pending_review' | 'auto_rejected' | 'dismissed' | 'applied'
+export type GenerationStatus = 'none' | 'pending' | 'generating' | 'ready' | 'failed'
+export type DocumentType = 'tailored_resume' | 'cover_letter' | 'custom_answers'
+
 export interface Application {
   id: string
-  status: string
-  generation_status: string
+  status: ApplicationStatus
+  generation_status: GenerationStatus
   match_score: number | null
   match_summary: string | null
   match_rationale: string | null
@@ -95,12 +99,19 @@ export interface ApplicationDetail extends Application {
 
 export interface Document {
   id: string
-  doc_type: string
+  doc_type: DocumentType
   content_md: string
   structured_content?: Record<string, string> | null
   has_edits: boolean
   generation_model: string | null
   created_at: string
+}
+
+export interface ApplicationSummary {
+  pending_review: number
+  auto_rejected: number
+  dismissed: number
+  applied: number
 }
 
 export interface AppStatus {
@@ -113,6 +124,7 @@ export interface SyncStatus {
   slugs_total: number
   slugs_pending: number
   matches_pending: number
+  batch_matches_pending: number
   last_sync_requested_at: string | null
   last_sync_completed_at: string | null
   last_sync_summary: { matched_now?: number } | null
@@ -149,27 +161,46 @@ function clearAuthOnUnauthorized(status: number) {
   window.dispatchEvent(new CustomEvent('auth:token-expired'))
 }
 
-export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
+export class ApiError extends Error {
+  status: number
+  detail: string
+
+  constructor(status: number, detail: string) {
+    super(`${status}: ${detail}`)
+    this.name = 'ApiError'
+    this.status = status
+    this.detail = detail
+  }
+}
+
+async function parseApiError(response: Response): Promise<ApiError> {
+  const text = await response.text()
+  let detail = text
+  try {
+    const parsed = JSON.parse(text)
+    if (parsed && typeof parsed.detail === 'string') detail = parsed.detail
+  } catch {
+    // body was not JSON; use raw text
+  }
+  return new ApiError(response.status, detail)
+}
+
+function authHeaders(contentType = 'application/json'): Record<string, string> {
   const token = sessionStorage.getItem('access_token')
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+  const headers: Record<string, string> = {}
+  if (contentType) headers['Content-Type'] = contentType
   if (token) headers['Authorization'] = `Bearer ${token}`
+  return headers
+}
+
+export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, {
-    headers: { ...headers, ...init?.headers },
     ...init,
+    headers: { ...authHeaders(), ...init?.headers },
   })
   clearAuthOnUnauthorized(res.status)
   if (!res.ok) {
-    const text = await res.text()
-    let detail: string | null = null
-    try {
-      const parsed = JSON.parse(text)
-      if (parsed && typeof parsed.detail === 'string') {
-        detail = parsed.detail
-      }
-    } catch {
-      // body wasn't JSON; fall through to raw text
-    }
-    throw new Error(detail ? `${res.status}: ${detail}` : `${res.status}: ${text}`)
+    throw await parseApiError(res)
   }
   return res.json()
 }
@@ -183,16 +214,13 @@ export const api = {
       body: JSON.stringify(data),
     }),
   uploadResume: async (file: File): Promise<{ id: string; base_resume_md: string | null; extraction_status: string; message: string }> => {
-    const token = sessionStorage.getItem('access_token')
-    const headers: Record<string, string> = {}
-    if (token) headers['Authorization'] = `Bearer ${token}`
+    const headers = authHeaders('')
     const form = new FormData()
     form.append('file', file)
     const r = await fetch('/api/profile/upload', { method: 'POST', body: form, headers })
     clearAuthOnUnauthorized(r.status)
     if (!r.ok) {
-      const text = await r.text()
-      throw new Error(`${r.status}: ${text}`)
+      throw await parseApiError(r)
     }
     return r.json()
   },
@@ -206,9 +234,7 @@ export const api = {
   resolveCompany: async (
     name: string,
   ): Promise<{ id: string; canonical_name: string; providers: string[] }> => {
-    const token = sessionStorage.getItem('access_token')
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' }
-    if (token) headers['Authorization'] = `Bearer ${token}`
+    const headers = authHeaders()
     const resp = await fetch('/api/companies/resolve', {
       method: 'POST',
       headers,
@@ -222,15 +248,7 @@ export const api = {
       throw new Error("Couldn't reach our boards right now, try again.")
     }
     if (!resp.ok) {
-      const text = await resp.text()
-      let detail: string | null = null
-      try {
-        const parsed = JSON.parse(text)
-        if (parsed && typeof parsed.detail === 'string') detail = parsed.detail
-      } catch {
-        // body wasn't JSON
-      }
-      throw new Error(detail ?? `${resp.status}: ${text}`)
+      throw await parseApiError(resp)
     }
     const body = await resp.json()
     return body.company
@@ -246,7 +264,7 @@ export const api = {
       matched_now: number
     }>('/api/jobs/sync', { method: 'POST' }),
 
-  // Sync status (Task 19)
+  // Sync status
   getSyncStatus: () =>
     apiFetch<SyncStatus>('/api/sync/status'),
 
@@ -258,13 +276,14 @@ export const api = {
     }),
 
   // Applications
-  listApplications: (params?: { status?: string; min_score?: number; limit?: number }) => {
+  listApplications: (params?: { status?: ApplicationStatus; min_score?: number; limit?: number }) => {
     const q = new URLSearchParams()
     if (params?.status) q.set('status', params.status)
     if (params?.min_score != null) q.set('min_score', String(params.min_score))
     if (params?.limit) q.set('limit', String(params.limit))
     return apiFetch<Application[]>(`/api/applications?${q}`)
   },
+  getApplicationSummary: () => apiFetch<ApplicationSummary>('/api/applications/summary'),
   getApplication: (id: string) => apiFetch<ApplicationDetail>(`/api/applications/${id}`),
   reviewApplication: (id: string, status: 'dismissed' | 'applied' | 'pending_review') =>
     apiFetch<{ id: string; status: string }>(`/api/applications/${id}`, {
@@ -294,21 +313,11 @@ export const api = {
   /** Fetch the PDF as a blob using the auth header from sessionStorage.
    *  Throws on non-2xx (so the caller can surface an error toast). */
   downloadPdfBlob: async (docId: string): Promise<Blob> => {
-    const token = sessionStorage.getItem('access_token')
-    const headers: Record<string, string> = {}
-    if (token) headers['Authorization'] = `Bearer ${token}`
+    const headers = authHeaders('')
     const res = await fetch(`/api/documents/${docId}/pdf`, { headers })
     clearAuthOnUnauthorized(res.status)
     if (!res.ok) {
-      const text = await res.text()
-      let detail: string | null = null
-      try {
-        const parsed = JSON.parse(text)
-        if (parsed && typeof parsed.detail === 'string') detail = parsed.detail
-      } catch {
-        // body wasn't JSON
-      }
-      throw new Error(detail ?? `${res.status}: ${text}`)
+      throw await parseApiError(res)
     }
     return res.blob()
   },
@@ -324,9 +333,7 @@ export const api = {
     onError?: (err: Error) => void,
     onMeta?: (meta: Record<string, unknown>) => void,
   ): Promise<void> => {
-    const token = sessionStorage.getItem('access_token')
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' }
-    if (token) headers['Authorization'] = `Bearer ${token}`
+    const headers = authHeaders()
     return fetch('/api/chat/messages', {
       method: 'POST',
       headers,
@@ -334,43 +341,54 @@ export const api = {
     }).then(async (res) => {
       clearAuthOnUnauthorized(res.status)
       if (!res.ok) {
-        const text = await res.text()
-        const err = new Error(`${res.status}: ${text}`)
+        const err = await parseApiError(res)
         if (onError) { onError(err); return }
         throw err
       }
       if (!res.body) return
       const reader = res.body.getReader()
       const decoder = new TextDecoder()
-      let pendingEvent: string | null = null
+      let buffer = ''
+      const handleEvent = (rawEvent: string): boolean => {
+        let eventType = 'message'
+        const dataLines: string[] = []
+        for (const line of rawEvent.split('\n')) {
+          if (line.startsWith('event: ')) eventType = line.slice(7).trim()
+          if (line.startsWith('data: ')) dataLines.push(line.slice(6))
+        }
+        if (!dataLines.length) return false
+        const data = dataLines.join('\n')
+        if (data === '[DONE]') return true
+        try {
+          const parsed = JSON.parse(data)
+          if (eventType === 'meta' && onMeta) {
+            onMeta(parsed)
+          } else if (eventType === 'error') {
+            const err = new Error(parsed.detail || parsed.error || 'stream error')
+            if (onError) { onError(err); return true }
+            throw err
+          } else if (parsed.content) {
+            onChunk(parsed.content)
+          }
+        } catch (err) {
+          const error = err instanceof Error ? err : new Error(`stream parse error: ${data}`)
+          if (onError) { onError(error); return true }
+          throw error
+        }
+        return false
+      }
       while (true) {
         const { done, value } = await reader.read()
         if (done) break
-        const text = decoder.decode(value)
-        for (const line of text.split('\n')) {
-          if (line.startsWith('event: ')) {
-            pendingEvent = line.slice(7).trim()
-            continue
-          }
-          if (line.startsWith('data: ')) {
-            const data = line.slice(6)
-            const eventType = pendingEvent
-            pendingEvent = null
-            if (data === '[DONE]') return
-            try {
-              const parsed = JSON.parse(data)
-              if (eventType === 'meta' && onMeta) {
-                onMeta(parsed)
-              } else if (parsed.content) {
-                onChunk(parsed.content)
-              }
-            } catch {
-              const err = new Error(`stream parse error: ${data}`)
-              if (onError) { onError(err); return }
-            }
-          }
+        buffer += decoder.decode(value, { stream: true })
+        const events = buffer.split(/\r?\n\r?\n/)
+        buffer = events.pop() ?? ''
+        for (const event of events) {
+          if (handleEvent(event)) return
         }
       }
+      buffer += decoder.decode()
+      if (buffer.trim() && handleEvent(buffer)) return
     })
   },
 }

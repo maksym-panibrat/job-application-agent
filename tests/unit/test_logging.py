@@ -1,8 +1,8 @@
 """Logging invariants for the Hetzner + Axiom era.
 
-Pre-migration the app emitted GCP Cloud Run severity/@type fields for Error
-Reporting. Post-migration (Hetzner + Vector → Axiom) those are dead weight —
-errors are plain JSON records, `level=error` is the only signal Axiom needs.
+Production logs intentionally omit hosted-platform severity/@type fields.
+Vector ships container stdout to Axiom as plain JSON records, so `level=error`
+is the only signal Axiom needs.
 
 Invariants:
 1. configure_logging() in production produces JSON output with NO `severity`

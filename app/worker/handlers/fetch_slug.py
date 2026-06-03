@@ -1,7 +1,8 @@
-"""fetch-slug handler: drain one provider slug and enqueue match rows."""
+"""fetch-slug handler: drain one provider slug and enqueue follow-up matching."""
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.contracts.workflow import JobType
 from app.database import get_session_factory
 from app.models.work_queue import WorkQueue
 from app.sources.base import TransientFetchError
@@ -13,6 +14,16 @@ log = structlog.get_logger()
 
 class FetchSlugHandler:
     max_attempts = 5
+
+    async def on_terminal_failure(self, session_factory, row: WorkQueue, error: str) -> None:
+        del session_factory
+        payload = FetchSlugPayload(**row.payload)
+        await log.awarning(
+            "worker.fetch_slug.terminal_failure",
+            provider=payload.provider,
+            slug=payload.slug,
+            error=error,
+        )
 
     async def __call__(self, session: AsyncSession, row: WorkQueue) -> None:
         del session
@@ -37,4 +48,4 @@ class FetchSlugHandler:
         )
 
 
-HANDLERS["fetch-slug"] = FetchSlugHandler()
+HANDLERS[JobType.FETCH_SLUG] = FetchSlugHandler()

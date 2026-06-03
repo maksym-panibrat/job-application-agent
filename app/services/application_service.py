@@ -8,25 +8,31 @@ none -> pending -> generating -> ready/failed.
 
 import time
 import uuid
-from datetime import UTC, datetime
 
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlmodel import select
 
+from app.contracts.workflow import JobType, cover_letter_dedupe_key
 from app.models.application import Application, GeneratedDocument
 from app.models.job import Job
 from app.models.user_profile import UserProfile
+from app.services.application_workflow import (
+    IllegalApplicationTransition,
+    mark_generation_failed,
+    mark_generation_generating,
+    mark_generation_ready,
+    request_generation,
+)
+from app.services.generated_document_service import upsert_generated_document
 
 log = structlog.get_logger()
 
 
-class IllegalTransition(Exception):
-    """Raised when a generation_status transition is not allowed."""
+IllegalTransition = IllegalApplicationTransition
 
 
 def _generation_dedupe_key(application_id: uuid.UUID) -> str:
-    return f"generate-cover-letter:{application_id}"
+    return cover_letter_dedupe_key(application_id)
 
 
 async def flip_to_pending_and_enqueue(
@@ -40,17 +46,14 @@ async def flip_to_pending_and_enqueue(
         app = await session.get(Application, application_id)
         if app is None:
             raise ValueError(f"application {application_id} not found")
-        if app.generation_status not in {"none", "ready", "failed"}:
-            raise IllegalTransition(
-                f"cannot request generation from {app.generation_status}"
-            )
-
-        app.generation_status = "pending"
-        app.updated_at = datetime.now(UTC)
+        try:
+            request_generation(app)
+        except IllegalApplicationTransition as exc:
+            raise IllegalTransition(str(exc)) from exc
         session.add(app)
         row_id = await enqueue(
             session,
-            job_type="generate-cover-letter",
+            job_type=JobType.GENERATE_COVER_LETTER,
             payload={"application_id": str(application_id)},
             dedupe_key=_generation_dedupe_key(application_id),
         )
@@ -65,29 +68,16 @@ async def save_documents(
     app_id = uuid.UUID(application_id)
     saved = []
     for doc in documents:
-        existing = await session.execute(
-            select(GeneratedDocument).where(
-                GeneratedDocument.application_id == app_id,
-                GeneratedDocument.doc_type == doc["doc_type"],
-            )
-        )
-        row = existing.scalar_one_or_none()
-        if row:
-            row.content_md = doc["content_md"]
-            row.generation_model = doc.get("generation_model")
-            row.structured_content = doc.get("structured_content")
-            session.add(row)
-            saved.append(row)
-        else:
-            gdoc = GeneratedDocument(
+        saved.append(
+            await upsert_generated_document(
+                session,
                 application_id=app_id,
                 doc_type=doc["doc_type"],
                 content_md=doc["content_md"],
                 generation_model=doc.get("generation_model"),
                 structured_content=doc.get("structured_content"),
             )
-            session.add(gdoc)
-            saved.append(gdoc)
+        )
     await session.commit()
     return saved
 
@@ -107,9 +97,7 @@ async def generate_materials(
     app = await session.get(Application, application_id)
     if app is None:
         raise ValueError(f"application {application_id} not found")
-    app.generation_status = "generating"
-    app.generation_attempts += 1
-    app.updated_at = datetime.now(UTC)
+    mark_generation_generating(app)
     session.add(app)
     await session.commit()
 
@@ -118,10 +106,7 @@ async def generate_materials(
         saved = await save_documents(str(application_id), [doc_dict], session)
         content = doc_dict["content_md"]
 
-        app.generation_status = "ready"
-        app.cover_letter_content = content
-        app.generated_at = datetime.now(UTC)
-        app.updated_at = datetime.now(UTC)
+        mark_generation_ready(app, content=content)
         session.add(app)
         await session.commit()
 
@@ -140,8 +125,7 @@ async def generate_materials(
         # Re-read in case another session touched the row.
         fresh = await session.get(Application, application_id)
         if fresh is not None:
-            fresh.generation_status = "failed"
-            fresh.updated_at = datetime.now(UTC)
+            mark_generation_failed(fresh)
             session.add(fresh)
             await session.commit()
         raise

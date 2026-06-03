@@ -149,6 +149,25 @@ describe('api client', () => {
       expect(onMeta).toHaveBeenCalledWith({ profile_mutated: true })
     })
 
+    it('handles SSE events split across network chunks', async () => {
+      originalFetch = globalThis.fetch
+      const encoder = new TextEncoder()
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(encoder.encode('data: {"content":"hel'))
+          controller.enqueue(encoder.encode('lo"}\n\ndata: [DONE]\n\n'))
+          controller.close()
+        },
+      })
+      globalThis.fetch = vi.fn().mockResolvedValue(
+        new Response(stream, { status: 200, headers: { 'Content-Type': 'text/event-stream' } }),
+      )
+
+      const chunks: string[] = []
+      await api.sendMessage('hi', (c) => chunks.push(c))
+      expect(chunks.join('')).toBe('hello')
+    })
+
     it('ignores unknown event types', async () => {
       originalFetch = globalThis.fetch
       const body =

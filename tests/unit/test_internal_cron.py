@@ -146,7 +146,7 @@ def test_maintenance_correct_secret_calls_task():
     ):
         resp = client.post("/internal/cron/maintenance", headers={"X-Cron-Secret": "real-secret"})
     assert resp.status_code == 202
-    assert resp.json() == {"enqueued": [123]}
+    assert resp.json() == {"enqueued": [123], "batch_polls_enqueued": []}
     mock.assert_called_once()
 
 

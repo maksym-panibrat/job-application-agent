@@ -5,18 +5,17 @@ Revises: 8bdb4dedbd38
 Create Date: 2026-04-26 20:33:01.718834
 
 """
-from typing import Sequence, Union
+from collections.abc import Sequence
+
+import sqlalchemy as sa
 
 from alembic import op
-import sqlalchemy as sa
-import sqlmodel
-
 
 # revision identifiers, used by Alembic.
 revision: str = '7a3f0db5b7ba'
-down_revision: Union[str, None] = '8bdb4dedbd38'
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+down_revision: str | None = '8bdb4dedbd38'
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
@@ -26,9 +25,8 @@ def upgrade() -> None:
         sa.Column("applied_at", sa.DateTime(timezone=True), nullable=True),
     )
     # Drop the columns the SQLModel no longer maps (submit pipeline removed).
-    # PR 5 was originally going to bundle these; we drop them here to avoid
-    # NOT NULL violations on inserts of new Job/Application rows that don't
-    # specify them.
+    # Keeping them would cause NOT NULL violations on inserts of new
+    # Job/Application rows that do not specify removed submission fields.
     with op.batch_alter_table("jobs") as batch:
         batch.drop_column("ats_type")
         batch.drop_column("supports_api_apply")

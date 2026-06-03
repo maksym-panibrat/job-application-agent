@@ -1,5 +1,4 @@
 """generate-cover-letter handler with replay short-circuit."""
-from datetime import UTC, datetime
 
 import structlog
 from sqlalchemy import update
@@ -8,9 +7,12 @@ from sqlalchemy.sql import func
 from sqlmodel import select
 
 from app.config import get_settings
+from app.contracts.workflow import GenerationStatus, JobType
 from app.database import get_session_factory
-from app.models.application import Application, GeneratedDocument
+from app.models.application import Application
 from app.models.work_queue import WorkQueue
+from app.services.application_workflow import mark_generation_ready
+from app.services.generated_document_service import upsert_generated_document
 from app.worker.handlers import HANDLERS, TransientError
 from app.worker.payloads import GenerateCoverLetterPayload
 
@@ -27,9 +29,11 @@ class GenerateCoverLetterHandler:
                 update(Application)
                 .where(
                     Application.id == payload.application_id,
-                    Application.generation_status.in_(["pending", "generating"]),
+                    Application.generation_status.in_(
+                        [GenerationStatus.PENDING, GenerationStatus.GENERATING]
+                    ),
                 )
-                .values(generation_status="failed", updated_at=func.now())
+                .values(generation_status=GenerationStatus.FAILED, updated_at=func.now())
             )
             await session.commit()
         await log.awarning(
@@ -51,7 +55,7 @@ class GenerateCoverLetterHandler:
                 application_id=str(payload.application_id),
             )
             return
-        if app.generation_status == "ready" and app.cover_letter_content is not None:
+        if app.generation_status == GenerationStatus.READY and app.cover_letter_content is not None:
             await log.ainfo(
                 "worker.generate_cover_letter.skip_replay",
                 application_id=str(app.id),
@@ -63,9 +67,11 @@ class GenerateCoverLetterHandler:
                 update(Application)
                 .where(
                     Application.id == payload.application_id,
-                    Application.generation_status.in_(["pending", "generating"]),
+                    Application.generation_status.in_(
+                        [GenerationStatus.PENDING, GenerationStatus.GENERATING]
+                    ),
                 )
-                .values(generation_status="generating", updated_at=func.now())
+                .values(generation_status=GenerationStatus.GENERATING, updated_at=func.now())
             )
             if result.rowcount == 0:
                 await log.awarning(
@@ -98,9 +104,9 @@ class GenerateCoverLetterHandler:
                         update(Application)
                         .where(
                             Application.id == payload.application_id,
-                            Application.generation_status == "generating",
+                            Application.generation_status == GenerationStatus.GENERATING,
                         )
-                        .values(generation_status="pending", updated_at=func.now())
+                        .values(generation_status=GenerationStatus.PENDING, updated_at=func.now())
                     )
                     await reset_session.commit()
                 raise TransientError(str(exc), retry_after_seconds=retry_after) from exc
@@ -109,40 +115,21 @@ class GenerateCoverLetterHandler:
                 await fail_session.execute(
                     update(Application)
                     .where(Application.id == payload.application_id)
-                    .values(generation_status="failed", updated_at=func.now())
+                    .values(generation_status=GenerationStatus.FAILED, updated_at=func.now())
                 )
                 await fail_session.commit()
             raise
 
-        app.cover_letter_content = content
-        app.generated_at = datetime.now(UTC)
-        app.generation_status = "ready"
-        app.updated_at = datetime.now(UTC)
+        mark_generation_ready(app, content=content)
         session.add(app)
-
-        existing_doc = (
-            await session.execute(
-                select(GeneratedDocument).where(
-                    GeneratedDocument.application_id == app.id,
-                    GeneratedDocument.doc_type == "cover_letter",
-                )
-            )
-        ).scalar_one_or_none()
-        if existing_doc is None:
-            session.add(
-                GeneratedDocument(
-                    application_id=app.id,
-                    doc_type="cover_letter",
-                    content_md=content,
-                    generation_model=get_settings().llm_generation_model,
-                    structured_content=None,
-                )
-            )
-        else:
-            existing_doc.content_md = content
-            existing_doc.generation_model = get_settings().llm_generation_model
-            existing_doc.structured_content = None
-            session.add(existing_doc)
+        await upsert_generated_document(
+            session,
+            application_id=app.id,
+            doc_type="cover_letter",
+            content_md=content,
+            generation_model=get_settings().llm_generation_model,
+            structured_content=None,
+        )
 
         await log.ainfo(
             "worker.generate_cover_letter.done",
@@ -150,4 +137,4 @@ class GenerateCoverLetterHandler:
         )
 
 
-HANDLERS["generate-cover-letter"] = GenerateCoverLetterHandler()
+HANDLERS[JobType.GENERATE_COVER_LETTER] = GenerateCoverLetterHandler()

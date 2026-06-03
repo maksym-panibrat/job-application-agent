@@ -153,7 +153,6 @@ async def test_sync_profile_returns_202_shape_and_enqueues_stale_slugs(db_sessio
         await db_session.commit()
         await db_session.refresh(company)
         company_ids.append(company.id)
-    profile.target_company_slugs = {"greenhouse": ["airbnb", "stripe"]}
     profile.target_company_ids = company_ids
     db_session.add(profile)
     await db_session.commit()
@@ -414,8 +413,7 @@ async def test_sync_active_profiles_keeps_profile_specific_summaries_and_pruning
 async def test_sync_profile_prunes_invalid_provider_slugs_from_company(db_session):
     """sync_profile drops (provider, slug) entries from Company.provider_slugs
     when their SlugFetch row is marked is_invalid=True. The pruned-slugs summary
-    is now a list of "provider:slug" strings (was bare slug strings under the
-    legacy target_company_slugs path)."""
+    is now a list of "provider:slug" strings."""
     from app.models.company import Company
     from app.models.slug_fetch import SlugFetch
     from app.models.user import User
@@ -457,9 +455,7 @@ async def test_sync_profile_prunes_invalid_provider_slugs_from_company(db_sessio
 
 @pytest.mark.asyncio
 async def test_sync_profile_no_longer_seeds_defaults(db_session):
-    """seed_defaults_if_empty is gone (default-seeding moved to the onboarding
-    agent + company_resolver path). sync_profile must not write anything to
-    the deprecated target_company_slugs JSONB column."""
+    """seed_defaults_if_empty is gone; sync_profile only uses followed companies."""
     from app.models.company import Company
     from app.models.user import User
     from app.services.profile_service import get_or_create_profile
@@ -469,8 +465,7 @@ async def test_sync_profile_no_longer_seeds_defaults(db_session):
     await db_session.commit()
     profile = await get_or_create_profile(user.id, db_session)
     # Pre-seed two Company rows + target_company_ids so work_queue enqueueing has
-    # something to do, while leaving target_company_slugs empty to prove the
-    # legacy seeding path is gone.
+    # something to do. The old default-slug seeding path is gone.
     company_ids: list[uuid.UUID] = []
     for slug in ("airbnb", "stripe"):
         company = Company(
@@ -483,7 +478,6 @@ async def test_sync_profile_no_longer_seeds_defaults(db_session):
         await db_session.commit()
         await db_session.refresh(company)
         company_ids.append(company.id)
-    profile.target_company_slugs = {}
     profile.target_company_ids = company_ids
     db_session.add(profile)
     await db_session.commit()
@@ -491,9 +485,6 @@ async def test_sync_profile_no_longer_seeds_defaults(db_session):
 
     result = await job_sync_service.sync_profile(profile, db_session)
     assert sorted(result["queued_slugs"]) == ["airbnb", "stripe"]
-    await db_session.refresh(profile)
-    # legacy column untouched
-    assert profile.target_company_slugs == {}
 
 
 @pytest.mark.asyncio

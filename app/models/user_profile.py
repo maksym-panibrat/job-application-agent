@@ -49,12 +49,6 @@ class UserProfile(SQLModel, table=True):
     seniority: str | None = None
     search_keywords: list[str] = Field(default_factory=list, sa_column=Column(ARRAY(sa.String)))
     source_cursors: dict = Field(default_factory=dict, sa_column=Column(JSONB))
-    # DEPRECATED: replaced by target_company_ids. Kept one release for rollback;
-    # a follow-up Alembic revision drops this column after the first deploy.
-    target_company_slugs: dict = Field(
-        default_factory=dict,
-        sa_column=Column(JSONB, nullable=False, server_default=sa.text("'{}'::jsonb")),
-    )
     target_company_ids: list[uuid.UUID] = Field(
         default_factory=list,
         sa_column=Column(

@@ -3,6 +3,7 @@ import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
+from app.contracts.workflow import JobType, batch_match_dedupe_key
 from app.models.work_queue import WorkQueue
 from app.services.batch_match_provider import get_batch_match_provider
 from app.services.batch_match_service import run_batch_match_tick
@@ -47,7 +48,7 @@ class BatchMatchHandler:
         if result.requeued or result.submitted:
             settings = get_settings()
             return EnqueueAfterDone(
-                job_type="batch-match",
+                job_type=JobType.BATCH_MATCH,
                 payload={
                     key: value
                     for key, value in {
@@ -56,10 +57,10 @@ class BatchMatchHandler:
                     }.items()
                     if value is not None
                 },
-                dedupe_key=f"batch-match:{payload.profile_id}",
+                dedupe_key=batch_match_dedupe_key(payload.profile_id),
                 not_before_seconds=settings.batch_match_poll_interval_seconds,
             )
         return None
 
 
-HANDLERS["batch-match"] = BatchMatchHandler()
+HANDLERS[JobType.BATCH_MATCH] = BatchMatchHandler()

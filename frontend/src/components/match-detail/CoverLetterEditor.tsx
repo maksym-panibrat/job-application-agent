@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../api/client'
 import type { Document } from '../../api/client'
@@ -20,6 +20,11 @@ export function CoverLetterEditor({ appId, doc, status }: CoverLetterEditorProps
   const [content, setContent] = useState(doc?.content_md ?? '')
   const [editedTracked, setEditedTracked] = useState(false)
   const [generationState, setGenerationState] = useState<string | null>(null)
+  const generationAbortRef = useRef<AbortController | null>(null)
+
+  useEffect(() => {
+    return () => generationAbortRef.current?.abort()
+  }, [])
 
   // Reset when the upstream doc changes (e.g. after generation succeeds).
   useEffect(() => { setContent(doc?.content_md ?? '') }, [doc?.content_md])
@@ -41,9 +46,12 @@ export function CoverLetterEditor({ appId, doc, status }: CoverLetterEditorProps
         application_id: appId,
         job_id: data.job_id,
       })
+      generationAbortRef.current?.abort()
+      const controller = new AbortController()
+      generationAbortRef.current = controller
       const terminal = await pollUntilTerminal(appId, (next) => {
         setGenerationState(next.status)
-      })
+      }, { signal: controller.signal })
       if (terminal.status === 'ready') {
         track('cover_letter.generation_succeeded', { application_id: appId })
         await qc.invalidateQueries({ queryKey: ['application', appId] })
@@ -56,6 +64,7 @@ export function CoverLetterEditor({ appId, doc, status }: CoverLetterEditorProps
       show(terminal.error ?? 'Generation failed', 'error')
     },
     onError: (e) => {
+      if ((e as Error)?.name === 'AbortError') return
       track('cover_letter.generation_failed', { application_id: appId, reason: String(e) })
       show((e as Error)?.message ?? 'Generation failed', 'error')
     },

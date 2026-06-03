@@ -126,7 +126,7 @@ async def test_list_applications_ordering(db_session):
     await db_session.commit()
 
     rows = await list_applications(profile.id, db_session)
-    titles = [row[10] for row in rows]
+    titles = [row[11] for row in rows]
 
     assert titles == [
         "High Score Recent Salary",
@@ -152,6 +152,6 @@ async def test_list_applications_returns_projected_job_data(db_session):
 
     row = rows[0]
     assert row[0] == app.id
-    assert row[9] == job.id
-    assert row[10] == "Python Engineer"
-    assert row[14] == "$120k"
+    assert row[10] == job.id
+    assert row[11] == "Python Engineer"
+    assert row[15] == "$120k"

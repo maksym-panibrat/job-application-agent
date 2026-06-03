@@ -392,8 +392,7 @@ def build_graph(checkpointer: AsyncPostgresSaver) -> StateGraph:
                 experiences = list(updates.pop("work_experiences", None) or [])
 
                 # target_companies is routed through company_resolver to map
-                # display names to Company.id; never written to the deprecated
-                # target_company_slugs blob anymore.
+                # display names to Company.id before updating the profile.
                 companies_payload = updates.pop("target_companies", None)
 
                 # Update flat profile fields (only recognised fields)

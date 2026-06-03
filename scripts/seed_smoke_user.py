@@ -59,7 +59,6 @@ async def seed(session: AsyncSession) -> None:
                 target_locations,
                 remote_ok,
                 source_cursors,
-                target_company_slugs,
                 search_active,
                 created_at,
                 updated_at
@@ -72,7 +71,6 @@ async def seed(session: AsyncSession) -> None:
                 '{}',
                 '{}',
                 TRUE,
-                '{}',
                 '{}',
                 TRUE,
                 NOW(),

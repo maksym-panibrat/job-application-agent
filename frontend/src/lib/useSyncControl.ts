@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { api, SyncStatus } from '../api/client'
+import { api, ApiError, SyncStatus } from '../api/client'
 import { useToast } from '../components/ui/Toast'
 import { track } from './track'
 
@@ -20,7 +20,10 @@ function liveLabel(s: SyncStatus | null): string {
     return `Searching ${done} of ${s.slugs_total} boards…`
   }
   if (s.state === 'matching') {
-    return `Scoring ${s.matches_pending} job${s.matches_pending === 1 ? '' : 's'}…`
+    if (s.matches_pending > 0) {
+      return `Scoring ${s.matches_pending} job${s.matches_pending === 1 ? '' : 's'}…`
+    }
+    return 'Scoring jobs…'
   }
   return 'Sync now'
 }
@@ -68,7 +71,7 @@ export function useSyncControl({ enabled = true }: UseSyncControlOptions = {}): 
           livePolls = 0
         }
       } catch (err) {
-        if ((err as Error)?.message?.includes('401')) {
+        if (err instanceof ApiError && err.status === 401) {
           return
         }
         // Silent — control just stays "Sync now" without live state.

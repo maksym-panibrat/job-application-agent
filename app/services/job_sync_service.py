@@ -28,8 +28,7 @@ from app.models.company import Company
 from app.models.slug_fetch import SlugFetch
 from app.models.user_profile import UserProfile
 from app.services import slug_registry_service
-from app.worker.payloads import FetchSlugPayload
-from app.worker.queue_service import enqueue
+from app.worker.enqueue_intents import enqueue_fetch_slug
 
 log = structlog.get_logger()
 
@@ -94,15 +93,11 @@ async def prune_and_enqueue(profile: UserProfile, session: AsyncSession) -> dict
     stale = await slug_registry_service.list_stale_for_profile(profile, session, ttl_hours=6)
     queued: list[str] = []
     for provider, slug in stale:
-        row_id = await enqueue(
+        row_id = await enqueue_fetch_slug(
             session,
-            job_type="fetch-slug",
-            payload=FetchSlugPayload(
-                provider=provider,
-                slug=slug,
-                batch_match_max_items=settings.batch_match_manual_sync_max_items,
-            ).model_dump(exclude_none=True),
-            dedupe_key=f"fetch-slug:{provider}:{slug}",
+            provider=provider,
+            slug=slug,
+            batch_match_max_items=settings.batch_match_manual_sync_max_items,
         )
         if row_id is not None:
             queued.append(slug)
@@ -152,15 +147,11 @@ async def sync_active_profiles(session: AsyncSession) -> dict:
     enqueued: list[str] = []
     enqueued_pairs: set[tuple[str, str]] = set()
     for (provider, slug), display_slug in distinct_pairs.items():
-        row_id = await enqueue(
+        row_id = await enqueue_fetch_slug(
             session,
-            job_type="fetch-slug",
-            payload=FetchSlugPayload(
-                provider=provider,
-                slug=slug,
-                batch_match_max_items=settings.batch_match_cron_max_items,
-            ).model_dump(exclude_none=True),
-            dedupe_key=f"fetch-slug:{provider}:{slug}",
+            provider=provider,
+            slug=slug,
+            batch_match_max_items=settings.batch_match_cron_max_items,
         )
         if row_id is not None:
             enqueued.append(display_slug)
