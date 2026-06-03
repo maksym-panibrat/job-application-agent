@@ -1,6 +1,6 @@
-# CLAUDE.md
+# AGENTS.md
 
-Guidance for Claude Code working in this repo. Keep only non-obvious behaviors; look up anything else in the code.
+Guidance for AI coding agents working in this repo. Keep only non-obvious behaviors; look up anything else in the code.
 
 ## Setup
 

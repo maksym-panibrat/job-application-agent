@@ -55,7 +55,7 @@ cd frontend && npm run build            # build to app/static/
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) explains why the app is split across API, worker, queue, LLM, and infra boundaries.
 - [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) explains deployment ownership between this repo and `panibrat-infra`.
 - [`docs/runbooks/`](docs/runbooks/) contains narrow operational procedures.
-- `CLAUDE.md` documents non-obvious development guardrails.
+- `AGENTS.md` documents non-obvious development guardrails for AI coding agents.
 
 Docs are intentionally high level. For exact endpoints, statuses, schemas, prompts, and config names, read the code.
 
