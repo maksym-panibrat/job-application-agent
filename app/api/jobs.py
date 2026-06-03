@@ -18,7 +18,7 @@ from app.models.llm_match_batch import ACTIVE_BATCH_STATUSES, LLMMatchBatch
 from app.models.slug_fetch import SlugFetch
 from app.models.user_profile import UserProfile
 from app.models.work_queue import WorkQueue, WorkQueueStatus
-from app.services import job_sync_service
+from app.services import batch_match_reconcile, job_sync_service
 from app.services.rate_limit_service import check_daily_quota
 
 log = structlog.get_logger()
@@ -48,11 +48,21 @@ async def trigger_sync(
 sync_router = APIRouter(prefix="/api/sync", tags=["sync"])
 
 
+async def _requeue_due_batch_matches(profile_id, session: AsyncSession) -> None:
+    enqueued = await batch_match_reconcile.enqueue_due_batch_polls(
+        session,
+        profile_id=profile_id,
+    )
+    if enqueued:
+        await session.commit()
+
+
 @sync_router.get("/status")
 async def sync_status(
     profile: UserProfile = Depends(get_current_profile),
     session: AsyncSession = Depends(get_db),
 ):
+    await _requeue_due_batch_matches(profile.id, session)
     # Collect every (source, slug) pair the profile follows by walking the
     # Company rows pointed at by target_company_ids. SlugFetch is keyed by
     # (source, slug), so we query against the full pair set rather than the

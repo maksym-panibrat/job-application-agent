@@ -1,7 +1,7 @@
 import httpx
 import pytest
 
-from scripts.smoke.golden_path import step6_cron_sync
+from scripts.smoke.golden_path import _step_cron_sync
 
 
 @pytest.mark.asyncio
@@ -14,18 +14,12 @@ async def test_cron_sync_accepts_202_accepted():
                 "enqueued": [1, 2],
                 "pruned": 0,
                 "active_profiles": 1,
-                "status": "ok",
+                "profiles_enqueued": 1,
             },
         )
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
-        ok, details = await step6_cron_sync(
-            client,
-            "https://job-search.example",
-            "secret",
-            verbose=False,
-        )
+        details = await _step_cron_sync(client, "https://job-search.example", "secret")
 
-    assert ok is True
-    assert details["step"] == 6
-    assert details["status"] == "ok"
+    assert details["enqueued"] == [1, 2]
+    assert details["active_profiles"] == 1

@@ -4,7 +4,7 @@ Idempotently seed the smoke-test user (smoke@panibrat.com) into the database.
 Run against local dev DB:
     uv run python scripts/seed_smoke_user.py
 
-Run against prod Neon (in a local shell with DATABASE_URL exported):
+Run against production (in a local shell with DATABASE_URL exported):
     DATABASE_URL=postgresql+asyncpg://... uv run python scripts/seed_smoke_user.py
 
 Safe to re-run — uses INSERT ... ON CONFLICT DO UPDATE so it is fully idempotent.
@@ -59,7 +59,6 @@ async def seed(session: AsyncSession) -> None:
                 target_locations,
                 remote_ok,
                 source_cursors,
-                target_company_slugs,
                 search_active,
                 created_at,
                 updated_at
@@ -72,7 +71,6 @@ async def seed(session: AsyncSession) -> None:
                 '{}',
                 '{}',
                 TRUE,
-                '{}',
                 '{}',
                 TRUE,
                 NOW(),

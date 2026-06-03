@@ -60,7 +60,7 @@ async def test_sync_active_profiles_aggregates_shared_enqueue_contract():
             new=AsyncMock(return_value=stale_rows),
         ) as mock_list_stale,
         patch(
-            "app.services.job_sync_service.enqueue",
+            "app.services.job_sync_service.enqueue_fetch_slug",
             new=AsyncMock(return_value=123),
         ) as mock_enqueue,
     ):
@@ -77,13 +77,18 @@ async def test_sync_active_profiles_aggregates_shared_enqueue_contract():
     mock_prune.assert_any_await(profiles[1], session)
     mock_list_stale.assert_awaited_once_with(session, ttl_hours=6)
     assert mock_enqueue.await_count == 2
-    assert [call.kwargs["payload"] for call in mock_enqueue.await_args_list] == [
-        {"provider": "greenhouse", "slug": "airbnb", "batch_match_max_items": 100},
-        {"provider": "greenhouse", "slug": "stripe", "batch_match_max_items": 100},
-    ]
-    assert [call.kwargs["dedupe_key"] for call in mock_enqueue.await_args_list] == [
-        "fetch-slug:greenhouse:airbnb",
-        "fetch-slug:greenhouse:stripe",
+    assert [call.args for call in mock_enqueue.await_args_list] == [(session,), (session,)]
+    assert [call.kwargs for call in mock_enqueue.await_args_list] == [
+        {
+            "provider": "greenhouse",
+            "slug": "airbnb",
+            "batch_match_max_items": 100,
+        },
+        {
+            "provider": "greenhouse",
+            "slug": "stripe",
+            "batch_match_max_items": 100,
+        },
     ]
     assert profiles[0].last_sync_summary == {
         "queued_slugs": ["airbnb", "stripe"],

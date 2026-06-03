@@ -5,8 +5,8 @@ non-local database unless the operator explicitly opts in.
 Why this exists
 ---------------
 We shipped a production outage because ``alembic upgrade head`` was run from a
-dev laptop while ``DATABASE_URL`` in ``.env`` was still pointing at the prod
-Neon instance. That advanced the prod schema (dropped a column) ahead of the
+dev laptop while ``DATABASE_URL`` in ``.env`` was still pointing at the remote
+production database. That advanced the prod schema (dropped a column) ahead of the
 deployed code — every ``SELECT * FROM applications`` 500-ed until the matching
 code change was merged and rolled out.
 
@@ -102,7 +102,7 @@ def main() -> int:
             f"  This host does not look like a local database. Running write\n"
             f"  migrations against a shared/production database from a dev\n"
             f"  machine is the exact failure mode this guardrail exists for\n"
-            f"  (see commit 28e5ce5 — prod outage from unintended Neon upgrade).\n\n"
+            f"  (see commit 28e5ce5 — prod outage from unintended remote migration).\n\n"
             f"  If you really mean it, re-run with:\n"
             f"      {_OPT_IN_ENV}=1 ...\n\n"
             f"  For local work, point DATABASE_URL at localhost / 127.0.0.1 / db.\n"

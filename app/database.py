@@ -31,10 +31,10 @@ def get_engine():
             echo=settings.environment == "development",
             pool_size=5,
             max_overflow=2,
-            # Cloud Run idles between requests; Neon's pooler closes idle
-            # connections from its side. Without pre_ping the next checkout
-            # hands out a dead conn → InterfaceError("connection is closed").
-            # pool_recycle is a backstop in case pre_ping ever races.
+            # Long-lived pools can hand out dead connections after the database
+            # or network closes idle sockets. pre_ping replaces those
+            # connections before the request uses them; pool_recycle is a
+            # backstop in case pre_ping races.
             pool_pre_ping=True,
             pool_recycle=1800,
             connect_args=connect_args,

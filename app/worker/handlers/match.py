@@ -4,6 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
 from app.config import get_settings
+from app.contracts.workflow import ApplicationStatus, JobType
 from app.models.application import Application
 from app.models.job import Job
 from app.models.user_profile import UserProfile
@@ -69,8 +70,8 @@ class MatchHandler:
             app.match_rationale = deterministic_fields["rationale"]
             app.match_strengths = deterministic_fields["strengths"]
             app.match_gaps = deterministic_fields["gaps"]
-            if app.status == "pending_review":
-                app.status = "auto_rejected"
+            if app.status == ApplicationStatus.PENDING_REVIEW:
+                app.status = ApplicationStatus.AUTO_REJECTED
             session.add(app)
             await log.ainfo(
                 "worker.match.deterministic_reject",
@@ -112,10 +113,13 @@ class MatchHandler:
         app.match_strengths = result.get("strengths", [])
         app.match_gaps = result.get("gaps", [])
         settings = get_settings()
-        if score < settings.match_score_threshold and app.status == "pending_review":
-            app.status = "auto_rejected"
+        if (
+            score < settings.match_score_threshold
+            and app.status == ApplicationStatus.PENDING_REVIEW
+        ):
+            app.status = ApplicationStatus.AUTO_REJECTED
         session.add(app)
         await log.ainfo("worker.match.done", application_id=str(app.id), score=score)
 
 
-HANDLERS["match"] = MatchHandler()
+HANDLERS[JobType.MATCH] = MatchHandler()

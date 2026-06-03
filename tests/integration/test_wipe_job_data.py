@@ -63,11 +63,11 @@ async def _seed_reset_rows(db_session) -> None:
     await db_session.execute(
         text("""
             INSERT INTO user_profiles (id, user_id, email, target_roles, target_locations,
-                remote_ok, search_keywords, source_cursors, target_company_slugs,
+                remote_ok, search_keywords, source_cursors,
                 target_company_ids, search_active, created_at, updated_at)
             VALUES (:profile_id, :user_id, 'wipe@example.com',
                 ARRAY[]::varchar[], ARRAY[]::varchar[], TRUE, ARRAY[]::varchar[],
-                '{}'::jsonb, '{}'::jsonb, ARRAY[:company_id]::uuid[], TRUE, now(), now())
+                '{}'::jsonb, ARRAY[:company_id]::uuid[], TRUE, now(), now())
         """),
         {"profile_id": profile_id, "user_id": user_id, "company_id": company_id},
     )

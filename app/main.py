@@ -84,11 +84,8 @@ async def lifespan(app: FastAPI):
             pass  # checkpoint tables already exist from a previous deploy
         # all other exceptions propagate and fail lifespan — loud failure at startup
 
-    # Use a connection pool with check_connection so dead connections (Neon's
-    # idle timeout closes them while a Cloud Run instance is dormant) are
-    # replaced transparently. Without this, every chat request after ~5min idle
-    # fails with psycopg.OperationalError("the connection is closed") for the
-    # remaining lifetime of the instance.
+    # Use a connection pool with check_connection so dead connections are
+    # replaced transparently after idle disconnects or database restarts.
     async with AsyncConnectionPool(
         psycopg_uri,
         min_size=1,
@@ -132,7 +129,7 @@ app = FastAPI(title="Job Application Agent", lifespan=lifespan)
 
 @app.exception_handler(GetIdEmailError)
 async def _log_oauth_get_id_email_error(request: Request, exc: GetIdEmailError):
-    # Without this handler, only the Python traceback reaches Cloud Run logs and
+    # Without this handler, only the Python traceback reaches logs and
     # Google's actual error payload (e.g. "API not enabled", "invalid scope",
     # "user not in test users list") is lost on `exc.response`. Log it so future
     # OAuth callback failures are diagnosable from logs alone.

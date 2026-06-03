@@ -2,24 +2,24 @@
 
 Drops 5 unused profile fields (work_authorization, requires_sponsorship,
 salary_expectation_usd, available_from, standard_answers) and the now-orphaned
-job_search_cache table left behind after PR 2 deleted the source modules that
-populated it.
+job_search_cache table left behind after legacy source modules were removed.
 
 Revision ID: 9c4e8a2bd6f1
 Revises: 7a3f0db5b7ba
 Create Date: 2026-04-27 12:30:00
 """
 
-from typing import Sequence, Union
+from collections.abc import Sequence
 
 import sqlalchemy as sa
-from alembic import op
 from sqlalchemy.dialects.postgresql import JSONB
 
+from alembic import op
+
 revision: str = "9c4e8a2bd6f1"
-down_revision: Union[str, None] = "7a3f0db5b7ba"
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+down_revision: str | None = "7a3f0db5b7ba"
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:

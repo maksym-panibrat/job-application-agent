@@ -1,44 +1,32 @@
 # Batch Match Canary
 
-Use this when validating the real Gemini Batch provider for one profile before turning on automatic batch-match enqueueing.
+Use this when changing async matching or the provider batch integration.
 
-## Prerequisites
+## Why this exists
 
-Deploy the app with the provider wired but automatic enqueueing disabled:
+Batch matching saves latency/cost by using provider-side async execution, but it can become unsafe if local applications, provider requests, and model outputs are correlated too cleverly. The canary verifies that a small rollout still imports only the intended results.
 
-```sh
-BATCH_MATCH_PROVIDER=gemini
-BATCH_MATCH_DRY_RUN=false
-BATCH_MATCH_ENABLED=false
-GOOGLE_API_KEY=<configured secret>
-```
+## Invariant to protect
 
-The worker must be running with `batch-match` enabled in its slow job types. Leave `BATCH_MATCH_ENABLED=false` during the canary so normal job ingestion does not enqueue batch work for every affected profile.
+Provider batch APIs are an async transport, not permission to put many local applications into one prompt. Correlation should be deterministic and auditable from provider request metadata and local database rows.
 
-## Enqueue One Profile
+If a provider result cannot be correlated confidently, fail or retry that local item instead of importing partial or guessed scores.
 
-After the canary user has logged in and the account has unscored applications, enqueue exactly one batch-match job:
+## Local checks
 
-```sh
-uv run python scripts/enqueue_batch_match_canary.py --email canary@example.com
-```
+Run the unit/integration tests that cover:
 
-If you already know the profile id:
+- batch request construction;
+- provider-result import;
+- malformed, duplicate, missing, or unknown provider result keys;
+- worker retry/failure behavior for batch-match jobs.
 
-```sh
-uv run python scripts/enqueue_batch_match_canary.py --profile-id <user_profiles.id>
-```
+Use current test file names from `tests/`; do not rely on this runbook for an exhaustive test list.
 
-The helper writes one `work_queue` row with `job_type=batch-match`, payload `{"profile_id": "..."}`, and dedupe key `batch-match:<profile_id>`. Re-running it resets the pending row for the same profile instead of creating duplicates.
+## Production canary
 
-## Evidence To Capture
-
-Record these before enabling automatic enqueueing:
-
-- `work_queue`: the canary row is claimed and finishes or requeues as expected.
-- `llm_match_batches`: one batch is created for the profile, has provider `gemini`, has a non-empty `provider_batch_id`, and reaches `done`.
-- `llm_match_batch_items`: submitted items transition to `imported` or a clear retryable/terminal failure.
-- `applications`: expected rows receive `match_score`, summary, rationale, strengths, and gaps.
-- Logs: submit, poll, import, and any provider errors are understandable and include the provider batch id.
-
-Only turn on `BATCH_MATCH_ENABLED=true` after the canary proves submit, poll, output parsing, import, and retry behavior on the deployed worker.
+1. Enable batch matching for a low-volume profile or narrow cohort.
+2. Confirm worker logs show batch jobs being submitted, polled, and imported.
+3. Confirm scored applications move only into expected review/rejection states for that code version.
+4. Check logs for batch-match warnings or failed imports before widening rollout.
+5. Disable or narrow the rollout if correlation errors appear.

@@ -53,6 +53,7 @@ async def test_list_endpoint_includes_match_summary(db_session, auth_headers, se
     rows = resp.json()
     assert len(rows) >= 1
     row = next(r for r in rows if r["match_score"] == 0.8)
+    assert row["applied_at"] is None
     assert row["match_summary"] == "One-line summary text."
     assert row["match_rationale"] == "Audit text."  # still serialized for API audit
 

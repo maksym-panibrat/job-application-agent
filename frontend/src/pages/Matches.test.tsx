@@ -6,9 +6,9 @@ import { MemoryRouter } from 'react-router-dom'
 import { server } from '../test/server'
 import { ToastProvider } from '../components/ui/Toast'
 import Matches from './Matches'
-import type { Application, Profile } from '../api/client'
+import type { Application, ApplicationStatus, Profile } from '../api/client'
 
-function makeApp(id: string, status: string, score = 0.8): Application {
+function makeApp(id: string, status: ApplicationStatus, score = 0.8): Application {
   return {
     id, status, generation_status: 'none',
     match_score: score, match_summary: null, match_rationale: null,

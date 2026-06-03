@@ -9,7 +9,7 @@ export default function Landing() {
   // JSON (not a 302 redirect), so a plain <a href> would render the raw JSON
   // body and dead-end the user. Fetch it, then navigate. The Set-Cookie
   // (CSRF) on that response is still persisted by the browser since this is
-  // same-origin with Cloud Run.
+  // same-origin in production.
   async function startGoogleLogin() {
     track('auth.signin_clicked', { method: 'google' })
     setError(null)

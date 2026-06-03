@@ -8,5 +8,8 @@ export const handlers = [
     HttpResponse.json({ budget_exhausted: false, resumes_at: null })
   ),
   http.get('/api/applications', () => HttpResponse.json([])),
+  http.get('/api/applications/summary', () =>
+    HttpResponse.json({ pending_review: 0, auto_rejected: 0, dismissed: 0, applied: 0 })
+  ),
   http.get('/api/profile', () => HttpResponse.json(null)),
 ]

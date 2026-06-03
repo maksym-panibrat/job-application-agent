@@ -6,7 +6,10 @@ from fastapi import APIRouter, Depends, Header, HTTPException, status
 from sqlalchemy import text
 
 from app.config import Settings, get_settings
+from app.contracts.workflow import JobType
 from app.database import get_session_factory
+from app.services import batch_match_reconcile
+from app.worker.enqueue_intents import enqueue_cover_letter
 from app.worker.queue_service import enqueue
 
 log = structlog.get_logger()
@@ -78,12 +81,7 @@ async def cron_generation_reconcile():
             """)
         )
         for (app_id,) in orphans.all():
-            row_id = await enqueue(
-                session,
-                job_type="generate-cover-letter",
-                payload={"application_id": app_id},
-                dedupe_key=f"generate-cover-letter:{app_id}",
-            )
+            row_id = await enqueue_cover_letter(session, app_id)
             if row_id is not None:
                 enqueued.append(row_id)
         await session.commit()
@@ -100,12 +98,18 @@ async def cron_maintenance():
     today = datetime.now(UTC).date().isoformat()
     factory = get_session_factory()
     async with factory() as session:
+        batch_poll_rows = await batch_match_reconcile.enqueue_due_batch_polls(session)
         row_id = await enqueue(
             session,
-            job_type="maintenance",
+            job_type=JobType.MAINTENANCE,
             payload={"date": today},
             dedupe_key=f"maintenance:{today}",
         )
         await session.commit()
-    await log.ainfo("cron.maintenance.completed", enqueued=row_id)
-    return {"enqueued": [row_id] if row_id is not None else []}
+    await log.ainfo(
+        "cron.maintenance.completed",
+        enqueued=row_id,
+        batch_polls_enqueued=len(batch_poll_rows),
+    )
+    enqueued = [row_id] if row_id is not None else []
+    return {"enqueued": enqueued, "batch_polls_enqueued": batch_poll_rows}

@@ -1,16 +1,17 @@
 """GET /api/sync/status — used by the dashboard chip to poll progress."""
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import create_async_engine
-from sqlmodel import SQLModel
+from sqlmodel import SQLModel, select
 
 import app.models  # noqa: F401
 from app.models.company import Company
 from app.models.llm_match_batch import BATCH_STATUS_SUBMITTED, LLMMatchBatch
 from app.models.slug_fetch import SlugFetch
+from app.models.work_queue import WorkQueue
 from app.services import slug_registry_service
 from app.worker.payloads import FetchSlugPayload
 from app.worker.queue_service import enqueue
@@ -113,6 +114,41 @@ async def test_status_matching_when_batch_match_queued(
     assert body["state"] == "matching"
     assert body["matches_pending"] == 0
     assert body["batch_matches_pending"] == 1
+
+
+@pytest.mark.asyncio
+async def test_status_requeues_due_active_batch_without_follow_up_work(
+    client, auth_headers, seeded_user, db_session
+):
+    _, profile = seeded_user
+    db_session.add(
+        LLMMatchBatch(
+            profile_id=profile.id,
+            provider="fake",
+            provider_batch_id="batch-due",
+            model="gemini-2.5-flash",
+            prompt_version="batch-match-v1",
+            status=BATCH_STATUS_SUBMITTED,
+            submitted_at=datetime.now(UTC),
+            next_poll_at=datetime.now(UTC) - timedelta(seconds=30),
+        )
+    )
+    await db_session.commit()
+
+    response = await client.get("/api/sync/status", headers=auth_headers)
+    assert response.status_code == 200
+    body = response.json()
+    assert body["state"] == "matching"
+
+    queued = (
+        await db_session.execute(
+            select(WorkQueue).where(
+                WorkQueue.job_type == "batch-match",
+                WorkQueue.dedupe_key == f"batch-match:{profile.id}",
+            )
+        )
+    ).scalar_one_or_none()
+    assert queued is not None
 
 
 @pytest.mark.asyncio

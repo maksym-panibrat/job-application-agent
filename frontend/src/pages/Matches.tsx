@@ -1,6 +1,6 @@
-import { useMemo, useEffect } from 'react'
+import { useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { api, Application } from '../api/client'
+import { api } from '../api/client'
 import { track } from '../lib/track'
 import { useStatusFilter } from '../lib/useStatusFilter'
 import { StatusChips, StatusCounts } from '../components/feed/StatusChips'
@@ -16,14 +16,6 @@ const SERVER_STATUS_BY_FILTER = {
   dismissed: 'dismissed',
 } as const
 
-function deriveCounts(byStatus: Partial<Record<'pending' | 'applied' | 'dismissed', Application[]>>): StatusCounts {
-  return {
-    pending:   byStatus.pending?.length ?? 0,
-    applied:   byStatus.applied?.length ?? 0,
-    dismissed: byStatus.dismissed?.length ?? 0,
-  }
-}
-
 export default function Matches() {
   const { status } = useStatusFilter()
 
@@ -35,15 +27,17 @@ export default function Matches() {
     refetchInterval: 30_000,
   })
 
-  const pendingQ   = useQuery({ queryKey: ['applications', 'pending'],   queryFn: () => api.listApplications({ status: 'pending_review' }), enabled: status !== 'pending'   })
-  const appliedQ   = useQuery({ queryKey: ['applications', 'applied'],   queryFn: () => api.listApplications({ status: 'applied' }),        enabled: status !== 'applied'   })
-  const dismissedQ = useQuery({ queryKey: ['applications', 'dismissed'], queryFn: () => api.listApplications({ status: 'dismissed' }),     enabled: status !== 'dismissed' })
+  const summary = useQuery({
+    queryKey: ['applications', 'summary'],
+    queryFn: api.getApplicationSummary,
+    refetchInterval: 30_000,
+  })
 
-  const counts = useMemo(() => deriveCounts({
-    pending:   status === 'pending'   ? apps.data : pendingQ.data,
-    applied:   status === 'applied'   ? apps.data : appliedQ.data,
-    dismissed: status === 'dismissed' ? apps.data : dismissedQ.data,
-  }), [status, apps.data, pendingQ.data, appliedQ.data, dismissedQ.data])
+  const counts: StatusCounts = {
+    pending: summary.data?.pending_review ?? 0,
+    applied: summary.data?.applied ?? 0,
+    dismissed: summary.data?.dismissed ?? 0,
+  }
 
   useEffect(() => {
     if (apps.isLoading) return
