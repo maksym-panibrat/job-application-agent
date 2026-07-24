@@ -177,10 +177,22 @@ async def run_daily_maintenance() -> dict:
             )
 
         # Keep the newest 500 reviewable/scored applications per profile.
+        # Only trim rows that have no dependent artifacts/history. Application
+        # rows referenced by batch-match audit items or generated documents are
+        # retained here because their FKs are intentionally restrictive; pruning
+        # those safely requires an explicit cascade/retention policy migration.
         trim_result = await session.execute(
             text("""
                 DELETE FROM applications
                 WHERE status IN ('pending_review', 'auto_rejected')
+                  AND NOT EXISTS (
+                    SELECT 1 FROM llm_match_batch_items bmi
+                    WHERE bmi.application_id = applications.id
+                  )
+                  AND NOT EXISTS (
+                    SELECT 1 FROM generated_documents gd
+                    WHERE gd.application_id = applications.id
+                  )
                   AND id NOT IN (
                     SELECT id FROM applications a2
                     WHERE a2.profile_id = applications.profile_id
