@@ -51,11 +51,15 @@ async def enqueue_batch_match(
     profile_id: UUID | str,
     *,
     max_items: int | None = None,
+    max_candidates: int | None = None,
     not_before_seconds: int = 0,
+    return_existing_on_conflict: bool = True,
 ) -> int | None:
     payload: dict = {"profile_id": str(profile_id)}
     if max_items is not None:
         payload["max_items"] = max_items
+    if max_candidates is not None:
+        payload["max_candidates"] = max_candidates
     not_before = None
     if not_before_seconds > 0:
         not_before = datetime.now(UTC) + timedelta(seconds=not_before_seconds)
@@ -65,6 +69,7 @@ async def enqueue_batch_match(
         payload=payload,
         dedupe_key=batch_match_dedupe_key(profile_id),
         not_before=not_before,
+        return_existing_on_conflict=return_existing_on_conflict,
     )
 
 

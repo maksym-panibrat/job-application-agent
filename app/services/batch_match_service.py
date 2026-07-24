@@ -82,6 +82,7 @@ async def run_batch_match_tick(
     profile_id: uuid.UUID,
     provider: BatchMatchProvider,
     max_items: int | None = None,
+    max_candidates: int | None = None,
 ) -> BatchMatchTickResult:
     active = await _get_active_batch(session, profile_id)
     if active is not None and active.status in (
@@ -98,6 +99,7 @@ async def run_batch_match_tick(
             profile_id=profile_id,
             provider=provider,
             max_items=max_items,
+            max_candidates=max_candidates,
         )
         return _combine_tick_results(import_result, build_result)
     if active is not None and active.status == BATCH_STATUS_BUILDING:
@@ -113,6 +115,7 @@ async def run_batch_match_tick(
                 profile_id=profile_id,
                 provider=provider,
                 max_items=max_items,
+                max_candidates=max_candidates,
             )
             return _combine_tick_results(fail_result, build_result)
         return BatchMatchTickResult(requeued=True)
@@ -123,6 +126,7 @@ async def run_batch_match_tick(
         profile_id=profile_id,
         provider=provider,
         max_items=max_items,
+        max_candidates=max_candidates,
     )
 
 
@@ -172,6 +176,7 @@ async def _build_and_submit(
     profile_id: uuid.UUID,
     provider: BatchMatchProvider,
     max_items: int | None = None,
+    max_candidates: int | None = None,
 ) -> BatchMatchTickResult:
     settings = get_settings()
     effective_max_items = max_items or settings.batch_match_max_items_per_batch
@@ -183,6 +188,10 @@ async def _build_and_submit(
         effective_max_items,
         effective_max_items * max(1, settings.batch_match_candidate_pool_multiplier),
     )
+    if max_candidates is not None:
+        candidate_pool_limit = min(candidate_pool_limit, max_candidates)
+    if candidate_pool_limit < 1:
+        return BatchMatchTickResult()
     rows = await _select_unscored_application_rows(
         session,
         profile_id=profile_id,

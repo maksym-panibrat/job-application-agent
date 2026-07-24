@@ -7,7 +7,12 @@ from app.models.work_queue import WorkQueue, WorkQueueStatus
 from app.worker.handlers import HANDLERS
 
 
-def _batch_match_row(profile_id: uuid.UUID, *, max_items: int | None = None) -> WorkQueue:
+def _batch_match_row(
+    profile_id: uuid.UUID,
+    *,
+    max_items: int | None = None,
+    max_candidates: int | None = None,
+) -> WorkQueue:
     return WorkQueue(
         id=1,
         job_type="batch-match",
@@ -16,6 +21,7 @@ def _batch_match_row(profile_id: uuid.UUID, *, max_items: int | None = None) -> 
             for key, value in {
                 "profile_id": str(profile_id),
                 "max_items": max_items,
+                "max_candidates": max_candidates,
             }.items()
             if value is not None
         },
@@ -49,19 +55,27 @@ async def test_batch_match_handler_calls_service_with_parsed_profile_id(db_sessi
         requeued=True,
     )
 
-    with patch(
-        "app.worker.handlers.batch_match.run_batch_match_tick",
-        AsyncMock(return_value=result),
-    ) as mock_tick, patch(
-        "app.worker.handlers.batch_match.get_batch_match_provider",
-        return_value=provider,
-    ) as mock_provider_factory, patch(
-        "app.worker.handlers.batch_match.log.ainfo",
-        AsyncMock(),
-    ) as mock_log:
+    with (
+        patch(
+            "app.worker.handlers.batch_match.run_batch_match_tick",
+            AsyncMock(return_value=result),
+        ) as mock_tick,
+        patch(
+            "app.worker.handlers.batch_match.get_batch_match_provider",
+            return_value=provider,
+        ) as mock_provider_factory,
+        patch(
+            "app.worker.handlers.batch_match.update_payload",
+            AsyncMock(),
+        ) as mock_update_payload,
+        patch(
+            "app.worker.handlers.batch_match.log.ainfo",
+            AsyncMock(),
+        ) as mock_log,
+    ):
         follow_up = await BatchMatchHandler()(
             db_session,
-            _batch_match_row(profile_id, max_items=50),
+            _batch_match_row(profile_id, max_items=50, max_candidates=10),
         )
 
     mock_provider_factory.assert_called_once_with()
@@ -70,11 +84,21 @@ async def test_batch_match_handler_calls_service_with_parsed_profile_id(db_sessi
     assert kwargs["profile_id"] == profile_id
     assert kwargs["provider"] is provider
     assert kwargs["max_items"] == 50
+    assert kwargs["max_candidates"] == 10
     assert follow_up is not None
     assert follow_up.job_type == "batch-match"
-    assert follow_up.payload == {"profile_id": str(profile_id), "max_items": 50}
+    assert follow_up.payload == {
+        "profile_id": str(profile_id),
+        "max_items": 50,
+        "max_candidates": 9,
+    }
     assert follow_up.dedupe_key == f"batch-match:{profile_id}"
     assert follow_up.not_before_seconds is not None
+    assert mock_update_payload.await_count == 2
+    checkpointed_budgets = [
+        call.kwargs["payload"]["max_candidates"] for call in mock_update_payload.await_args_list
+    ]
+    assert checkpointed_budgets == [0, 9]
     mock_log.assert_awaited_once_with(
         "worker.batch_match.done",
         profile_id=str(profile_id),
@@ -86,6 +110,53 @@ async def test_batch_match_handler_calls_service_with_parsed_profile_id(db_sessi
         terminal_failed=6,
         requeued=True,
     )
+
+
+@pytest.mark.asyncio
+async def test_bounded_batch_match_reserves_budget_before_tick_side_effects(db_session):
+    from sqlmodel import select
+
+    from app.services.batch_match_provider import FakeBatchMatchProvider
+    from app.worker.handlers.batch_match import BatchMatchHandler
+    from app.worker.queue_service import claim_one, enqueue
+
+    profile_id = uuid.uuid4()
+    row_id = await enqueue(
+        db_session,
+        job_type="batch-match",
+        payload={
+            "profile_id": str(profile_id),
+            "max_items": 7,
+            "max_candidates": 7,
+        },
+        dedupe_key=f"batch-match:{profile_id}",
+    )
+    await db_session.commit()
+    claimed = await claim_one(db_session, worker_id="w1", visibility_timeout_s=600)
+    await db_session.commit()
+    assert claimed is not None
+
+    with (
+        patch(
+            "app.worker.handlers.batch_match.get_batch_match_provider",
+            return_value=FakeBatchMatchProvider(),
+        ),
+        patch(
+            "app.worker.handlers.batch_match.run_batch_match_tick",
+            AsyncMock(side_effect=RuntimeError("process stopped after reservation")),
+        ),
+    ):
+        with pytest.raises(RuntimeError, match="after reservation"):
+            await BatchMatchHandler()(db_session, claimed)
+
+    durable_row = (
+        await db_session.execute(select(WorkQueue).where(WorkQueue.id == row_id))
+    ).scalar_one()
+    assert durable_row.payload == {
+        "profile_id": str(profile_id),
+        "max_items": 7,
+        "max_candidates": 0,
+    }
 
 
 @pytest.mark.asyncio

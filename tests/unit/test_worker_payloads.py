@@ -60,7 +60,21 @@ def test_batch_match_payload_requires_profile_id():
 def test_batch_match_payload_parses_profile_id():
     profile_id = uuid.uuid4()
 
-    payload = BatchMatchPayload(profile_id=str(profile_id), max_items=50)
+    payload = BatchMatchPayload(
+        profile_id=str(profile_id),
+        max_items=50,
+        max_candidates=10,
+    )
 
     assert payload.profile_id == profile_id
     assert payload.max_items == 50
+    assert payload.max_candidates == 10
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [("max_items", 0), ("max_items", -1), ("max_candidates", -1)],
+)
+def test_batch_match_payload_rejects_invalid_bounds(field, value):
+    with pytest.raises(ValidationError):
+        BatchMatchPayload(profile_id=uuid.uuid4(), **{field: value})

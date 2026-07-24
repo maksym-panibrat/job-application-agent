@@ -24,17 +24,29 @@ FastAPI · SQLModel · LangGraph · Google Gemini · React + Vite · Postgres ·
 
 ## Quickstart
 
+Prerequisites are Docker with the Compose plugin, `uv`, and Node `^20.19` or
+`>=22.12`. `uv` provisions the Python version declared by the project; a system
+`python3` is not required. From a fresh clone:
+
 ```bash
-docker compose up -d db
 cp .env.example .env        # set GOOGLE_API_KEY at minimum
-uv sync --dev
+make preflight ARGS=--skip-db
+docker compose up -d --wait db
+make preflight              # read-only; also checks local Postgres connectivity
+uv sync --locked --dev
 make migrate ARGS="upgrade head"
 uv run uvicorn app.main:app --reload --port 8000
 
 # Frontend (separate terminal)
-cd frontend && npm install && npm run dev
+cd frontend && npm ci && npm run dev
 # → http://localhost:5173
 ```
+
+`make preflight` installs nothing, validates required `.env` keys without
+printing their values, and never contacts production. It refuses remote or
+unknown Docker endpoints before daemon or Compose operations. See
+`./scripts/preflight.sh --help` for checks and exit semantics. Keep backend and frontend installs reproducible with `uv sync
+--locked --dev` and `npm ci`; commit lockfile updates when dependencies change.
 
 Sign-in uses Google OAuth — set `GOOGLE_OAUTH_CLIENT_ID` / `GOOGLE_OAUTH_CLIENT_SECRET` (see `app/config.py::Settings`).
 
@@ -53,7 +65,7 @@ cd frontend && npm run build            # build to app/static/
 ## Docs
 
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) explains why the app is split across API, worker, queue, LLM, and infra boundaries.
-- [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) explains deployment ownership between this repo and `panibrat-infra`.
+- [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) contains the canonical `git`/`gh` commands for tracing and troubleshooting releases across this repo and `panibrat-infra`.
 - [`docs/runbooks/`](docs/runbooks/) contains narrow operational procedures.
 - `AGENTS.md` documents non-obvious development guardrails for AI coding agents.
 
