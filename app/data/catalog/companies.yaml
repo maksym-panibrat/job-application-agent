@@ -388,10 +388,6 @@ companies:
     providers:
       greenhouse: ginkgobioworks
     tags: [biotech, b2b, public]
-  - canonical_name: Color
-    providers:
-      lever: color
-    tags: [biotech, b2c, late-stage]
   - canonical_name: Maven Clinic
     providers:
       greenhouse: mavenclinic
