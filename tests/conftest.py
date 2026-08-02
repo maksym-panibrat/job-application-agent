@@ -25,7 +25,7 @@ def pytest_addoption(parser):
         default=False,
         help=(
             "Run the catalog-live validation tests against real public ATS boards. "
-            "Used by the nightly validate-catalog GitHub Actions workflow; off by default "
+            "This is a manual diagnostic; reconciliation runs nightly. Off by default "
             "for local + PR CI runs."
         ),
     )

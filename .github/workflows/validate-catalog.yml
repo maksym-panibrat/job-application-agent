@@ -6,12 +6,12 @@ on:
   workflow_dispatch: {}
 
 jobs:
-  validate:
+  reconcile:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 30
     permissions:
-      contents: read
-      issues: write
+      contents: write
+      pull-requests: write
     steps:
       - uses: actions/checkout@v6
       - uses: astral-sh/setup-uv@v8.1.0
@@ -19,48 +19,46 @@ jobs:
           version: "latest"
       - name: Install dependencies
         run: uv sync --dev
-      - name: Run live catalog validation
-        id: pytest
+      - name: Reconcile moved or removed ATS boards
         run: |
-          set -o pipefail
-          uv run pytest tests/integration/test_catalog_live.py \
-            --catalog-live -v \
-            --tb=short \
-            --junit-xml=catalog-results.xml \
-          | tee catalog.log
-      - name: Upload pytest results
+          uv run python -m app.services.catalog_reconciliation \
+            --write \
+            --report catalog-reconciliation.json
+      - name: Summarize reconciliation
+        if: always()
+        run: |
+          {
+            echo '## Catalog reconciliation'
+            echo
+            if [ -f catalog-reconciliation.json ]; then
+              echo '```json'
+              cat catalog-reconciliation.json
+              echo '```'
+            else
+              echo 'No report was produced; inspect the failed reconciliation step.'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload reconciliation report
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: catalog-validation
-          path: |
-            catalog-results.xml
-            catalog.log
-      - name: Build issue body
-        if: failure()
-        id: body
-        run: |
-          {
-            echo 'body<<TRACKING_EOF'
-            echo 'Nightly catalog validation failed.'
-            echo
-            echo "Workflow run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-            echo
-            echo 'Tail of pytest output:'
-            echo '```'
-            tail -c 3000 catalog.log
-            echo '```'
-            echo
-            echo 'First step in triage: open the failing entry in companies.yaml,'
-            echo 'curl the (provider, slug) against the upstream board manually,'
-            echo 'and either replace the slug or drop the row in a follow-up PR.'
-            echo 'TRACKING_EOF'
-          } >> "$GITHUB_OUTPUT"
-      - name: Open or update tracking issue on failure
-        if: failure()
-        uses: ./.github/actions/upsert-tracking-issue
+          name: catalog-reconciliation
+          path: catalog-reconciliation.json
+          if-no-files-found: warn
+      - name: Create or update repair PR
+        if: success()
+        uses: peter-evans/create-pull-request@v7
         with:
-          title: '[catalog] live validation failing'
-          labels: 'catalog-validation'
-          reopen-comment: 'Reopened by validate-catalog: a new live-validation run failed after this issue was closed.'
-          body: ${{ steps.body.outputs.body }}
+          token: ${{ github.token }}
+          add-paths: app/data/catalog/companies.yaml
+          branch: automation/prune-invalid-catalog
+          delete-branch: true
+          commit-message: "chore: prune moved ATS boards from catalog"
+          title: "chore: prune moved ATS boards from catalog"
+          body: |
+            Automated catalog reconciliation removed provider slugs only after a
+            confirmed missing-board response. Transient provider/network errors
+            are retained and reported in the workflow artifact, never removed.
+
+            Review the diff for a replacement ATS slug before merging.
+          labels: catalog-validation

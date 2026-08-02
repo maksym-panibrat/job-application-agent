@@ -1,7 +1,8 @@
 """Live validation of the curated catalog against the real public ATS boards.
 
-Marked `catalog_live`; only runs with --catalog-live. The nightly
-validate-catalog GitHub Actions workflow invokes it; PR CI skips it.
+Marked `catalog_live`; only runs with --catalog-live. It is a manual
+diagnostic; the nightly workflow uses catalog_reconciliation instead so a
+confirmed migrated board becomes an automated repair PR rather than red CI.
 
 A single test parametrized over every (provider, slug) pair in
 companies.yaml. Each parametrized case fails independently so a single

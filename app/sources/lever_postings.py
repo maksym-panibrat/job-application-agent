@@ -136,7 +136,9 @@ class LeverPostingsSource(JobSource):
             return False  # confirmed miss
         if resp.status_code >= 500:
             raise TransientFetchError(slug, f"upstream {resp.status_code}")
-        return resp.status_code == 200
+        if resp.status_code != 200:
+            raise TransientFetchError(slug, f"unexpected upstream {resp.status_code}")
+        return True
 
     async def fetch_jobs(
         self,

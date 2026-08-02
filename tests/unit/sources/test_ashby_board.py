@@ -68,6 +68,16 @@ async def test_validate_5xx_raises_transient(src):
 
 @respx.mock
 @pytest.mark.asyncio
+async def test_validate_non_404_client_error_raises_transient(src):
+    """Rate limiting must not delete a valid board from the curated catalog."""
+    respx.get(f"{ASHBY_POSTINGS_BASE}/rate-limited").respond(429)
+    async with httpx.AsyncClient() as client:
+        with pytest.raises(TransientFetchError):
+            await src.validate("rate-limited", client=client)
+
+
+@respx.mock
+@pytest.mark.asyncio
 async def test_validate_network_error_raises_transient(src):
     """A connection-level failure is a transient error, not a confirmed miss."""
     respx.get(f"{ASHBY_POSTINGS_BASE}/blip").mock(

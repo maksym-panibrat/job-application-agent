@@ -136,10 +136,6 @@ companies:
     providers:
       greenhouse: discord
     tags: [social, b2c, late-stage]
-  - canonical_name: Atlassian
-    providers:
-      lever: atlassian
-    tags: [dev-tools, b2b, public]
   - canonical_name: MongoDB
     providers:
       greenhouse: mongodb
@@ -414,10 +410,6 @@ companies:
     providers:
       greenhouse: khanacademy
     tags: [b2c, late-stage]
-  - canonical_name: Coursera
-    providers:
-      greenhouse: coursera
-    tags: [b2c, public]
   - canonical_name: Patreon
     providers:
       ashby: patreon

@@ -271,6 +271,18 @@ async def test_validate_5xx_raises_transient():
 
 
 @pytest.mark.asyncio
+async def test_validate_non_404_client_error_raises_transient():
+    """Only a confirmed 404 is safe to treat as a moved or missing board."""
+    from app.sources.base import TransientFetchError
+
+    source = GreenhouseBoardSource()
+    with respx.mock:
+        respx.get(f"{GREENHOUSE_BOARDS_BASE}/rate-limited").mock(return_value=httpx.Response(429))
+        with pytest.raises(TransientFetchError):
+            await source.validate("rate-limited")
+
+
+@pytest.mark.asyncio
 async def test_validate_network_error_raises_transient():
     """A connection-level failure is a transient error, not a confirmed miss."""
     from app.sources.base import TransientFetchError
