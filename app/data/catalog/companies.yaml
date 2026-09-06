@@ -140,10 +140,6 @@ companies:
     providers:
       greenhouse: mongodb
     tags: [dev-tools, infra, b2b, public]
-  - canonical_name: Plaid
-    providers:
-      lever: plaid
-    tags: [fintech, infra, b2b, late-stage]
   - canonical_name: Twilio
     providers:
       greenhouse: twilio
@@ -359,10 +355,6 @@ companies:
     providers:
       greenhouse: monzo
     tags: [fintech, b2c, late-stage]
-  - canonical_name: Marqeta
-    providers:
-      greenhouse: marqeta
-    tags: [fintech, infra, b2b, public]
   - canonical_name: Bill.com
     providers:
       greenhouse: billcom
