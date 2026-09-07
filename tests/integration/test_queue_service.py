@@ -10,6 +10,7 @@ from app.worker.queue_service import (
     mark_done,
     mark_failed,
     release_with_backoff,
+    update_payload,
 )
 
 
@@ -54,6 +55,31 @@ async def test_enqueue_duplicate_dedupe_do_nothing_returns_existing_id(db_sessio
         )
     ).scalar_one()
     assert count == 1
+
+
+@pytest.mark.asyncio
+async def test_enqueue_can_refuse_to_return_existing_conflict(db_session):
+    first = await enqueue(
+        db_session,
+        job_type="batch-match",
+        payload={"profile_id": "profile", "max_items": 1},
+        dedupe_key="batch-match:profile",
+    )
+    second = await enqueue(
+        db_session,
+        job_type="batch-match",
+        payload={"profile_id": "profile", "max_items": 9},
+        dedupe_key="batch-match:profile",
+        return_existing_on_conflict=False,
+    )
+    await db_session.commit()
+
+    assert first is not None
+    assert second is None
+    row = (
+        await db_session.execute(select(WorkQueue).where(WorkQueue.id == first))
+    ).scalar_one()
+    assert row.payload == {"profile_id": "profile", "max_items": 1}
 
 
 @pytest.mark.asyncio
@@ -269,6 +295,38 @@ async def test_mark_done_requires_lease_owner(db_session):
     assert row.status == WorkQueueStatus.DONE
     assert row.completed_at is not None
     assert row.claimed_by is None
+
+
+@pytest.mark.asyncio
+async def test_update_payload_checkpoints_only_for_lease_owner(db_session):
+    row_id = await enqueue(db_session, job_type="batch-match", payload={"remaining": 10})
+    await db_session.commit()
+    claimed = await claim_one(db_session, worker_id="w1", visibility_timeout_s=600)
+    await db_session.commit()
+    assert claimed is not None
+    assert claimed.id is not None
+
+    with pytest.raises(StaleLease):
+        await update_payload(
+            db_session,
+            claimed.id,
+            payload={"remaining": 9},
+            worker_id="w2",
+        )
+    await db_session.rollback()
+
+    await update_payload(
+        db_session,
+        claimed.id,
+        payload={"remaining": 8},
+        worker_id="w1",
+    )
+    await db_session.commit()
+
+    row = (
+        await db_session.execute(select(WorkQueue).where(WorkQueue.id == row_id))
+    ).scalar_one()
+    assert row.payload == {"remaining": 8}
 
 
 @pytest.mark.asyncio

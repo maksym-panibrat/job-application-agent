@@ -21,9 +21,13 @@ async def enqueue(
     dedupe_key: str | None = None,
     on_conflict: Literal["do_nothing", "upsert_reset_not_before"] = "do_nothing",
     not_before: datetime | None = None,
+    return_existing_on_conflict: bool = True,
 ) -> int | None:
-    """Insert a pending queue row, returning either the new row id or the live
-    row id that blocked a deduped insert.
+    """Insert a pending queue row.
+
+    Return the inserted id. On a live dedupe conflict, return the blocking row id
+    by default; callers that must prove they inserted a new row can set
+    ``return_existing_on_conflict=False`` and receive ``None`` instead.
     """
     params = {
         "job_type": job_type,
@@ -78,7 +82,7 @@ async def enqueue(
     row = result.first()
     if row is not None:
         return row[0]
-    if dedupe_key is None:
+    if dedupe_key is None or not return_existing_on_conflict:
         return None
 
     existing = await session.execute(
@@ -200,6 +204,34 @@ async def mark_done(session: AsyncSession, job_id: int, *, worker_id: str) -> No
     )
     if result.rowcount == 0:
         raise StaleLease(f"mark_done: row {job_id} no longer owned by {worker_id}")
+
+
+async def update_payload(
+    session: AsyncSession,
+    job_id: int,
+    *,
+    payload: dict[str, Any],
+    worker_id: str,
+) -> None:
+    """Checkpoint a leased row's payload without weakening lease ownership."""
+    result = await session.execute(
+        text(
+            """
+            UPDATE work_queue
+            SET payload = CAST(:payload AS jsonb)
+            WHERE id = :id
+              AND claimed_by = :worker_id
+              AND status = 'in_progress'
+            """
+        ),
+        {
+            "id": job_id,
+            "payload": json.dumps(payload, default=str),
+            "worker_id": worker_id,
+        },
+    )
+    if result.rowcount == 0:
+        raise StaleLease(f"update_payload: row {job_id} no longer owned by {worker_id}")
 
 
 async def mark_failed(

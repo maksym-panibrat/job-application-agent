@@ -20,7 +20,7 @@ async def test_enqueue_intents_write_canonical_job_types_payloads_and_keys(db_se
 
     await enqueue_fetch_slug(db_session, provider="greenhouse", slug="openai")
     await enqueue_match(db_session, aid)
-    await enqueue_batch_match(db_session, pid, max_items=7)
+    await enqueue_batch_match(db_session, pid, max_items=7, max_candidates=5)
     await enqueue_cover_letter(db_session, aid)
     await db_session.commit()
 
@@ -39,6 +39,7 @@ async def test_enqueue_intents_write_canonical_job_types_payloads_and_keys(db_se
     assert by_type[JobType.BATCH_MATCH].payload == {
         "profile_id": str(pid),
         "max_items": 7,
+        "max_candidates": 5,
     }
     assert by_type[JobType.BATCH_MATCH].dedupe_key == f"batch-match:{pid}"
 

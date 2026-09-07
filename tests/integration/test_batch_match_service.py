@@ -264,6 +264,57 @@ async def test_deterministic_reject_is_not_submitted(db_session):
 
 
 @pytest.mark.asyncio
+async def test_candidate_cap_bounds_deterministic_prefilter_writes(db_session):
+    from app.services.batch_match_provider import FakeBatchMatchProvider
+    from app.services.batch_match_service import run_batch_match_tick
+
+    profile, apps = await seed_profile_with_unscored_apps(db_session, count=5)
+    for app in apps:
+        job = await db_session.get(Job, app.job_id)
+        assert job is not None
+        job.location = "Toronto, Canada"
+        job.workplace_type = "remote"
+        job.description = "Remote role open only to candidates based in Canada."
+        db_session.add(job)
+    await db_session.commit()
+
+    result = await run_batch_match_tick(
+        db_session,
+        profile_id=profile.id,
+        provider=FakeBatchMatchProvider(ready=False),
+        max_items=3,
+        max_candidates=2,
+    )
+
+    assert result.selected == 2
+    assert result.deterministic_rejected == 2
+    assert result.submitted == 0
+    refreshed = [await db_session.get(Application, app.id) for app in apps]
+    assert sum(app is not None and app.match_score is not None for app in refreshed) == 2
+
+
+@pytest.mark.asyncio
+async def test_zero_remaining_candidate_budget_does_not_select_or_write(db_session):
+    from app.services.batch_match_provider import FakeBatchMatchProvider
+    from app.services.batch_match_service import run_batch_match_tick
+
+    profile, apps = await seed_profile_with_unscored_apps(db_session, count=3)
+
+    result = await run_batch_match_tick(
+        db_session,
+        profile_id=profile.id,
+        provider=FakeBatchMatchProvider(ready=False),
+        max_items=3,
+        max_candidates=0,
+    )
+
+    assert result.selected == 0
+    assert result.submitted == 0
+    refreshed = [await db_session.get(Application, app.id) for app in apps]
+    assert all(app is not None and app.match_score is None for app in refreshed)
+
+
+@pytest.mark.asyncio
 async def test_poll_requeues_when_provider_is_not_ready(db_session):
     from app.services.batch_match_provider import FakeBatchMatchProvider
     from app.services.batch_match_service import run_batch_match_tick

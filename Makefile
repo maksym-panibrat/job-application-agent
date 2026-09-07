@@ -1,13 +1,17 @@
 # Makefile — developer convenience targets for job-application-agent.
 #
-# Prerequisites: uv, Python 3.12+, DATABASE_URL in env or .env
+# Prerequisites: uv, Node ^20.19 or >=22.12, Docker/Compose, required .env keys
 #
 # Quick start:
 #   make smoke-token        # print a 90-day JWT for smoke@panibrat.com
 #   make seed-smoke-user    # seed smoke user into DATABASE_URL
 #   make smoke              # run golden-path smoke test (needs SMOKE_BASE_URL + SMOKE_BEARER_TOKEN)
 
-.PHONY: migrate migrate-status smoke-token seed-smoke-user smoke help
+.PHONY: preflight migrate migrate-status smoke-token seed-smoke-user smoke help
+
+# Read-only clone/toolchain/local-db doctor. Use ARGS=--skip-db before starting db.
+preflight:
+	@./scripts/preflight.sh $(ARGS)
 
 # ---------------------------------------------------------------------------
 # migrate
@@ -71,6 +75,7 @@ smoke:
 # ---------------------------------------------------------------------------
 help:
 	@echo "Available targets:"
+	@echo "  preflight        Read-only clone/toolchain/local-db checks (ARGS=--skip-db available)"
 	@echo "  smoke-token      Print a 90-day JWT for smoke@panibrat.com"
 	@echo "  seed-smoke-user  Seed smoke user into DATABASE_URL (idempotent)"
 	@echo "  smoke            Run golden-path smoke test against SMOKE_BASE_URL"

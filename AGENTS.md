@@ -5,12 +5,22 @@ Guidance for AI coding agents working in this repo. Keep only non-obvious behavi
 ## Setup
 
 ```bash
-docker compose up -d db
-uv sync --dev
+cp .env.example .env
+make preflight ARGS=--skip-db                  # read-only toolchain/clone check
+docker compose up -d --wait db
+make preflight                                 # includes local DB readiness
+uv sync --locked --dev
 make migrate ARGS="upgrade head"                # wraps alembic; refuses non-local DATABASE_URL without I_KNOW_ITS_PROD=1
 uv run uvicorn app.main:app --reload --port 8000
-cd frontend && npm install && npm run dev   # :5173, proxies /api + /health to :8000
+cd frontend && npm ci && npm run dev         # :5173, proxies /api + /health to :8000
 ```
+
+`make preflight` is the canonical read-only clone doctor; see
+`./scripts/preflight.sh --help`. It does not install dependencies or print env
+values; it only validates required keys and refuses remote or unknown Docker
+endpoints before daemon/Compose operations. `uv` owns Python provisioning, so a
+system `python3` is not a prerequisite. Use the committed `uv.lock` and `frontend/package-lock.json`; do not
+replace locked fresh-clone setup with unlocked installs.
 
 Required env: `DATABASE_URL`, `GOOGLE_API_KEY`. Full list: `app/config.py::Settings`.
 
@@ -50,6 +60,12 @@ Matching runs through the worker queue. `match` jobs score one `Application` dir
 ### Worker queue and cron
 
 No in-process scheduler. Cron endpoints are thin enqueuers protected by `X-Cron-Secret`: `POST /internal/cron/sync`, `POST /internal/cron/generation-reconcile`, and `POST /internal/cron/maintenance`. They are triggered by `supercronic` on the Hetzner box (`panibrat-infra/supercronic.crontab`). Long-running work is processed by the always-on `python -m app.worker` process through Postgres `work_queue`.
+
+The nightly GitHub Actions catalog validation only probes curated ATS catalog entries; it is independent of the production cron path that syncs stale slugs for active profiles.
+
+Deployment boundary diagnosis is in [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md).
+Runtime deploy, migration, rollback, queue, and scheduler procedures remain
+owned by the infra repository runbooks linked there.
 
 `work_queue` job types are `fetch-slug`, `match`, `batch-match`, `generate-cover-letter`, and `maintenance`. The worker owns claiming, lease timeouts, transient retry/backoff, terminal failure handling, and lease-checked finalization.
 
